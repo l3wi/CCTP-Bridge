@@ -31,7 +31,7 @@ export default function ApproveGuard(props: Props) {
 
   const approved = data
     ? // BUG: bigint & BigInt are not comparable ???
-      BigInt(data.toString()) > BigInt(amount.toString())
+      BigInt(data.toString()) >= BigInt(amount.toString())
     : false;
   return (
     <div>
