@@ -1,14 +1,14 @@
 import abis from "@/constants/abi";
 import React, { useState } from "react";
-import {
-  erc20ABI,
-  useAccount,
-  useContractRead,
-  useContractWrite,
-  usePrepareContractWrite,
-} from "wagmi";
+
 import { Button } from "../ui/button";
-import { formatUnits } from "viem";
+import { erc20Abi, formatUnits, maxInt256, zeroAddress } from "viem";
+import {
+  useAccount,
+  useReadContract,
+  useSimulateContract,
+  useWriteContract,
+} from "wagmi";
 
 type Props = {
   token: `0x${string}`;
@@ -21,13 +21,13 @@ export default function ApproveGuard(props: Props) {
   const { token, spender, amount } = props;
   const { address } = useAccount();
 
-  const { data } = useContractRead({
+  const result = useReadContract({
     address: token,
     abi: abis["Usdc"],
     functionName: "allowance",
-    args: [address || "0x0000000000000000000000000000000000000000", spender],
-    watch: true,
+    args: [address || zeroAddress, spender],
   });
+  const { data, isFetched, error } = result;
 
   const approved = data
     ? // BUG: bigint & BigInt are not comparable ???
@@ -51,23 +51,28 @@ const ApproveButton = ({
   token: `0x${string}`;
   spender: `0x${string}`;
 }) => {
-  const { config } = usePrepareContractWrite({
-    address: token,
-    abi: erc20ABI,
-    functionName: "approve",
-    args: [spender, BigInt(2 ** 255 - 1)],
-  });
+  const { writeContract } = useWriteContract();
 
-  const { write } = useContractWrite({
-    ...config,
-    onSettled(data, error) {
-      if (error) console.log("Failed", error);
-      if (data) console.log("Success", data);
-    },
+  const { isSuccess } = useSimulateContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [spender, maxInt256],
   });
 
   return (
-    <Button onClick={() => write && write()} className="w-full">
+    <Button
+      onClick={() =>
+        isSuccess &&
+        writeContract({
+          address: token,
+          abi: erc20Abi,
+          functionName: "approve",
+          args: [spender, maxInt256],
+        })
+      }
+      className="w-full"
+    >
       Approve Token
     </Button>
   );

@@ -1,7 +1,10 @@
 "use client";
 import "@rainbow-me/rainbowkit/styles.css";
-import { getDefaultWallets, RainbowKitProvider } from "@rainbow-me/rainbowkit";
-import { configureChains, createConfig, WagmiConfig } from "wagmi";
+
+import { getDefaultConfig, RainbowKitProvider } from "@rainbow-me/rainbowkit";
+import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { WagmiProvider } from "wagmi";
+
 import {
   mainnet,
   arbitrum,
@@ -9,26 +12,31 @@ import {
   goerli,
   avalancheFuji,
   arbitrumGoerli,
+  optimism,
+  polygon,
+  base,
 } from "wagmi/chains";
-import { publicProvider } from "wagmi/providers/public";
+
 import { Toaster } from "./ui/toaster";
+import { rpcs } from "@/constants/endpoints";
 
-const { chains, publicClient } = configureChains(
-  [mainnet, arbitrum, avalanche, goerli, avalancheFuji, arbitrumGoerli],
-  [publicProvider()]
-);
-
-const { connectors } = getDefaultWallets({
+const config = getDefaultConfig({
   appName: "Vanilla CCTP",
   projectId: "0986356cfc85b6c59c45557e11c24451",
-  chains,
+  // @ts-ignore
+  chains: [mainnet, arbitrum, avalanche, optimism, polygon, base].map(
+    (chain) => {
+      return {
+        ...chain,
+        rpcUrls: {
+          default: { http: [rpcs[chain.id]] },
+        },
+      };
+    }
+  ),
+  ssr: true, // If your dApp uses server side rendering (SSR)
 });
-
-const wagmiConfig = createConfig({
-  autoConnect: true,
-  connectors,
-  publicClient,
-});
+const queryClient = new QueryClient();
 
 export default function CryptoProivders({
   children,
@@ -36,11 +44,13 @@ export default function CryptoProivders({
   children: React.ReactNode;
 }) {
   return (
-    <WagmiConfig config={wagmiConfig}>
-      <RainbowKitProvider chains={chains}>
-        {children}
-        <Toaster />
-      </RainbowKitProvider>
-    </WagmiConfig>
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <RainbowKitProvider>
+          {children}
+          <Toaster />
+        </RainbowKitProvider>
+      </QueryClientProvider>
+    </WagmiProvider>
   );
 }

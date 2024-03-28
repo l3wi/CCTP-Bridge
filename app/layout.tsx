@@ -6,8 +6,33 @@ import { Inter } from "next/font/google";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "USDC CCTP Bridge",
-  description: "An app to cross Circle's CCTP bridge.",
+  applicationName: "CCTP Bridge",
+  title: "USDC Bridge - CCTP",
+  openGraph: {
+    images: [
+      {
+        url: "https://cctp.io/og.png",
+        width: 1200,
+        height: 630,
+        alt: "CCTP Bridge",
+      },
+    ],
+  },
+  description:
+    "The simple CCTP bridge interface for USDC that Circle should have built.",
+  keywords: [
+    "USDC",
+    "CCTP",
+    "Bridge",
+    "Circle",
+    "Stablecoin",
+    "Ethereum",
+    "Polygon",
+    "Avalanche",
+    "Optimism",
+    "Arbitrum",
+  ],
+  metadataBase: new URL("https://cctp.io"),
 };
 
 export default function RootLayout({

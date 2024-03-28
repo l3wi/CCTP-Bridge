@@ -1,9 +1,18 @@
 "use client";
 import { Label } from "@/components/ui/label";
-import { isTestnet } from "@/constants/contracts";
-import { useNetwork, usePublicClient } from "wagmi";
-import { useEffect, useState } from "react";
-import { decodeAbiParameters, keccak256, toHex } from "viem";
+import { domains, getChainsFromId, isTestnet } from "@/constants/contracts";
+import { useAccount, useChains } from "wagmi";
+import { Dispatch, SetStateAction, useEffect, useState } from "react";
+import {
+  Chain,
+  decodeAbiParameters,
+  decodeFunctionData,
+  fromHex,
+  keccak256,
+  slice,
+  toHex,
+  trim,
+} from "viem";
 import { useToast } from "./ui/use-toast";
 import { useLocalStorage } from "usehooks-ts";
 import { endpoints } from "@/constants/endpoints";
@@ -12,109 +21,242 @@ import { LocalTransaction } from "./inputCard";
 import ClaimButton from "./claimButton";
 import { Button } from "./ui/button";
 import Countdown from "react-countdown";
-import { isStringLiteralLike } from "typescript";
 
-export function ClaimCard({ tx }: { tx: LocalTransaction }) {
-  const { toast } = useToast();
-  const { chains } = useNetwork();
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Input } from "./ui/input";
+import Image from "next/image";
 
-  const publicClient = usePublicClient({ chainId: tx.chain });
-  const destinationChain = chains.find((c) => c.id === tx.targetChain);
-  const testnet = destinationChain && isTestnet(destinationChain);
+export function ClaimCard({
+  onBurn,
+}: {
+  onBurn: Dispatch<SetStateAction<boolean>>;
+}) {
+  // State
+  const [tx, setTx] = useState<LocalTransaction | undefined>(undefined);
   const [transactions, setTransactions] = useLocalStorage<
     Array<LocalTransaction>
   >("txs", []);
 
-  const [msgHash, setMsgHash] = useState<`0x${string}` | null>(null);
-  const [msgBytes, setMsgBytes] = useState<`0x${string}` | null>(null);
+  // Load tx from local storage
+  useEffect(() => {
+    const checkHistory = () => {
+      const pendingTx = transactions.find((t) => t.status === "pending");
+      if (pendingTx) setTx(pendingTx);
+    };
+
+    if (!tx) checkHistory();
+  }, [transactions]);
+
+  // Setup Chain data
+  const { chain } = useAccount();
+  const chains = useChains();
+
+  const usableChains =
+    chain && chains ? getChainsFromId(chain.id, chains) : null;
+  const origin = tx && chains.find((c) => c.id === tx?.originChain);
+  const destination = tx && chains.find((c) => c.id === tx?.targetChain);
+  const testnet = destination && isTestnet(destination);
+
+  // If we don't have a TX then allow user to input one
+  const [originChain, setOriginChain] = useState<null | Chain>(null);
+  const [hash, setHash] = useState<undefined | string>(undefined);
+
+  // Fetch Circle attestation & message
+  const [data, setData] = useState<
+    | undefined
+    | {
+        attestation: `0x${string}`;
+        message: `0x${string}`;
+      }
+  >(undefined);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
     const func = async () => {
+      if (!tx) return;
+
       const response = await fetch(
-        endpoints[testnet ? "testnet" : "mainnet"] + `/attestations/${msgHash}`
+        endpoints[testnet ? "testnet" : "mainnet"] +
+          `/messages/${
+            tx.chain ? domains[tx.chain] : domains[tx.originChain]
+          }/${tx.hash}`
       );
       const data = await response.json();
-      console.log(data);
-      if (data.status === "complete" && msgBytes && msgHash) {
-        const index = transactions.findIndex((t) => t.hash === tx.hash);
-        const newTransactions = [...transactions];
-        newTransactions[index] = {
-          ...newTransactions[index],
-          status: "complete",
-          msgBytes: msgBytes,
-          msgHash: msgHash,
-          attestation: data.attestation,
-        };
-        setTransactions(newTransactions);
-        clearInterval(timer);
-        console.log("Waiting Complete: ", data);
+      if (data.messages[0].attestation !== "PENDING") {
+        setData(data.messages[0]);
       }
+
+      // if (data.status === "complete" && msgBytes && msgHash) {
+      //   const index = transactions.findIndex((t) => t.hash === tx.hash);
+      //   const newTransactions = [...transactions];
+      //   newTransactions[index] = {
+      //     ...newTransactions[index],
+      //     status: "complete",
+      //   };
+      //   setTransactions(newTransactions);
+      //   clearInterval(timer);
+      //   console.log("Waiting Complete: ", data);
+      // }
     };
 
-    if (msgHash && tx.status === "pending") {
-      timer = setInterval(func, 10000);
+    if (tx && tx.status === "pending" && !data) {
+      timer = setInterval(func, 15000);
     }
   });
 
-  useEffect(() => {
-    const func = async () => {
-      try {
-        const transaction = await publicClient.getTransactionReceipt({
-          hash: tx.hash,
-        });
-
-        const topic = keccak256(toHex("MessageSent(bytes)"));
-        const bytes = transaction.logs.find((l) => l.topics[0] === topic)?.data;
-        const data =
-          bytes &&
-          decodeAbiParameters(
-            [{ name: "MessageSent", type: "bytes" }],
-            bytes
-          )[0];
-        //@ts-ignore
-        const msgHash = data && keccak256(data);
-        //@ts-ignore
-        msgHash && setMsgHash(msgHash);
-        //@ts-ignore
-        data && setMsgBytes(data);
-      } catch (error) {
-        setTimeout(() => {
-          func();
-        }, 5000);
-      }
-    };
-    if (!msgHash && publicClient) func();
-  }, [tx, publicClient, msgHash]);
+  /// Derive Destination ChainID from Bytes
+  const destinationDomain =
+    data && fromHex(slice(data?.message, 8, 12) as `0x${string}`, "number");
+  const destinationChain = chains.find(
+    (c) =>
+      c.id ===
+      parseInt(
+        (Object.entries(domains).find(
+          ([chain, domain]) => domain === destinationDomain
+        ) || ["1", 0])[0]
+      )
+  );
 
   return (
-    <div className="w-full flex flex-col">
-      <Label className="text-2xl">
-        {tx.attestation
-          ? "Ready to Claim USDC"
-          : "Waiting for Burn Finalization"}
-      </Label>
-      {tx.msgBytes && tx.attestation ? (
-        <div className="w-full flex flex-grow justify-center">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="inline w-24 h-24 my-8"
-            viewBox="0 0 20 20"
-          >
-            <path
-              fill="none"
-              stroke="green"
-              stroke-width="2"
-              d="m2.13,10.7 4.87,4.87 11.3-11.3"
+    <>
+      {!tx && (
+        <>
+          <div className="grid gap-2 pt-4 w-full">
+            <Label htmlFor="number" className="text-lg text-gray-600">
+              Select Origin Chain
+            </Label>
+            {chain && usableChains ? (
+              <Select
+                onValueChange={(c) =>
+                  setOriginChain(
+                    (chain &&
+                      chains.find((chain) => chain?.id.toString() === c)) ||
+                      null
+                  )
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select Chain..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {chains.map(
+                    (c) =>
+                      c && (
+                        <SelectItem key={c.id} value={c.id.toString()}>
+                          <div className="flex justify-between items-center">
+                            <Image
+                              src={`/${c.id}.svg`}
+                              width={24}
+                              height={24}
+                              className="w-6 h-6 mr-2"
+                              alt={c.name}
+                            />
+                            <span>{c.name}</span>
+                          </div>
+                        </SelectItem>
+                      )
+                  )}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Select>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select Chain..." />
+                </SelectTrigger>
+              </Select>
+            )}
+
+            <Label htmlFor="name" className="text-lg text-gray-600">
+              Transaction Hash
+            </Label>
+            <Input
+              type="string"
+              placeholder="0x4e80Fd..."
+              value={hash}
+              onChange={(e) => setHash(e.target.value)}
             />
-          </svg>
-        </div>
-      ) : (
-        <div className="w-full flex justify-center">
-          <div className="flex flex-col justify-center w-fit">
+          </div>
+          <Button
+            className="w-full mt-4"
+            onClick={() =>
+              setTransactions([
+                ...transactions,
+                {
+                  date: new Date(),
+                  originChain: originChain?.id || 0,
+                  hash: hash as `0x${string}`,
+                  status: "pending",
+                },
+              ])
+            }
+          >
+            Check for Attestation
+          </Button>
+        </>
+      )}
+
+      {data ? (
+        <>
+          <div className=" w-full flex flex-grow justify-center items-center">
             <svg
-              aria-hidden="true"
-              className="inline w-24 h-24 my-8 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600"
+              xmlns="http://www.w3.org/2000/svg"
+              className="inline w-14 h-14 mx-2"
+              viewBox="0 0 20 20"
+            >
+              <path
+                fill="none"
+                stroke="green"
+                stroke-width="2"
+                d="m2.13,10.7 4.87,4.87 11.3-11.3"
+              />
+            </svg>
+            <h2 className="text-green-800 text-3xl font-semibold">
+              Ready to Claim
+            </h2>
+          </div>
+          {destinationChain && (
+            <div className="flex w-full justify-around">
+              {origin && (
+                <div className="flex justify-between items-center">
+                  <Image
+                    src={`/${origin.id}.svg`}
+                    width={24}
+                    height={24}
+                    className="w-6 h-6 mr-2"
+                    alt={origin.name}
+                  />
+                  <span>{origin.name}</span>
+                </div>
+              )}
+              {` -> `}
+              {destinationChain && (
+                <div className="flex justify-between items-center">
+                  <Image
+                    src={`/${destinationChain.id}.svg`}
+                    width={24}
+                    height={24}
+                    className="w-6 h-6 mr-2"
+                    alt={destinationChain.name}
+                  />
+                  <span>{destinationChain.name}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      ) : null}
+
+      {tx && !data ? (
+        <div className="w-full flex-grow flex flex-col justify-center items-center">
+          <div className="flex justify-center items-center">
+            <svg
+              className="w-12 h-12 mr-3 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600"
               viewBox="0 0 100 101"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"
@@ -128,28 +270,43 @@ export function ClaimCard({ tx }: { tx: LocalTransaction }) {
                 fill="currentFill"
               />
             </svg>
-            <Countdown
-              zeroPadTime={2}
-              date={new Date(tx.date).getTime() + 1000 * 15 * 60}
-            />
+            <h2 className="text-grey-800 text-3xl font-semibold">
+              Waiting for Attestation
+            </h2>
           </div>
+          {tx.date && (
+            <div className="flex justify-center min-w-full text-sm">
+              {`Estimated Remaining: `}
+              <Countdown
+                className="ml-1"
+                zeroPadTime={2}
+                date={new Date(tx.date).getTime() + 1000 * 20 * 60 + 1000 * 15}
+              />
+            </div>
+          )}
         </div>
-      )}
+      ) : null}
 
-      <div className="mt-3">
-        {tx.msgBytes && tx.attestation ? (
+      <div className="mt-3 w-full text-center">
+        {!data ? (
+          <Label
+            className="text-xs text-gray-400 "
+            onClick={() => setTx(undefined)}
+          >
+            Transaction Stuck? Enter Manually...
+          </Label>
+        ) : null}
+      </div>
+      <div className="mt-3 w-full">
+        {tx && domains && data ? (
           <ClaimButton
             hash={tx.hash}
-            destination={tx.targetChain}
-            bytes={tx.msgBytes}
-            attestation={tx.attestation}
+            bytes={data.message}
+            attestation={data.attestation}
+            onBurn={onBurn}
           />
-        ) : (
-          <Button disabled className="w-full">
-            Waiting for finalization
-          </Button>
-        )}
+        ) : null}
       </div>
-    </div>
+    </>
   );
 }

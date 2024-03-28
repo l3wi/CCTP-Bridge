@@ -2,38 +2,100 @@
 import { InputCard, LocalTransaction } from "./inputCard";
 import { useLocalStorage } from "usehooks-ts";
 import History from "./history";
-import { useState } from "react";
+import { use, useEffect, useState } from "react";
 import { Label } from "@radix-ui/react-label";
 import { Button } from "./ui/button";
 import { ClaimCard } from "./claimCard";
 
 export default function ContentWrapper() {
-  const [isHistory, setIsHistory] = useState(false);
+  const [isClaim, setClaim] = useState(false);
   const [transactions, setTransactions] = useLocalStorage<
     Array<LocalTransaction>
   >("txs", []);
 
-  const pendingTx =
-    transactions &&
-    transactions.length > 0 &&
-    transactions.find(
-      (tx) => tx.status === "complete" || tx.status === "pending"
-    );
+  useEffect(() => {
+    const pendingTx =
+      transactions &&
+      transactions.length > 0 &&
+      transactions.find((tx) => tx.status === "pending");
+    if (pendingTx) {
+      setClaim(true);
+    }
+  }, [transactions]);
 
   return (
-    <div className="w-full relative ">
-      {pendingTx && <ClaimCard tx={pendingTx} />}
-      {!pendingTx && (
-        <>
-          <Label
-            onClick={() => setIsHistory(!isHistory)}
-            className="text-sm absolute top-1 right-2 hover:underline cursor-pointer"
-          >
-            {isHistory ? "New Transaction" : "History"}
-          </Label>
-          {isHistory ? <History /> : <InputCard />}
-        </>
-      )}
-    </div>
+    <>
+      <div className="flex flex-col justify-between items-center px-10 pb-10 lg:pt-20 lg:flex-row gap-10">
+        <div className="relative flex flex-col items-center justify-center max-w-xl w-full h-full lg:pr-24">
+          <div className="flex flex-col items-start space-y-8">
+            <div className="relative">
+              <h1 className="text-5xl font-extrabold leading-tight text-gray-100 sm:text-4xl md:text-5xl">
+                Bridge USDC without extra fees.
+              </h1>
+            </div>
+
+            <p
+              data-primary="blue-700"
+              className="text-md text-blue-300 inline-block"
+            >
+              {`Bridge your USDC using Circle's CCTP bridge directly, instead of paying an extra fee to another protocol
+             utilizing this free service.`}
+            </p>
+            <a
+              href="https://developers.circle.com/stablecoin/docs/cctp-getting-started"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-8 py-5 text-xl inline-block  font-medium tracking-wide text-center text-blue-500 transition duration-200 bg-white rounded-lg hover:bg-gray-100 ease"
+            >
+              Learn More
+            </a>
+          </div>
+        </div>
+        {/* <div className="flex flex-col items-start justify-start p-6 lg:p-10 bg-white shadow-2xl rounded-xl min-h-[380px] w-full max-w-xl">
+
+        </div> */}
+
+        <div className="relative flex flex-col items-start justify-start p-6 lg:p-10 bg-white shadow-2xl rounded-xl min-h-[380px] w-full max-w-xl">
+          {!isClaim ? (
+            <>
+              <div className="flex w-full justify-between items-center">
+                <h3 className="text-2xl font-bold text-gray-600">
+                  Start Bridging
+                </h3>
+                <Label className="text-sm" onClick={() => setClaim(!isClaim)}>
+                  {"Claim USDC"}
+                </Label>
+              </div>
+
+              <h3 className="text-sm text-gray-400 pt-2">
+                Burn the USDC to then mint it on the destination chain.
+              </h3>
+              <InputCard onBurn={setClaim} />
+            </>
+          ) : (
+            <>
+              <div className="flex w-full justify-between items-center">
+                <h3 className="text-2xl font-bold text-gray-600">
+                  Finish Bridging
+                </h3>
+                <Label className="text-sm" onClick={() => setClaim(!isClaim)}>
+                  {"New Transaction"}
+                </Label>
+              </div>
+
+              <h3 className="text-sm text-gray-400 pt-2">
+                {`Waiting for Circle's attestation to then claim the USDC.`}
+              </h3>
+              <ClaimCard onBurn={setClaim} />
+            </>
+          )}
+        </div>
+      </div>
+      <div className="relative z-10 w-full space-y-8 px-10">
+        <div className="flex flex-col items-start justify-start p-6 lg:p-10 bg-white shadow-2xl rounded-xl min-h-[380px]">
+          <History />
+        </div>
+      </div>
+    </>
   );
 }

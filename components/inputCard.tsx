@@ -5,11 +5,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import contracts, { getChainsFromId } from "@/constants/contracts";
-import { Chain, useAccount, useBalance, useNetwork } from "wagmi";
+import { useAccount, useBalance, useChains } from "wagmi";
 import { Checkbox } from "./ui/checkbox";
-import { useState } from "react";
-import { isAddress, pad, parseUnits } from "viem";
+import { Dispatch, SetStateAction, useState } from "react";
+import { Chain, isAddress, pad, parseUnits } from "viem";
 import ApproveGuard from "./guards/ApproveGuard";
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { useToast } from "./ui/use-toast";
 
@@ -18,24 +26,27 @@ import BurnButton from "./burnButton";
 
 export type LocalTransaction = {
   date: Date;
-  amount: string;
-  chain: number;
-  targetChain: number;
-  targetAddress: `0x${string}`;
+  originChain: number;
   hash: `0x${string}`;
   status: string;
+  amount?: string;
+  chain?: number;
+  targetChain?: number;
+  targetAddress?: `0x${string}`;
   claimHash?: `0x${string}`;
-  attestation?: `0x${string}`;
-  msgHash?: `0x${string}`;
-  msgBytes?: `0x${string}`;
 };
 
-export function InputCard() {
+export function InputCard({
+  onBurn,
+}: {
+  onBurn: Dispatch<SetStateAction<boolean>>;
+}) {
   const { toast } = useToast();
 
   // Get data from WAGMI
-  const { address } = useAccount();
-  const { chain, chains } = useNetwork();
+  const { address, chain } = useAccount();
+
+  const chains = useChains();
   // Get the chains that are supported by the current chain
   const usableChains =
     chain && chains ? getChainsFromId(chain.id, chains) : null;
@@ -67,88 +78,52 @@ export function InputCard() {
 
   return (
     <div className="w-full">
-      <div className="grid gap-2 ">
+      <div className="grid gap-2 pt-4">
         <Label htmlFor="number" className="text-lg text-gray-600">
           Destination Chain
         </Label>
+
         {chain && usableChains ? (
-          <RadioGroup defaultValue="card" className="grid grid-cols-2 gap-4">
-            {usableChains
-              .filter((c) => c && c.id !== chain.id)
-              .map(
-                (c) =>
-                  c && (
-                    <Label
-                      key={c.id}
-                      htmlFor={c.network}
-                      className="flex text-center  flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary"
-                    >
-                      <RadioGroupItem
-                        onClick={() => setTargetChain(c)}
-                        value={c.network}
-                        id={c.network}
-                        className="sr-only"
-                      />
-                      <Image
-                        className="pb-2"
-                        src={`/${c.id}.svg`}
-                        alt="Ethereum"
-                        height={80}
-                        width={80}
-                      />
-                      {c.name}
-                    </Label>
-                  )
-              )}
-          </RadioGroup>
+          <Select
+            onValueChange={(c) =>
+              setTargetChain(
+                (chain &&
+                  usableChains.find((chain) => chain?.id.toString() === c)) ||
+                  null
+              )
+            }
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select Chain..." />
+            </SelectTrigger>
+            <SelectContent>
+              {usableChains
+                .filter((c) => c && c.id !== chain.id)
+                .map(
+                  (c) =>
+                    c && (
+                      <SelectItem key={c.id} value={c.id.toString()}>
+                        <div className="flex justify-between items-center">
+                          <Image
+                            src={`/${c.id}.svg`}
+                            width={24}
+                            height={24}
+                            className="w-6 h-6 mr-2"
+                            alt={c.name}
+                          />
+                          <span>{c.name}</span>
+                        </div>
+                      </SelectItem>
+                    )
+                )}
+            </SelectContent>
+          </Select>
         ) : (
-          <RadioGroup defaultValue="card" className="grid grid-cols-3 gap-4">
-            <Label className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-2 lg:p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary">
-              <RadioGroupItem
-                id={"ethereum"}
-                value={"ethereum"}
-                className="sr-only"
-              />
-              <Image
-                className="pb-2"
-                src="/1.svg"
-                alt="Ethereum"
-                height={80}
-                width={80}
-              />
-              Ethereum
-            </Label>
-            <Label className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary">
-              <RadioGroupItem
-                id={"arbitrum"}
-                value={"arbitrum"}
-                className="sr-only"
-              />
-              <Image
-                className="pb-2"
-                src="/42161.svg"
-                alt="Ethereum"
-                height={80}
-                width={80}
-              />
-              Arbitrum
-            </Label>
-            <Label className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground [&:has([data-state=checked])]:border-primary">
-              <RadioGroupItem
-                id={"avalanche"}
-                value={"avalanche"}
-                className="sr-only"
-              />
-              <Image
-                className="pb-2"
-                src="/43114.svg"
-                alt="Ethereum"
-                height={80}
-                width={80}
-              />
-              Avalanche
-            </Label>
-          </RadioGroup>
+          <Select>
+            <SelectTrigger className="w-full">
+              <SelectValue placeholder="Select Chain..." />
+            </SelectTrigger>
+          </Select>
         )}
       </div>
       <div className="grid gap-2 mt-4">
@@ -156,7 +131,7 @@ export function InputCard() {
           <Label htmlFor="name" className="text-lg text-gray-600">
             Amount
           </Label>
-          <span>
+          <span className="text-sm">
             {!usdcData?.formatted ? null : `Balance: ${usdcData?.formatted}`}{" "}
           </span>
         </div>
@@ -243,6 +218,7 @@ export function InputCard() {
               </Button>
             ) : chain && amount && targetChain && address ? (
               <BurnButton
+                onBurn={onBurn}
                 chain={chain.id}
                 amount={amount.bigInt}
                 targetChainId={targetChain.id}
