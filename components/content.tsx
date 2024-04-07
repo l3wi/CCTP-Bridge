@@ -9,19 +9,6 @@ import { ClaimCard } from "./claimCard";
 
 export default function ContentWrapper() {
   const [isClaim, setClaim] = useState(false);
-  const [transactions, setTransactions] = useLocalStorage<
-    Array<LocalTransaction>
-  >("txs", []);
-
-  useEffect(() => {
-    const pendingTx =
-      transactions &&
-      transactions.length > 0 &&
-      transactions.find((tx) => tx.status === "pending");
-    if (pendingTx) {
-      setClaim(true);
-    }
-  }, [transactions]);
 
   return (
     <>
@@ -51,9 +38,6 @@ export default function ContentWrapper() {
             </a>
           </div>
         </div>
-        {/* <div className="flex flex-col items-start justify-start p-6 lg:p-10 bg-white shadow-2xl rounded-xl min-h-[380px] w-full max-w-xl">
-
-        </div> */}
 
         <div className="relative flex flex-col items-start justify-start p-6 lg:p-10 bg-white shadow-2xl rounded-xl min-h-[380px] w-full max-w-xl">
           {!isClaim ? (
@@ -79,12 +63,12 @@ export default function ContentWrapper() {
                   Finish Bridging
                 </h3>
                 <Label className="text-sm" onClick={() => setClaim(!isClaim)}>
-                  {"New Transaction"}
+                  {"New TX"}
                 </Label>
               </div>
 
               <h3 className="text-sm text-gray-400 pt-2">
-                {`Waiting for Circle's attestation to then claim the USDC.`}
+                {`Enter burn transaction hash to claim USDC & originchain to finalize transaction.`}
               </h3>
               <ClaimCard onBurn={setClaim} />
             </>

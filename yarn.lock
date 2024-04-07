@@ -1124,10 +1124,10 @@
   dependencies:
     "@babel/runtime" "^7.13.10"
 
-"@rainbow-me/rainbowkit@^2.0.2":
-  version "2.0.2"
-  resolved "https://registry.yarnpkg.com/@rainbow-me/rainbowkit/-/rainbowkit-2.0.2.tgz#6122e349b7b87e4bb57ece374747c21915816ae7"
-  integrity sha512-xm/3iWxwL/ATVVWjtYVGviTJ4ldXwcvaic+bQnGg/pqzf8zKONkuzd5gNWLw0ft1iNG2IPHL1ABP9UoR2Trlaw==
+"@rainbow-me/rainbowkit@^2.0.5":
+  version "2.0.5"
+  resolved "https://registry.yarnpkg.com/@rainbow-me/rainbowkit/-/rainbowkit-2.0.5.tgz#efe34e97ee342b8cd10538384f71e9ca01ab8306"
+  integrity sha512-JVBgl0J1EvYXrGxDJmqEVMFrjE3gGidHyacFilKu/zJdaHFGXogsmCG51DdaU3gsas0Aqbq9kqK13qk49VSfAg==
   dependencies:
     "@vanilla-extract/css" "1.14.0"
     "@vanilla-extract/dynamic" "2.1.0"
@@ -1384,17 +1384,17 @@
   dependencies:
     tslib "^2.4.0"
 
-"@tanstack/query-core@5.28.6":
-  version "5.28.6"
-  resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.28.6.tgz#a3bdb108f9f8d4e2ba3163068dbe6ff55b905a81"
-  integrity sha512-hnhotV+DnQtvtR3jPvbQMPNMW4KEK0J4k7c609zJ8muiNknm+yoDyMHmxTWM5ZnlZpsz0zOxYFr+mzRJNHWJsA==
+"@tanstack/query-core@5.29.0":
+  version "5.29.0"
+  resolved "https://registry.yarnpkg.com/@tanstack/query-core/-/query-core-5.29.0.tgz#d0b3d12c07d5a47f42ab0c1ed4f317106f3d4b20"
+  integrity sha512-WgPTRs58hm9CMzEr5jpISe8HXa3qKQ8CxewdYZeVnA54JrPY9B1CZiwsCoLpLkf0dGRZq+LcX5OiJb0bEsOFww==
 
-"@tanstack/react-query@^5.28.6":
-  version "5.28.6"
-  resolved "https://registry.yarnpkg.com/@tanstack/react-query/-/react-query-5.28.6.tgz#0d52b0a98a1d842debf9c65496e20a9981a23bc4"
-  integrity sha512-/DdYuDBSsA21Qbcder1R8Cr/3Nx0ZnA2lgtqKsLMvov8wL4+g0HBz/gWYZPlIsof7iyfQafyhg4wUVUsS3vWZw==
+"@tanstack/react-query@^5.29.0":
+  version "5.29.0"
+  resolved "https://registry.yarnpkg.com/@tanstack/react-query/-/react-query-5.29.0.tgz#42b3a2de4ed1d63666f0af04392a34b5e70d49c0"
+  integrity sha512-yxlhHB73jaBla6h5B6zPaGmQjokkzAhMHN4veotkPNiQ3Ac/mCxgABRZPsJJrgCTvhpcncBZcDBFxaR2B37vug==
   dependencies:
-    "@tanstack/query-core" "5.28.6"
+    "@tanstack/query-core" "5.29.0"
 
 "@types/chrome@^0.0.136":
   version "0.0.136"
@@ -1569,15 +1569,22 @@
   resolved "https://registry.yarnpkg.com/@vanilla-extract/sprinkles/-/sprinkles-1.6.1.tgz#2c8a832757a0d8104dc6bd5d961db2c70d1dbdcb"
   integrity sha512-N/RGKwGAAidBupZ436RpuweRQHEFGU+mvAqBo8PRMAjJEmHoPDttV8RObaMLrJHWLqvX+XUMinHUnD0hFRQISw==
 
+"@vercel/analytics@^1.2.2":
+  version "1.2.2"
+  resolved "https://registry.yarnpkg.com/@vercel/analytics/-/analytics-1.2.2.tgz#715d8f203a170c06ba36b363e03b048c03060d5d"
+  integrity sha512-X0rctVWkQV1e5Y300ehVNqpOfSOufo7ieA5PIdna8yX/U7Vjz0GFsGf4qvAhxV02uQ2CVt7GYcrFfddXXK2Y4A==
+  dependencies:
+    server-only "^0.0.1"
+
 "@wagmi/chains@1.2.0":
   version "1.2.0"
   resolved "https://registry.yarnpkg.com/@wagmi/chains/-/chains-1.2.0.tgz#d59eaa70ec51a5fdcd113975926992acfb17ab12"
   integrity sha512-dmDRipsE54JfyudOBkuhEexqQWcrZqxn/qiujG8SBzMh/az/AH5xlJSA+j1CPWTx9+QofSMF3B7A4gb6XRmSaQ==
 
-"@wagmi/connectors@4.1.18":
-  version "4.1.18"
-  resolved "https://registry.yarnpkg.com/@wagmi/connectors/-/connectors-4.1.18.tgz#b95350ff2cb527093ff9dd11d382e0563ec546e3"
-  integrity sha512-K/iLH/Z8jwvgPAYESU/uCQtQBvcIR1Jrqk+t2uCDSxew/tYtkOo2yOjtaPuOb+xJ5OrMGg+0tVHhGChYXry9Ow==
+"@wagmi/connectors@4.1.25":
+  version "4.1.25"
+  resolved "https://registry.yarnpkg.com/@wagmi/connectors/-/connectors-4.1.25.tgz#074c5e79067d7d4ba3fc3f965e8c3738b3049aa2"
+  integrity sha512-4Tot1Gtiv7uhiUAxZ9On37aai35l5S0sV7N2yQSNgzqXe55bAlI0cqyBAIJRvyKwOe1+hzKfoFqYQSaoCgj5Lg==
   dependencies:
     "@coinbase/wallet-sdk" "3.9.1"
     "@metamask/sdk" "0.14.3"
@@ -1586,10 +1593,10 @@
     "@walletconnect/ethereum-provider" "2.11.2"
     "@walletconnect/modal" "2.6.2"
 
-"@wagmi/core@2.6.9":
-  version "2.6.9"
-  resolved "https://registry.yarnpkg.com/@wagmi/core/-/core-2.6.9.tgz#6b2659c7a4420c1d3876902a051ac9487aa604eb"
-  integrity sha512-AbNbHK+m60mfMTds0flv5YYJGp+JSz8O8ikzX+T7MdemFrYA9tZr6G+iSEnf+JLtcgiaCgQqUwac/WmmTkDiMA==
+"@wagmi/core@2.6.16":
+  version "2.6.16"
+  resolved "https://registry.yarnpkg.com/@wagmi/core/-/core-2.6.16.tgz#7a697aed16ff387b8d684ea64bf9ebb755f537a1"
+  integrity sha512-95r+2CCf4Yz4CWG7UZMALIcGSUfpr9YbZ2HOqmz6gJEBaW9Cf9xUEZj2MXOHZIP+Ri/3CZJtbBEclDot4enZWA==
   dependencies:
     eventemitter3 "5.0.1"
     mipd "0.0.5"
@@ -5093,6 +5100,11 @@ semver@^7.5.4:
   dependencies:
     lru-cache "^6.0.0"
 
+server-only@^0.0.1:
+  version "0.0.1"
+  resolved "https://registry.yarnpkg.com/server-only/-/server-only-0.0.1.tgz#0f366bb6afb618c37c9255a314535dc412cd1c9e"
+  integrity sha512-qepMx2JxAa5jjfzxG79yPPq+8BuFToHd1hm7kI+Z4zAq1ftQiP7HcxMhDDItrbtwVeLg/cY2JnKnrcFkmiswNA==
+
 set-blocking@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/set-blocking/-/set-blocking-2.0.0.tgz#045f9782d011ae9a6803ddd382b24392b3d890f7"
@@ -5735,10 +5747,10 @@ viem@^1.1.4:
     isows "1.0.3"
     ws "8.13.0"
 
-viem@^2.8.18:
-  version "2.8.18"
-  resolved "https://registry.yarnpkg.com/viem/-/viem-2.8.18.tgz#ffb051bf80381ffefc98087a20c177b25463c9f4"
-  integrity sha512-Kq3kwkKziJ8rQeLkmdbSLheHDnA+tx2EdLKLmQ3N4FVtjKYjBP9tPL1r+fI6KltVUM1TDOhIHOdslDSp57VMMg==
+viem@^2.9.12:
+  version "2.9.12"
+  resolved "https://registry.yarnpkg.com/viem/-/viem-2.9.12.tgz#27a865f8bd95dc1de7931bbcad485bf561dc1027"
+  integrity sha512-wxeFgcdEbf9+CYGGS2NrxlbhZQc3kNDArEjFtI7jAMttcQSHle9KFps+kRa35poARi1LKS2MtAa9ODPloNRlcw==
   dependencies:
     "@adraffy/ens-normalize" "1.10.0"
     "@noble/curves" "1.2.0"
@@ -5754,13 +5766,13 @@ void-elements@3.1.0:
   resolved "https://registry.yarnpkg.com/void-elements/-/void-elements-3.1.0.tgz#614f7fbf8d801f0bb5f0661f5b2f5785750e4f09"
   integrity sha512-Dhxzh5HZuiHQhbvTW9AMetFfBHDMYpo23Uo9btPXgdYP+3T5S+p+jgNy7spra+veYhBP2dCSgxR/i2Y02h5/6w==
 
-wagmi@^2.5.12:
-  version "2.5.12"
-  resolved "https://registry.yarnpkg.com/wagmi/-/wagmi-2.5.12.tgz#972603870d3b692d8957cfcd3503a58ed83b0c8a"
-  integrity sha512-n9XxiDgBUUzibZqFIdQI6/vKDjNlOTXH6mIHcuVO7ujYJuyw4aEjOJzDWivIGjVf2ygmb1aGryh2jx6W5KwjRw==
+wagmi@^2.5.19:
+  version "2.5.19"
+  resolved "https://registry.yarnpkg.com/wagmi/-/wagmi-2.5.19.tgz#9b8f14d926b88a682fd191824a0c1971ed077f82"
+  integrity sha512-fy6s3qTuXpfrrghhoNXuV92yqOqJI7m/9iLIejHxEYxiddVDTR8BVdkt0BuBQZzoXSAutDkyIlJbtFcpX5dfrQ==
   dependencies:
-    "@wagmi/connectors" "4.1.18"
-    "@wagmi/core" "2.6.9"
+    "@wagmi/connectors" "4.1.25"
+    "@wagmi/core" "2.6.16"
     use-sync-external-store "1.2.0"
 
 watchpack@2.4.0:

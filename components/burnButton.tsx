@@ -8,6 +8,7 @@ import { useLocalStorage } from "usehooks-ts";
 import { formatUnits, pad } from "viem";
 import { writeContract } from "viem/actions";
 import { Dispatch, SetStateAction } from "react";
+import { track } from "@vercel/analytics/react";
 
 // Big Int????
 export default function BurnButton({
@@ -15,13 +16,11 @@ export default function BurnButton({
   amount,
   targetChainId,
   targetAddress,
-  onBurn,
 }: {
   chain: number;
   amount: BigInt;
   targetChainId: number;
   targetAddress: `0x${string}`;
-  onBurn: Dispatch<SetStateAction<boolean>>;
 }) {
   const { writeContract } = useWriteContract();
   const [transactions, setTransactions] = useLocalStorage<
@@ -64,7 +63,13 @@ export default function BurnButton({
               },
               {
                 onSuccess(data: any) {
-                  console.log(data);
+                  track("bridge", {
+                    //@ts-ignore
+                    amount: formatUnits(amount, 6),
+                    from: chain,
+                    to: targetChainId,
+                  });
+
                   console.log("Successful Write: ", data);
                   setTransactions([
                     ...transactions,
@@ -78,7 +83,6 @@ export default function BurnButton({
                       status: "pending",
                     },
                   ]);
-                  onBurn(true);
                 },
               }
             )

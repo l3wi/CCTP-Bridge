@@ -218,7 +218,6 @@ export function InputCard({
               </Button>
             ) : chain && amount && targetChain && address ? (
               <BurnButton
-                onBurn={onBurn}
                 chain={chain.id}
                 amount={amount.bigInt}
                 targetChainId={targetChain.id}

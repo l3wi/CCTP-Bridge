@@ -3,8 +3,7 @@ import ContentWrapper from "@/components/content";
 
 export default function Home() {
   return (
-    <main>
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-900 via-blue-700 to-blue-400 opacity-90 pointer-events-none"></div>
+    <main className="inset-0 bg-gradient-to-br from-blue-900 via-blue-700 to-blue-400 opacity-90">
       <section className="relative w-full bg-center bg-cover min-h-screen flex flex-col">
         <div className="mx-auto flex-grow max-w-7xl w-full">
           <div className="relative flex items-center justify-between h-24 px-10">
@@ -22,10 +21,9 @@ export default function Home() {
 
           <ContentWrapper />
         </div>
-        <div className="w-full text-center text-black py-2 bg-slate-100">
-          by{" "}
+        <div className="w-full text-center text-xs text-slate-200 mt-5 py-2 bg-slate-900/50">
+          {`built by `}
           <a
-            className=" text-black"
             href="https://twitter.com/lewifree"
             target="_blank"
             rel="noopener noreferrer"

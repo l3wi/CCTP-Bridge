@@ -15,6 +15,7 @@ import {
   optimism,
   polygon,
   base,
+  localhost,
 } from "wagmi/chains";
 
 import { Toaster } from "./ui/toaster";
@@ -24,15 +25,23 @@ const config = getDefaultConfig({
   appName: "Vanilla CCTP",
   projectId: "0986356cfc85b6c59c45557e11c24451",
   // @ts-ignore
-  chains: [mainnet, arbitrum, avalanche, optimism, polygon, base].map(
-    (chain) => {
-      return {
-        ...chain,
-        rpcUrls: {
-          default: { http: [rpcs[chain.id]] },
-        },
-      };
-    }
+  chains: [
+    mainnet,
+    arbitrum,
+    avalanche,
+    optimism,
+    polygon,
+    base,
+    localhost,
+  ].map((chain) =>
+    rpcs[chain.id]
+      ? {
+          ...chain,
+          rpcUrls: {
+            default: { http: [rpcs[chain.id]] },
+          },
+        }
+      : chain
   ),
   ssr: true, // If your dApp uses server side rendering (SSR)
 });

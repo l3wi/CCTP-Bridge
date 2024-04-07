@@ -54,11 +54,11 @@ export default function ClaimButton({
   if (error) console.log(error);
   if (error?.message.includes("Nonce already used")) {
     toast({
-      title: "You have successfully claimed your USDC!",
+      title: "You have already claimed your USDC!",
       description:
         "Please check your wallet to ensure the tokens have arrived.",
     });
-    const index = transactions.findIndex((t) => t.status === "pending");
+    const index = transactions.findIndex((t) => t.hash === hash);
     const newTransactions = [...transactions];
     newTransactions[index] = {
       ...newTransactions[index],
@@ -125,17 +125,19 @@ export default function ClaimButton({
             },
           }
         );
-    } catch (error) {}
+    } catch (error) {
+      console.log(error);
+    }
   };
 
   return (
     <div>
       {chain && chain.id !== destination ? (
-        <Button className="w-full" onClick={() => initiateSwitch()}>
+        <Button className="" onClick={() => initiateSwitch()}>
           Switch Chain
         </Button>
       ) : (
-        <Button className="w-full" onClick={() => claim()}>
+        <Button className="" onClick={() => claim()}>
           Claim USDC
         </Button>
       )}
