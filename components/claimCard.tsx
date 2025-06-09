@@ -5,10 +5,10 @@ import { useAccount, useChains } from "wagmi";
 import { Dispatch, SetStateAction, useEffect, useState } from "react";
 import { Chain } from "viem";
 import { toast, useToast } from "./ui/use-toast";
-import { useLocalStorage } from "usehooks-ts";
-
-import { LocalTransaction } from "./inputCard";
+import { LocalTransaction } from "@/lib/types";
 import { Button } from "./ui/button";
+import { useTransactionStore } from "@/lib/store/transactionStore";
+import { LoadingButton } from "./loading/LoadingStates";
 
 import {
   Select,
@@ -26,9 +26,8 @@ export function ClaimCard({
   onBurn: Dispatch<SetStateAction<boolean>>;
 }) {
   // State
-  const [transactions, setTransactions] = useLocalStorage<
-    Array<LocalTransaction>
-  >("txs", []);
+  const { transactions, addTransaction } = useTransactionStore();
+  const { toast } = useToast();
 
   // Setup Chain data
   const { chain } = useAccount();
@@ -38,35 +37,56 @@ export function ClaimCard({
     chain && chains ? getChainsFromId(chain.id, chains) : null;
 
   // If we don't have a TX then allow user to input one
-  const [originChain, setOriginChain] = useState<null | Chain>(null);
-  const [hash, setHash] = useState<undefined | string>(undefined);
+  const [originChain, setOriginChain] = useState<Chain | null>(null);
+  const [hash, setHash] = useState<string | undefined>(undefined);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const addPending = () => {
-    // Check if the transaction already exists
-    if (transactions.find((t) => t.hash === hash)) {
+  const addPending = async () => {
+    if (!hash || !originChain) {
       toast({
-        title: "Transaction Already Exists",
-        description:
-          "This transaction already exists in the list of transactions.",
+        title: "Missing Information",
+        description: "Please select a chain and enter a transaction hash.",
+        variant: "destructive",
       });
       return;
     }
 
-    // Add the transaction to the list
-    setTransactions([
-      ...transactions,
-      {
-        date: new Date(),
-        originChain: originChain?.id || 0,
+    setIsSubmitting(true);
+
+    try {
+      // Check if the transaction already exists
+      if (transactions.find((t: LocalTransaction) => t.hash === hash)) {
+        toast({
+          title: "Transaction Already Exists",
+          description:
+            "This transaction already exists in the list of transactions.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Add the transaction to the list
+      addTransaction({
+        originChain: originChain.id,
         hash: hash as `0x${string}`,
         status: "pending",
-      },
-    ]);
-    toast({
-      title: "Transaction Added",
-      description: "The transaction has been added to the list.",
-    });
-    onBurn(false);
+      });
+
+      toast({
+        title: "Transaction Added",
+        description: "The transaction has been added to the list.",
+      });
+
+      onBurn(false);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to add transaction. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -125,9 +145,14 @@ export function ClaimCard({
           onChange={(e) => setHash(e.target.value)}
         />
       </div>
-      <Button className="w-full mt-4" onClick={() => addPending()}>
+      <LoadingButton
+        className="w-full mt-4"
+        onClick={addPending}
+        isLoading={isSubmitting}
+        disabled={!hash || !originChain}
+      >
         Check for Attestation
-      </Button>
+      </LoadingButton>
     </>
   );
 }

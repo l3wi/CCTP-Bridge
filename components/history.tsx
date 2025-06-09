@@ -8,248 +8,314 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { useLocalStorage } from "usehooks-ts";
-import { useAccount, useChains, usePublicClient } from "wagmi";
-import { LocalTransaction } from "./inputCard";
-import { endpoints, explorers, rpcs } from "@/constants/endpoints";
+import { useAccount, useChains } from "wagmi";
+import { LocalTransaction } from "@/lib/types";
+import { explorers } from "@/constants/endpoints";
 import { Label } from "@radix-ui/react-label";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { domains, getChainsFromId, isTestnet } from "@/constants/contracts";
 import { fromHex, slice } from "viem";
 import { Button } from "./ui/button";
-import ClaimButton from "./claimButton";
+import ClaimButton, { SwitchGuard } from "./claimButton";
 import ConnectGuard from "./guards/ConnectGuard";
 import Countdown from "react-countdown";
+import { useTransactionStore } from "@/lib/store/transactionStore";
+import { useAttestation } from "@/lib/hooks/useAttestation";
+import {
+  HistoryTableSkeleton,
+  AttestationLoader,
+  TransactionStatus,
+} from "./loading/LoadingStates";
 
-const Row = ({ tx, i }: { tx: LocalTransaction; i: number }) => {
-  /// Chains
+interface RowProps {
+  tx: LocalTransaction;
+  index: number;
+}
+
+const Row = ({ tx, index }: RowProps) => {
   const { chain } = useAccount();
   const chains = useChains();
-  const usableChains =
-    chain && chains ? getChainsFromId(chain.id, chains) : null;
+  const { updateTransaction } = useTransactionStore();
 
-  // Decode the transaction
-  const origin = tx && chains.find((c) => c.id === tx?.originChain);
-  const destination = tx && chains.find((c) => c.id === tx?.targetChain);
-  const testnet = destination && isTestnet(destination);
-
-  // Fetch Circle attestation & message
-  const [data, setData] = useState<
-    | undefined
-    | {
-        attestation: `0x${string}`;
-        message: `0x${string}`;
-      }
-  >(undefined);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    const func = async () => {
-      if (!tx) return;
-
-      const response = await fetch(
-        endpoints[testnet ? "testnet" : "mainnet"] +
-          `/messages/${
-            tx.chain ? domains[tx.chain] : domains[tx.originChain]
-          }/${tx.hash}`
-      );
-      const data = await response.json();
-      if (data.messages[0].attestation !== "PENDING") {
-        console.log("Attestation Found: ", data.messages[0]);
-        setData(data.messages[0]);
-        clearInterval(timer);
-      }
-    };
-
-    if (tx && tx.status === "pending" && !data) {
-      timer = setInterval(func, 10000);
-    }
-  });
-
-  /// Derive Destination ChainID from Bytes
-  const destinationDomain =
-    data && fromHex(slice(data?.message, 8, 12) as `0x${string}`, "number");
-  const destinationChain = chains.find(
-    (c) =>
-      c.id ===
-      parseInt(
-        (Object.entries(domains).find(
-          ([chain, domain]) => domain === destinationDomain
-        ) || ["1", 0])[0]
-      )
+  // Get chain information
+  const origin = useMemo(
+    () => chains.find((c) => c.id === tx.originChain),
+    [chains, tx.originChain]
   );
 
-  // Renderer callback with condition
-  const renderer = ({ minutes, seconds, completed }: any) => {
+  const destination = useMemo(
+    () => chains.find((c) => c.id === tx.targetChain),
+    [chains, tx.targetChain]
+  );
+
+  const isTestnetTx = useMemo(
+    () => (destination ? isTestnet(destination) : false),
+    [destination]
+  );
+
+  // Fetch attestation data
+  const {
+    data: attestationData,
+    isLoading: isAttestationLoading,
+    isPending: isAttestationPending,
+    error: attestationError,
+  } = useAttestation(tx.hash, tx.originChain, destination, {
+    enabled: tx.status === "pending",
+    refetchInterval: 10000,
+  });
+
+  // Update transaction when attestation is found
+  useEffect(() => {
+    if (attestationData && tx.status === "pending") {
+      updateTransaction(tx.hash, {
+        status: "pending", // Keep as pending until claimed
+      });
+    }
+  }, [attestationData, tx.hash, tx.status, updateTransaction]);
+
+  // Derive destination chain from attestation message
+  const destinationDomain = useMemo(
+    () =>
+      attestationData &&
+      fromHex(slice(attestationData.message, 8, 12) as `0x${string}`, "number"),
+    [attestationData]
+  );
+
+  const destinationChain = useMemo(
+    () =>
+      chains.find(
+        (c) =>
+          c.id ===
+          parseInt(
+            (Object.entries(domains).find(
+              ([chain, domain]) => domain === destinationDomain
+            ) || ["1", 0])[0]
+          )
+      ),
+    [chains, destinationDomain]
+  );
+
+  // Countdown renderer
+  const countdownRenderer = ({ minutes, seconds, completed }: any) => {
     if (completed) {
-      // Render a completed state
-      return <span>Still waiting....</span>;
-    } else {
-      // Render a countdown
+      return <span className="text-yellow-600">Still waiting...</span>;
+    }
+    return (
+      <div className="flex items-center space-x-1 text-blue-600">
+        <span className="text-xs">ETA:</span>
+        <span className="font-mono">
+          {`${minutes.toString().padStart(2, "0")}:${seconds
+            .toString()
+            .padStart(2, "0")}`}
+        </span>
+      </div>
+    );
+  };
+
+  const renderStatus = () => {
+    if (tx.status === "claimed") {
       return (
-        <div className="w-12 inline-block">
-          <span>{`~${
-            minutes.toString().length === 1 ? "0" + minutes : minutes
-          }:${
-            seconds.toString().length === 1 ? "0" + seconds : seconds
-          }`}</span>
+        <div className="flex items-center space-x-2">
+          <TransactionStatus status="success" message="Completed" />
+          {tx.claimHash && tx.targetChain && (
+            <a
+              href={`${explorers[tx.targetChain]}tx/${tx.claimHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 transition-colors"
+              title="View transaction in explorer"
+            >
+              <svg
+                className="w-4 h-4"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1"
+              >
+                <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          )}
         </div>
       );
     }
+
+    if (tx.status === "failed") {
+      return <TransactionStatus status="error" message="Failed" />;
+    }
+
+    if (tx.status === "pending") {
+      if (attestationError) {
+        return (
+          <TransactionStatus
+            status="error"
+            message="Error fetching attestation"
+          />
+        );
+      }
+
+      if (attestationData) {
+        return (
+          <ConnectGuard>
+            <SwitchGuard bytes={attestationData.message} hash={tx.hash}>
+              <ClaimButton
+                hash={tx.hash}
+                bytes={attestationData.message}
+                attestation={attestationData.attestation}
+                onBurn={() => {}} // This will be handled by the store
+              />
+            </SwitchGuard>
+          </ConnectGuard>
+        );
+      }
+
+      if (isAttestationLoading || isAttestationPending) {
+        return (
+          <div className="space-y-2 w-full">
+            <AttestationLoader />
+            {tx.date && (
+              <Countdown
+                date={new Date(tx.date).getTime() + 1000 * 25 * 60}
+                renderer={countdownRenderer}
+              />
+            )}
+          </div>
+        );
+      }
+
+      return <TransactionStatus status="pending" message="Pending" />;
+    }
+
+    return null;
   };
 
   return (
     <TableRow key={tx.hash}>
-      <TableCell className="">
-        <span className="block w-32 md:inline">
-          {new Date(tx.date).toDateString()}
+      <TableCell>
+        <span className="block w-32 md:inline text-sm">
+          {new Date(tx.date).toLocaleDateString()}
         </span>
       </TableCell>
+
       <TableCell>
         <a
-          className="hover:underline cursor-pointer flex items-center"
-          href={explorers[tx.originChain] + "tx/" + tx.hash}
+          className="hover:underline cursor-pointer flex items-center text-blue-600"
+          href={`${explorers[tx.originChain]}tx/${tx.hash}`}
           target="_blank"
           rel="noopener noreferrer"
         >
-          {chains.find((c) => c.id === tx.originChain)?.name.split(" ")[0]}
-          <svg
-            className="w-4 h-4 ml-2"
-            viewBox="0 0 24 24"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-          >
-            <g id="Interface / External_Link">
-              <path
-                id="Vector"
-                d="M10.0002 5H8.2002C7.08009 5 6.51962 5 6.0918 5.21799C5.71547 5.40973 5.40973 5.71547 5.21799 6.0918C5 6.51962 5 7.08009 5 8.2002V15.8002C5 16.9203 5 17.4801 5.21799 17.9079C5.40973 18.2842 5.71547 18.5905 6.0918 18.7822C6.5192 19 7.07899 19 8.19691 19H15.8031C16.921 19 17.48 19 17.9074 18.7822C18.2837 18.5905 18.5905 18.2839 18.7822 17.9076C19 17.4802 19 16.921 19 15.8031V14M20 9V4M20 4H15M20 4L13 11"
-                stroke="#000000"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </g>
+          <span className="text-sm">
+            {origin?.name.split(" ")[0] || `Chain ${tx.originChain}`}
+          </span>
+          <svg className="w-3 h-3 ml-1" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
           </svg>
         </a>
       </TableCell>
+
       <TableCell>
         {tx.claimHash && tx.targetChain ? (
           <a
-            className="hover:underline cursor-pointer flex items-center"
-            href={explorers[tx.targetChain] + "tx/" + tx.claimHash}
+            className="hover:underline cursor-pointer flex items-center text-blue-600"
+            href={`${explorers[tx.targetChain]}tx/${tx.claimHash}`}
             target="_blank"
             rel="noopener noreferrer"
           >
-            {chains.find((c) => c.id === tx.targetChain)?.name.split(" ")[0]}
+            <span className="text-sm">
+              {destination?.name.split(" ")[0] || `Chain ${tx.targetChain}`}
+            </span>
             <svg
-              className="w-4 h-4 ml-2"
+              className="w-3 h-3 ml-1"
               viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
+              fill="currentColor"
             >
-              <g id="Interface / External_Link">
-                <path
-                  id="Vector"
-                  d="M10.0002 5H8.2002C7.08009 5 6.51962 5 6.0918 5.21799C5.71547 5.40973 5.40973 5.71547 5.21799 6.0918C5 6.51962 5 7.08009 5 8.2002V15.8002C5 16.9203 5 17.4801 5.21799 17.9079C5.40973 18.2842 5.71547 18.5905 6.0918 18.7822C6.5192 19 7.07899 19 8.19691 19H15.8031C16.921 19 17.48 19 17.9074 18.7822C18.2837 18.5905 18.5905 18.2839 18.7822 17.9076C19 17.4802 19 16.921 19 15.8031V14M20 9V4M20 4H15M20 4L13 11"
-                  stroke="#000000"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </g>
+              <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
             </svg>
           </a>
         ) : (
-          <div>
-            {destinationDomain
-              ? chains
-                  .find((c) => c.id === tx.targetChain)
-                  ?.name.split(" ")[0] || destinationChain?.name.split(" ")[0]
-              : ""}
-          </div>
+          <span className="text-sm text-gray-500">
+            {destinationChain?.name.split(" ")[0] ||
+              destination?.name.split(" ")[0] ||
+              (tx.targetChain ? `Chain ${tx.targetChain}` : "—")}
+          </span>
         )}
       </TableCell>
-      <TableCell className="capitalize">
-        <span className="block w-32 md:inline">
-          {tx.status === "claimed" ? (
-            "Completed"
-          ) : tx && domains && data ? (
-            <ConnectGuard>
-              <ClaimButton
-                hash={tx.hash}
-                bytes={data.message}
-                attestation={data.attestation}
-                onBurn={() => console.log("burn")}
-              />
-            </ConnectGuard>
-          ) : tx.status === "pending" && tx.date ? (
-            <div className="text-sm">
-              {`ETA: `}
-              <Countdown
-                className="ml-1"
-                date={new Date(tx.date).getTime() + 1000 * 25 * 60}
-                renderer={renderer}
-              />
-            </div>
-          ) : tx.status === "pending" ? (
-            <Button disabled>Pending</Button>
-          ) : null}
-        </span>
+
+      <TableCell>
+        <div className="min-w-[120px]">{renderStatus()}</div>
       </TableCell>
     </TableRow>
   );
 };
 
 export default function History() {
-  const [transactions, setTransactions] = useLocalStorage<
-    Array<LocalTransaction>
-  >("txs", []);
+  const { transactions, clearPendingTransactions, isLoading } =
+    useTransactionStore();
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  const isPending = transactions.find((tx) => tx.status === "pending");
+  useEffect(() => {
+    // Simulate initial load delay
+    const timer = setTimeout(() => setIsInitialLoad(false), 1000);
+    return () => clearTimeout(timer);
+  }, []);
 
-  const clearPending = () => {
-    const hist = transactions.filter((tx) => tx.status !== "pending");
-    setTransactions(hist);
-  };
+  const hasPendingTransactions = useMemo(
+    () => transactions.some((tx) => tx.status === "pending"),
+    [transactions]
+  );
 
+  const sortedTransactions = useMemo(
+    () =>
+      [...transactions].sort(
+        (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+      ),
+    [transactions]
+  );
+
+  if (isInitialLoad || isLoading) {
+    return <HistoryTableSkeleton />;
+  }
+  console.log(sortedTransactions);
   return (
-    <>
-      <div className="flex w-full justify-between">
-        <Label htmlFor="name" className="text-lg text-gray-600">
-          History
-        </Label>
-        {isPending && (
+    <div className="space-y-4 w-full">
+      <div className="flex w-full justify-between items-center">
+        <Label className="text-lg text-gray-600">Transaction History</Label>
+        {hasPendingTransactions && (
           <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearPendingTransactions}
             className="text-xs"
-            variant={"ghost"}
-            onClick={() => clearPending()}
           >
             Clear Pending
           </Button>
         )}
       </div>
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Date</TableHead>
-            <TableHead>Origin</TableHead>
-            <TableHead>Destination</TableHead>
-            <TableHead>Status</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {transactions[0] &&
-            transactions
-              .sort((a, b) => (a.date < b.date ? 1 : -1))
-              .map((tx, i) => (
-                <Row key={tx.hash} tx={tx} i={transactions.length - i} />
-              ))}
-        </TableBody>
-      </Table>
-      {!transactions[0] && (
-        <div className="w-full text-center pt-5">{`No prior transactions`}</div>
+      {sortedTransactions.length > 0 ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Origin</TableHead>
+              <TableHead>Destination</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {sortedTransactions.map((tx, index) => (
+              <Row key={tx.hash} tx={tx} index={index} />
+            ))}
+          </TableBody>
+        </Table>
+      ) : (
+        <div className="text-center py-8 text-gray-500">
+          <p>No transactions yet</p>
+          <p className="text-sm mt-1">
+            Your bridge transactions will appear here
+          </p>
+        </div>
       )}
-    </>
+    </div>
   );
 }

@@ -14,9 +14,9 @@ export default function Home() {
               <span className="text-2xl font-black leading-none text-gray-100 select-none logo"></span>
             </a>
 
-            <span className="block">
+            <div className="flex items-center space-x-3">
               <ConnectButton />
-            </span>
+            </div>
           </div>
 
           <ContentWrapper />

@@ -25,10 +25,10 @@ export const explorers: { [key: number]: string } = {
 };
 
 export const rpcs: { [key: number]: string } = {
-  1: `https://eth-mainnet.rpc.grove.city/v1/8b88b6f9`,
-  10: `https://optimism-mainnet.rpc.grove.city/v1/8b88b6f9`,
-  137: `https://poly-mainnet.rpc.grove.city/v1/8b88b6f9`,
-  8453: `https://base-mainnet.rpc.grove.city/v1/8b88b6f9`,
-  43114: `https://avax-mainnet.rpc.grove.city/v1/8b88b6f9`,
-  42161: `https://arbitrum-one.rpc.grove.city/v1/8b88b6f9`,
+  1: `https://eth-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
+  10: `https://opt-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
+  137: `https://polygon-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
+  8453: `https://base-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
+  43114: `https://avax-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
+  42161: `https://arb-mainnet.g.alchemy.com/v2/INRThnRGgcJnmv6FDIgPbURqDN4mzv-C`,
 };

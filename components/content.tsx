@@ -1,11 +1,12 @@
 "use client";
-import { InputCard, LocalTransaction } from "./inputCard";
-import { useLocalStorage } from "usehooks-ts";
+import { InputCard } from "./inputCard";
+import { LocalTransaction } from "@/lib/types";
 import History from "./history";
-import { use, useEffect, useState } from "react";
+import { useState } from "react";
 import { Label } from "@radix-ui/react-label";
 import { Button } from "./ui/button";
 import { ClaimCard } from "./claimCard";
+import { useTransactionStore } from "@/lib/store/transactionStore";
 
 export default function ContentWrapper() {
   const [isClaim, setClaim] = useState(false);
@@ -25,8 +26,7 @@ export default function ContentWrapper() {
               data-primary="blue-700"
               className="text-md text-blue-300 inline-block"
             >
-              {`Bridge your USDC using Circle's CCTP bridge directly, instead of paying an extra fee to another protocol
-             utilizing this free service.`}
+              {`Bridge your USDC via Circle's CCTP bridge. Interact with the bridge directly instead of using a relaying service.`}
             </p>
             <a
               href="https://developers.circle.com/stablecoin/docs/cctp-getting-started"
@@ -46,13 +46,18 @@ export default function ContentWrapper() {
                 <h3 className="text-2xl font-bold text-gray-600">
                   Start Bridging
                 </h3>
-                <Label className="text-sm" onClick={() => setClaim(!isClaim)}>
-                  {"Claim USDC"}
-                </Label>
+                <Button
+                  className="text-sm"
+                  variant="outline"
+                  onClick={() => setClaim(!isClaim)}
+                >
+                  {"Manually Claim"}
+                </Button>
               </div>
 
               <h3 className="text-sm text-gray-400 pt-2">
-                Burn the USDC to then mint it on the destination chain.
+                Send one transaction to burn the USDC. Then another to mint it
+                on the destination chain.
               </h3>
               <InputCard onBurn={setClaim} />
             </>

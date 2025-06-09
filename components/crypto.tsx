@@ -3,7 +3,7 @@ import "@rainbow-me/rainbowkit/styles.css";
 
 import { getDefaultConfig, RainbowKitProvider } from "@rainbow-me/rainbowkit";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import { WagmiProvider } from "wagmi";
+import { http, WagmiProvider } from "wagmi";
 
 import {
   mainnet,
@@ -24,26 +24,20 @@ import { rpcs } from "@/constants/endpoints";
 const config = getDefaultConfig({
   appName: "Vanilla CCTP",
   projectId: "0986356cfc85b6c59c45557e11c24451",
-  // @ts-ignore
-  chains: [
-    mainnet,
-    arbitrum,
-    avalanche,
-    optimism,
-    polygon,
-    base,
-    localhost,
-  ].map((chain) =>
-    rpcs[chain.id]
-      ? {
-          ...chain,
-          rpcUrls: {
-            default: { http: [rpcs[chain.id]] },
-          },
-        }
-      : chain
-  ),
-  ssr: true, // If your dApp uses server side rendering (SSR)
+  chains: [mainnet, arbitrum, avalanche, optimism, polygon, base, localhost],
+  // transports: {
+  //   [mainnet.id]: http(rpcs[mainnet.id]),
+  //   [arbitrum.id]: http(rpcs[arbitrum.id]),
+  //   [avalanche.id]: http(rpcs[avalanche.id]),
+  //   [optimism.id]: http(rpcs[optimism.id]),
+  //   [polygon.id]: http(rpcs[polygon.id]),
+  //   [base.id]: http(rpcs[base.id]),
+  //   [localhost.id]: http(rpcs[localhost.id]),
+  // },
+  batch: {
+    multicall: true,
+  },
+  ssr: true,
 });
 const queryClient = new QueryClient();
 

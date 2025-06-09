@@ -1,7 +1,8 @@
 import { Chain } from "viem";
 import { UseChainsReturnType } from "wagmi";
+import { ContractsMap, ChainSupportMap, DomainMap } from "@/lib/types";
 
-export const supportedChains: { [key: string]: Number[] } = {
+export const supportedChains: ChainSupportMap = {
   mainnet: [1, 43114, 42161, 10, 8453, 137],
   testnet: [5, 43113, 421613],
 };
@@ -21,8 +22,10 @@ export const getChainsFromId = (
   }
 };
 
-// Map of domain to chainId
-export const domains: { [key: number]: number } = {
+export const supportsV2: number[] = [1, 43114, 8453];
+
+// Map of chainId to domain
+export const domains: DomainMap = {
   1: 0, // Ethereum
   43114: 1, // Avalanche
   10: 2, // Optimism
@@ -35,16 +38,7 @@ export const isTestnet = (chain: Chain) => {
   return ["arbitrum-goerli", "goerli", "avalanche-fuji"].includes(chain.name);
 };
 
-type Contracts = {
-  [key: number]: {
-    TokenMessenger: `0x${string}`;
-    MessageTransmitter: `0x${string}`;
-    TokenMinter: `0x${string}`;
-    Usdc: `0x${string}`;
-  };
-};
-
-const contracts: Contracts = {
+const contracts: ContractsMap = {
   1: {
     // Mainnet
     TokenMessenger: "0xbd3fa81b58ba92a82136038b25adec7066af3155",

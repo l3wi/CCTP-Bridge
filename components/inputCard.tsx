@@ -3,13 +3,22 @@ import { Button } from "@/components/ui/button";
 import Image from "next/image";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import contracts, { getChainsFromId } from "@/constants/contracts";
-import { useAccount, useBalance, useChains } from "wagmi";
+import { useAccount, useChains } from "wagmi";
 import { Checkbox } from "./ui/checkbox";
-import { Dispatch, SetStateAction, useState } from "react";
-import { Chain, isAddress, pad, parseUnits } from "viem";
-import ApproveGuard from "./guards/ApproveGuard";
+import {
+  Dispatch,
+  SetStateAction,
+  useState,
+  useCallback,
+  useMemo,
+} from "react";
+import { Chain } from "viem";
+import { validateBridgeParams } from "@/lib/validation";
+import { getErrorMessage } from "@/lib/errors";
+import { AmountState } from "@/lib/types";
+import { useBridge } from "@/lib/hooks/useBridge";
+import { useBalance } from "@/lib/hooks/useBalance";
 
 import {
   Select,
@@ -20,146 +29,265 @@ import {
 } from "@/components/ui/select";
 
 import { useToast } from "./ui/use-toast";
+import {
+  LoadingButton,
+  BalanceLoader,
+  ChainSelectorSkeleton,
+  FormFieldSkeleton,
+} from "./loading/LoadingStates";
 
-import ConnectGuard from "./guards/ConnectGuard";
-import BurnButton from "./burnButton";
+// LocalTransaction type moved to @/lib/types
 
-export type LocalTransaction = {
-  date: Date;
-  originChain: number;
-  hash: `0x${string}`;
-  status: string;
-  amount?: string;
-  chain?: number;
-  targetChain?: number;
-  targetAddress?: `0x${string}`;
-  claimHash?: `0x${string}`;
-};
-
-export function InputCard({
-  onBurn,
-}: {
+interface InputCardProps {
   onBurn: Dispatch<SetStateAction<boolean>>;
-}) {
-  const { toast } = useToast();
+}
 
-  // Get data from WAGMI
+export function InputCard({ onBurn }: InputCardProps) {
+  // Hooks
   const { address, chain } = useAccount();
-
+  const { toast } = useToast();
   const chains = useChains();
-  // Get the chains that are supported by the current chain
-  const usableChains =
-    chain && chains ? getChainsFromId(chain.id, chains) : null;
+  const { burn, isLoading: isBridgeLoading } = useBridge();
+  const {
+    usdcBalance,
+    usdcFormatted,
+    isUsdcLoading,
+    hasSufficientBalance,
+    needsApproval,
+  } = useBalance();
 
-  // Get current chain USDC Balance
-  const { data: usdcData, isLoading: isBalanceLoading } = useBalance({
-    address,
-    token: contracts[chain ? chain.id : 1].Usdc,
-  });
-
-  // Get Vars for the Buuurn
-  const [targetChain, setTargetChain] = useState<null | Chain>(null);
-  const [amount, setAmount] = useState<null | { str: string; bigInt: BigInt }>(
-    null
-  );
+  // State
+  const [targetChain, setTargetChain] = useState<Chain | null>(null);
+  const [amount, setAmount] = useState<AmountState | null>(null);
   const [diffWallet, setDiffWallet] = useState<boolean>(false);
-  const [targetAddress, setTargetAddress] = useState<undefined | string>(
+  const [targetAddress, setTargetAddress] = useState<string | undefined>(
     undefined
   );
 
-  const handleBigInt = (string: string, decimals: number) => {
-    const str: string = string.replace(/[a-zA-Z]/g, "");
-    if (str === "") return setAmount({ str: "", bigInt: BigInt(0) });
+  // Memoized values
+  const usableChains = useMemo(
+    () => (chain && chains ? getChainsFromId(chain.id, chains) : null),
+    [chain, chains]
+  );
+
+  const availableChains = useMemo(
+    () => usableChains?.filter((c) => c && c.id !== chain?.id) || [],
+    [usableChains, chain?.id]
+  );
+
+  // Handle amount change with validation
+  const handleAmountChange = useCallback(
+    (inputStr: string) => {
+      try {
+        // Clean the input string
+        const cleanStr = inputStr.replace(/[^0-9.]/g, "");
+
+        if (cleanStr === "") {
+          setAmount(null);
+          return;
+        }
+
+        // Basic format validation
+        const decimalCount = (cleanStr.match(/\./g) || []).length;
+        if (decimalCount > 1) {
+          toast({
+            title: "Invalid Format",
+            description: "Please enter a valid number",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Check decimal places
+        if (cleanStr.includes(".")) {
+          const decimalPart = cleanStr.split(".")[1];
+          if (decimalPart && decimalPart.length > 6) {
+            toast({
+              title: "Too Many Decimals",
+              description: "Maximum 6 decimal places allowed",
+              variant: "destructive",
+            });
+            return;
+          }
+        }
+
+        try {
+          // Convert to BigInt for validation
+          let divisor = BigInt(1);
+          for (let i = 0; i < 6; i++) {
+            divisor = divisor * BigInt(10);
+          }
+          const [integerPart, decimalPart = ""] = cleanStr.split(".");
+          const paddedDecimal = decimalPart.padEnd(6, "0");
+          const bigIntValue = BigInt(integerPart + paddedDecimal);
+
+          setAmount({
+            str: cleanStr,
+            bigInt: bigIntValue,
+          });
+        } catch (error) {
+          console.error("Amount parsing error:", error);
+          toast({
+            title: "Invalid Amount",
+            description: "Please enter a valid number",
+            variant: "destructive",
+          });
+        }
+      } catch (error) {
+        console.error("Amount validation error:", error);
+        toast({
+          title: "Error",
+          description: getErrorMessage(error),
+          variant: "destructive",
+        });
+      }
+    },
+    [toast]
+  );
+
+  // Validation
+  const validation = useMemo(
+    () =>
+      validateBridgeParams({
+        amount,
+        targetChain: targetChain?.id || null,
+        targetAddress,
+        sourceChain: chain?.id,
+        balance: usdcBalance,
+        isCustomAddress: diffWallet,
+        userAddress: address,
+      }),
+    [
+      amount,
+      targetChain?.id,
+      targetAddress,
+      chain?.id,
+      usdcBalance,
+      diffWallet,
+      address,
+    ]
+  );
+
+  // Handle bridge transaction
+  const handleBridge = useCallback(async () => {
+    if (!validation.isValid || !validation.data || !chain) {
+      return;
+    }
+
     try {
-      let bigInt: BigInt = parseUnits(str, decimals);
-      setAmount({ str, bigInt });
-    } catch (error) {}
-  };
+      await burn({
+        amount: validation.data.amount,
+        sourceChainId: chain.id,
+        targetChainId: validation.data.targetChain,
+        targetAddress: validation.data.targetAddress,
+        sourceTokenAddress: contracts[chain.id].Usdc,
+      });
+
+      // Switch to claim mode after successful burn
+      onBurn(true);
+    } catch (error) {
+      console.error("Bridge transaction failed:", error);
+    }
+  }, [validation, chain, burn, onBurn]);
+
+  // Loading states
+  const isLoading = isUsdcLoading || isBridgeLoading;
+  const showChainLoader = !chain || !chains.length;
+  const showBalanceLoader = isUsdcLoading && !!address && !!chain;
 
   return (
     <div className="w-full">
+      {/* Destination Chain Selection */}
       <div className="grid gap-2 pt-4">
-        <Label htmlFor="number" className="text-lg text-gray-600">
+        <Label htmlFor="destination-chain" className="text-lg text-gray-600">
           Destination Chain
         </Label>
 
-        {chain && usableChains ? (
+        {showChainLoader ? (
+          <ChainSelectorSkeleton />
+        ) : chain && usableChains ? (
           <Select
-            onValueChange={(c) =>
-              setTargetChain(
-                (chain &&
-                  usableChains.find((chain) => chain?.id.toString() === c)) ||
-                  null
-              )
-            }
+            onValueChange={(c) => {
+              const selectedChain = chains.find(
+                (chain) => chain?.id.toString() === c
+              );
+              setTargetChain(selectedChain || null);
+            }}
           >
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select Chain..." />
             </SelectTrigger>
             <SelectContent>
-              {usableChains
-                .filter((c) => c && c.id !== chain.id)
-                .map(
-                  (c) =>
-                    c && (
-                      <SelectItem key={c.id} value={c.id.toString()}>
-                        <div className="flex justify-between items-center">
-                          <Image
-                            src={`/${c.id}.svg`}
-                            width={24}
-                            height={24}
-                            className="w-6 h-6 mr-2"
-                            alt={c.name}
-                          />
-                          <span>{c.name}</span>
-                        </div>
-                      </SelectItem>
-                    )
-                )}
+              {availableChains.map(
+                (c) =>
+                  c && (
+                    <SelectItem key={c.id} value={c.id.toString()}>
+                      <div className="flex justify-between items-center">
+                        <Image
+                          src={`/${c.id}.svg`}
+                          width={24}
+                          height={24}
+                          className="w-6 h-6 mr-2"
+                          alt={c.name}
+                        />
+                        <span>{c.name}</span>
+                      </div>
+                    </SelectItem>
+                  )
+              )}
             </SelectContent>
           </Select>
         ) : (
-          <Select>
+          <Select disabled>
             <SelectTrigger className="w-full">
-              <SelectValue placeholder="Select Chain..." />
+              <SelectValue placeholder="Connect wallet to see chains..." />
             </SelectTrigger>
           </Select>
         )}
       </div>
+
+      {/* Amount Input */}
       <div className="grid gap-2 mt-4">
         <div className="flex items-center justify-between max-w-[384px]">
-          <Label htmlFor="name" className="text-lg text-gray-600">
+          <Label htmlFor="amount" className="text-lg text-gray-600">
             Amount
           </Label>
-          <span className="text-sm">
-            {!usdcData?.formatted ? null : `Balance: ${usdcData?.formatted}`}{" "}
-          </span>
+          {showBalanceLoader ? (
+            <BalanceLoader />
+          ) : (
+            <span className="text-sm">
+              {usdcFormatted ? `Balance: ${usdcFormatted}` : ""}
+            </span>
+          )}
         </div>
 
         <div className="flex w-full max-w-sm justify-center items-center space-x-2">
           <Input
-            type="string"
+            id="amount"
+            type="text"
             placeholder="150.34"
-            value={amount ? amount.str : undefined}
-            onChange={(e) => handleBigInt(e.target.value, 6)}
+            value={amount?.str || ""}
+            onChange={(e) => handleAmountChange(e.target.value)}
+            disabled={isLoading}
           />
-          <Button
-            type="submit"
-            onClick={() =>
-              usdcData?.formatted && handleBigInt(usdcData?.formatted, 6)
-            }
+          <LoadingButton
+            variant="outline"
+            onClick={() => usdcFormatted && handleAmountChange(usdcFormatted)}
+            disabled={!usdcFormatted || isLoading}
           >
             Max
-          </Button>
+          </LoadingButton>
         </div>
       </div>
+
+      {/* Custom Address Option */}
       <div className="grid gap-2 mt-4">
         <div className="flex items-center justify-left">
           <Checkbox
-            id="terms"
+            id="custom-address"
             checked={diffWallet}
-            onCheckedChange={() => {
-              if (!diffWallet) {
+            onCheckedChange={(checked) => {
+              if (checked) {
                 setDiffWallet(true);
                 setTargetAddress(address);
               } else {
@@ -167,71 +295,44 @@ export function InputCard({
                 setTargetAddress(undefined);
               }
             }}
+            disabled={isLoading}
           />
           <label
-            htmlFor="terms"
+            htmlFor="custom-address"
             className="pl-2 text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
           >
             Send USDC to a different wallet
             {targetChain && ` on ${targetChain.name}`}?
           </label>
         </div>
+
         {diffWallet && (
           <>
-            <Label htmlFor="number">Destination Wallet</Label>
+            <Label htmlFor="target-address">Destination Wallet</Label>
             <Input
-              id="string"
-              type="string"
-              placeholder=""
-              value={targetAddress}
+              id="target-address"
+              type="text"
+              placeholder="0x..."
+              value={targetAddress || ""}
               onChange={(e) => setTargetAddress(e.target.value)}
+              disabled={isLoading}
             />
           </>
         )}
       </div>
+
+      {/* Bridge Button */}
       <div className="mt-4">
-        <ConnectGuard>
-          <ApproveGuard
-            token={contracts[chain ? chain.id : 1].Usdc}
-            spender={contracts[chain ? chain.id : 1].TokenMessenger}
-            amount={amount?.bigInt || BigInt(0)}
-          >
-            {!amount || amount.bigInt === BigInt(0) ? (
-              <Button disabled className="bg-gray-400 w-full">
-                Enter an Amount
-              </Button>
-            ) : amount &&
-              usdcData &&
-              usdcData.value &&
-              // @ts-ignore
-              amount.bigInt > usdcData?.value ? ( /// Whhyyyyyy
-              <Button disabled className="bg-gray-400 w-full">
-                Balance is too low
-              </Button>
-            ) : !targetChain ? (
-              <Button disabled className="bg-gray-400 w-full">
-                Select a Destination Chain
-              </Button>
-            ) : diffWallet && targetAddress && !isAddress(targetAddress) ? (
-              <Button disabled className="bg-gray-400 w-full">
-                Address is incorrect
-              </Button>
-            ) : chain && amount && targetChain && address ? (
-              <BurnButton
-                chain={chain.id}
-                amount={amount.bigInt}
-                targetChainId={targetChain.id}
-                targetAddress={
-                  !diffWallet
-                    ? address
-                    : targetAddress && isAddress(targetAddress)
-                    ? targetAddress
-                    : "0x00"
-                }
-              />
-            ) : null}
-          </ApproveGuard>
-        </ConnectGuard>
+        <LoadingButton
+          className="w-full"
+          onClick={handleBridge}
+          isLoading={isBridgeLoading}
+          disabled={!validation.isValid || isLoading}
+        >
+          {validation.isValid
+            ? "Begin Bridging USDC"
+            : validation.errors[0] || "Please complete the form"}
+        </LoadingButton>
       </div>
     </div>
   );

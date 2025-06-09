@@ -1,4 +1,5 @@
 import CryptoProivders from "@/components/crypto";
+import ErrorBoundary from "@/components/ErrorBoundary";
 import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
@@ -45,7 +46,9 @@ export default function RootLayout({
     <html lang="en">
       <body className={inter.className}>
         <Analytics />
-        <CryptoProivders>{children}</CryptoProivders>
+        <ErrorBoundary>
+          <CryptoProivders>{children}</CryptoProivders>
+        </ErrorBoundary>
       </body>
     </html>
   );
