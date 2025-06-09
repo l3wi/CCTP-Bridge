@@ -11,7 +11,6 @@ import {
   LocalTransaction,
 } from "@/lib/types";
 import { getErrorMessage, TransactionError, withRetry } from "@/lib/errors";
-import { withRpcFallback } from "@/lib/rpc";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 
 export interface UseBridgeReturn {

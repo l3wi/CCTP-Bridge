@@ -20,7 +20,7 @@ export const InputCardSkeleton = () => (
 );
 
 export const HistoryTableSkeleton = () => (
-  <div className="space-y-3">
+  <div className="space-y-3 w-full">
     <div className="flex justify-between">
       <Skeleton className="h-5 w-16" />
       <Skeleton className="h-5 w-20" />
