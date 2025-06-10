@@ -5,6 +5,7 @@ export interface ContractConfig {
   readonly TokenMessenger: `0x${string}`;
   readonly MessageTransmitter: `0x${string}`;
   readonly TokenMinter: `0x${string}`;
+  readonly Message?: `0x${string}`; // Optional for backward compatibility
   readonly Usdc: `0x${string}`;
 }
 
@@ -23,8 +24,8 @@ export interface LocalTransaction {
   targetChain?: number;
   targetAddress?: `0x${string}`;
   claimHash?: `0x${string}`;
-  version?: 'v1' | 'v2'; // CCTP version used
-  transferType?: 'standard' | 'fast'; // V2 transfer type
+  version?: "v1" | "v2"; // CCTP version used
+  transferType?: "standard" | "fast"; // V2 transfer type
   fee?: string; // V2 fast transfer fee
   estimatedTime?: string; // Estimated completion time
 }
@@ -49,15 +50,15 @@ export interface BridgeParams {
   targetChainId: number;
   targetAddress: `0x${string}`;
   sourceTokenAddress: `0x${string}`;
-  version?: 'v1' | 'v2';
-  transferType?: 'standard' | 'fast';
+  version?: "v1" | "v2";
+  transferType?: "standard" | "fast";
 }
 
 // V2 Fast Transfer specific params
 export interface FastTransferParams extends BridgeParams {
-  version: 'v2';
-  transferType: 'fast';
-  fee: bigint;
+  version: "v2";
+  transferType: "fast";
+  fee: bigint; // Fee in BPS (Basis Points) where 1 = 0.01%
 }
 
 export interface DepositForBurnArgs {
@@ -83,8 +84,8 @@ export interface BridgeFormState {
   amount: AmountState | null;
   diffWallet: boolean;
   targetAddress: string | undefined;
-  version: 'v1' | 'v2';
-  transferType: 'standard' | 'fast';
+  version: "v1" | "v2";
+  transferType: "standard" | "fast";
 }
 
 // Bridge summary state for confirmation screen
@@ -93,8 +94,8 @@ export interface BridgeSummaryState {
   targetChain: Chain;
   amount: AmountState;
   targetAddress: `0x${string}`;
-  version: 'v1' | 'v2';
-  transferType: 'standard' | 'fast';
+  version: "v1" | "v2";
+  transferType: "standard" | "fast";
   estimatedTime: string;
   fee: string;
   totalCost: string;
@@ -115,14 +116,12 @@ export interface CircleAttestationResponse {
 
 // V2 API Response types
 export interface V2FastBurnAllowanceResponse {
-  allowanceRemaining: string;
-  maxBurnAmountPerMessage: string;
+  allowance: number;
+  lastUpdated: string;
 }
 
 export interface V2FastBurnFeesResponse {
-  gasFee: string;
-  serviceFee: string;
-  totalFee: string;
+  minimumFee: number; // Fee in BPS (Basis Points) where 1 = 0.01%
 }
 
 export interface V2PublicKeysResponse {
@@ -141,7 +140,8 @@ export interface V2MessageResponse {
     destinationDomain: number;
     sourceTxHash: string;
     destinationTxHash?: string;
-    messageStatus: 'pending' | 'attested' | 'completed';
+    status: "pending" | "attested" | "complete"; // Fixed: API returns "complete" not "completed"
+    cctpVersion: number; // The CCTP version of the message (1 or 2)
   }>;
 }
 
@@ -170,7 +170,10 @@ export interface UseBridgeReturn {
     attestation: `0x${string}`
   ) => Promise<`0x${string}`>;
   fastBurn: (params: FastTransferParams) => Promise<`0x${string}`>;
-  getFastTransferFee: (sourceDomain: number, destDomain: number) => Promise<V2FastBurnFeesResponse>;
+  getFastTransferFee: (
+    sourceDomain: number,
+    destDomain: number
+  ) => Promise<V2FastBurnFeesResponse>;
   getFastTransferAllowance: () => Promise<V2FastBurnAllowanceResponse>;
   isLoading: boolean;
   error: BridgeError | null;

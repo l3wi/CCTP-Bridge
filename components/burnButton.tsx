@@ -9,7 +9,7 @@ import { formatUnits, pad } from "viem";
 import { writeContract } from "viem/actions";
 import { Dispatch, SetStateAction, useCallback } from "react";
 import { track } from "@vercel/analytics/react";
-import { getErrorMessage, TransactionError, withRetry } from "@/lib/errors";
+import { getErrorMessage, TransactionError } from "@/lib/errors";
 
 export interface BurnButtonProps {
   chain: number;
@@ -58,68 +58,55 @@ export default function BurnButton({
         description: "Please sign to initiate the bridging process.",
       });
 
-      await withRetry(
-        () =>
-          new Promise<`0x${string}`>((resolve, reject) => {
-            writeContract(
-              {
-                address: contracts[chain].TokenMessenger,
-                abi: abis["TokenMessenger"],
-                functionName: "depositForBurn",
-                args: [
-                  depositArgs.amount,
-                  depositArgs.destinationDomain,
-                  depositArgs.mintRecipient,
-                  depositArgs.burnToken,
-                ],
-              },
-              {
-                onSuccess(data: `0x${string}`) {
-                  try {
-                    track("bridge", {
-                      amount: formatUnits(amount, 6),
-                      from: chain,
-                      to: targetChainId,
-                    });
-
-                    toast({
-                      title: "Burning USDC",
-                      description: "Bridging process successfully initiated.",
-                    });
-
-                    console.log("Successful Write: ", data);
-
-                    const newTransaction: LocalTransaction = {
-                      date: new Date(),
-                      amount: formatUnits(amount, 6),
-                      originChain: chain,
-                      targetChain: targetChainId,
-                      hash: data,
-                      status: "pending",
-                    };
-
-                    setTransactions([...transactions, newTransaction]);
-                    resolve(data);
-                  } catch (error) {
-                    console.error("Transaction success handler error:", error);
-                    reject(new TransactionError(getErrorMessage(error)));
-                  }
-                },
-                onError(error: Error) {
-                  console.error("Transaction error:", error);
-                  reject(new TransactionError(getErrorMessage(error)));
-                },
-              }
-            );
-          }),
-        {
-          maxRetries: 2,
-          shouldRetry: (error) => {
-            // Don't retry user rejections
-            return !getErrorMessage(error).includes("cancelled by user");
+      await new Promise<`0x${string}`>((resolve, reject) => {
+        writeContract(
+          {
+            address: contracts[chain].TokenMessenger,
+            abi: abis["TokenMessenger"],
+            functionName: "depositForBurn",
+            args: [
+              depositArgs.amount,
+              depositArgs.destinationDomain,
+              depositArgs.mintRecipient,
+              depositArgs.burnToken,
+            ],
           },
-        }
-      );
+          {
+            onSuccess(data: `0x${string}`) {
+              try {
+                track("bridge", {
+                  amount: formatUnits(amount, 6),
+                  from: chain,
+                  to: targetChainId,
+                });
+
+                toast({
+                  title: "Burning USDC",
+                  description: "Bridging process successfully initiated.",
+                });
+
+                const newTransaction: LocalTransaction = {
+                  date: new Date(),
+                  amount: formatUnits(amount, 6),
+                  originChain: chain,
+                  targetChain: targetChainId,
+                  hash: data,
+                  status: "pending",
+                };
+
+                setTransactions([...transactions, newTransaction]);
+                resolve(data);
+              } catch (error) {
+                console.error("Transaction success handler error:", error);
+                reject(new TransactionError(getErrorMessage(error)));
+              }
+            },
+            onError(error: Error) {
+              reject(new TransactionError(getErrorMessage(error)));
+            },
+          }
+        );
+      });
     } catch (error) {
       console.error("Burn transaction failed:", error);
       toast({

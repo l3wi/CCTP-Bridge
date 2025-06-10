@@ -1,36 +1,29 @@
 export const endpoints = {
-  v1: {
-    mainnet: "https://iris-api.circle.com",
-    testnet: "https://iris-api-sandbox.circle.com",
-  },
-  v2: {
-    mainnet: "https://iris-api-v2.circle.com",
-    testnet: "https://iris-api-v2-sandbox.circle.com",
-  },
-};
-
-// V2 API endpoints
-export const v2Endpoints = {
-  publicKeys: '/v2/publicKeys',
-  messages: (sourceDomainId: number) => `/v2/messages/${sourceDomainId}`,
-  reattest: (nonce: string) => `/v2/reattest/${nonce}`,
-  fastBurnAllowance: '/v2/fastBurn/USDC/allowance',
-  fastBurnFees: (sourceDomainId: number, destDomainId: number) => `/v2/fastBurn/USDC/fees/${sourceDomainId}/${destDomainId}`,
+  mainnet: "https://iris-api.circle.com",
+  testnet: "https://iris-api-sandbox.circle.com",
 };
 
 // Block confirmation requirements for V2
 export const blockConfirmations = {
   fast: {
-    1: { blocks: 2, time: '~20 seconds' }, // Ethereum
-    42161: { blocks: 1, time: '~8 seconds' }, // Arbitrum
-    43114: { blocks: 1, time: '~8 seconds' }, // Avalanche
-    8453: { blocks: 1, time: '~8 seconds' }, // Base
+    1: { blocks: 2, time: "~20 seconds" }, // Ethereum
+    42161: { blocks: 1, time: "~8 seconds" }, // Arbitrum
+    8453: { blocks: 1, time: "~8 seconds" }, // Base
+    43114: { blocks: 1, time: "~8 seconds" }, // Avalanche
+    10: { blocks: 1, time: "~8 seconds" }, // Optimism
+    59144: { blocks: 1, time: "~8 seconds" }, // Linea
+    59140: { blocks: 1, time: "~8 seconds" }, // Codex
+    5000: { blocks: 1, time: "~8 seconds" }, // World Chain
   },
   standard: {
-    1: { blocks: 65, time: '13-19 minutes' }, // Ethereum
-    42161: { blocks: 65, time: '13-19 minutes' }, // Arbitrum (L2 to Ethereum)
-    43114: { blocks: 65, time: '13-19 minutes' }, // Avalanche
-    8453: { blocks: 65, time: '13-19 minutes' }, // Base (L2 to Ethereum)
+    1: { blocks: 65, time: "13-19 minutes" }, // Ethereum
+    42161: { blocks: 65, time: "13-19 minutes" }, // Arbitrum (L2 to Ethereum)
+    8453: { blocks: 65, time: "13-19 minutes" }, // Base (L2 to Ethereum)
+    43114: { blocks: 1, time: "~8 seconds" }, // Avalanche
+    59144: { blocks: 1, time: "6-32 hours" }, // Linea
+    59140: { blocks: 65, time: "13-19 minutes" }, // Codex (L2 to Ethereum)
+    10: { blocks: 65, time: "13-19 minutes" }, // Optimism (L2 to Ethereum)
+    5000: { blocks: 65, time: "13-19 minutes" }, // World Chain (L2 to Ethereum)
   },
 };
 

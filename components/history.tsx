@@ -10,10 +10,15 @@ import {
 } from "@/components/ui/table";
 import { useAccount, useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
-import { explorers } from "@/constants/endpoints";
+import { explorers, blockConfirmations } from "@/constants/endpoints";
 import { Label } from "@radix-ui/react-label";
 import { useEffect, useState, useMemo } from "react";
-import { domains, getChainsFromId, isTestnet } from "@/constants/contracts";
+import {
+  domains,
+  testnetDomains,
+  getChainsFromId,
+  isTestnet,
+} from "@/constants/contracts";
 import { fromHex, slice } from "viem";
 import { Button } from "./ui/button";
 import ClaimButton, { SwitchGuard } from "./claimButton";
@@ -62,6 +67,7 @@ const Row = ({ tx, index }: RowProps) => {
   } = useAttestation(tx.hash, tx.originChain, destination, {
     enabled: tx.status === "pending",
     refetchInterval: 10000,
+    version: tx.version || "v1", // Use the version from the transaction record
   });
 
   // Update transaction when attestation is found
@@ -81,19 +87,22 @@ const Row = ({ tx, index }: RowProps) => {
     [attestationData]
   );
 
-  const destinationChain = useMemo(
-    () =>
-      chains.find(
-        (c) =>
-          c.id ===
-          parseInt(
-            (Object.entries(domains).find(
-              ([chain, domain]) => domain === destinationDomain
-            ) || ["1", 0])[0]
-          )
-      ),
-    [chains, destinationDomain]
-  );
+  const destinationChain = useMemo(() => {
+    if (!destinationDomain) return null;
+
+    // Use appropriate domain map based on testnet status
+    const domainMap = isTestnetTx ? testnetDomains : domains;
+
+    // Find chain ID by domain
+    const chainIdEntry = Object.entries(domainMap).find(
+      ([chainId, domain]) => domain === destinationDomain
+    );
+
+    if (!chainIdEntry) return null;
+
+    const chainId = parseInt(chainIdEntry[0]);
+    return chains.find((c) => c.id === chainId) || null;
+  }, [chains, destinationDomain, isTestnetTx]);
 
   // Countdown renderer
   const countdownRenderer = ({ minutes, seconds, completed }: any) => {
@@ -162,6 +171,7 @@ const Row = ({ tx, index }: RowProps) => {
                 hash={tx.hash}
                 bytes={attestationData.message}
                 attestation={attestationData.attestation}
+                version={tx.version || "v1"}
                 onBurn={() => {}} // This will be handled by the store
               />
             </SwitchGuard>
@@ -170,14 +180,62 @@ const Row = ({ tx, index }: RowProps) => {
       }
 
       if (isAttestationLoading || isAttestationPending) {
+        // Calculate appropriate countdown time based on version and transfer type
+        const getCountdownTime = () => {
+          if (!tx.date) return null;
+
+          const version = tx.version || "v1";
+          const transferType = tx.transferType || "standard";
+
+          let estimatedMinutes = 25; // Default fallback
+
+          if (version === "v2" && transferType === "fast") {
+            // Fast transfers: use fast confirmation timing
+            const fastTime =
+              blockConfirmations.fast[
+                tx.originChain as keyof typeof blockConfirmations.fast
+              ];
+            if (fastTime) {
+              // Convert time string to minutes (e.g., "~20 seconds" -> 0.33 minutes)
+              const timeStr = fastTime.time;
+              if (timeStr.includes("seconds")) {
+                const seconds = parseInt(timeStr.match(/\d+/)?.[0] || "20");
+                estimatedMinutes = Math.max(1, seconds / 60); // At least 1 minute for display
+              } else if (timeStr.includes("minutes")) {
+                estimatedMinutes = parseInt(timeStr.match(/\d+/)?.[0] || "1");
+              }
+            } else {
+              estimatedMinutes = 1; // Default for fast transfers
+            }
+          } else {
+            // Standard transfers: use standard confirmation timing
+            const standardTime =
+              blockConfirmations.standard[
+                tx.originChain as keyof typeof blockConfirmations.standard
+              ];
+            if (standardTime) {
+              const timeStr = standardTime.time;
+              if (timeStr.includes("minutes")) {
+                // Extract first number for "13-19 minutes"
+                estimatedMinutes = parseInt(timeStr.match(/\d+/)?.[0] || "15");
+              } else if (timeStr.includes("hours")) {
+                // For cases like "6-32 hours"
+                const hours = parseInt(timeStr.match(/\d+/)?.[0] || "1");
+                estimatedMinutes = hours * 60;
+              }
+            }
+          }
+
+          return new Date(tx.date).getTime() + 1000 * 60 * estimatedMinutes;
+        };
+
+        const countdownTime = getCountdownTime();
+
         return (
           <div className="space-y-2 w-full">
             <AttestationLoader />
-            {tx.date && (
-              <Countdown
-                date={new Date(tx.date).getTime() + 1000 * 25 * 60}
-                renderer={countdownRenderer}
-              />
+            {countdownTime && (
+              <Countdown date={countdownTime} renderer={countdownRenderer} />
             )}
           </div>
         );
@@ -207,9 +265,6 @@ const Row = ({ tx, index }: RowProps) => {
           <span className="text-sm">
             {origin?.name.split(" ")[0] || `Chain ${tx.originChain}`}
           </span>
-          <svg className="w-3 h-3 ml-1" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
         </a>
       </TableCell>
 
@@ -224,18 +279,12 @@ const Row = ({ tx, index }: RowProps) => {
             <span className="text-sm">
               {destination?.name.split(" ")[0] || `Chain ${tx.targetChain}`}
             </span>
-            <svg
-              className="w-3 h-3 ml-1"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-            >
-              <path d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-            </svg>
           </a>
         ) : (
           <span className="text-sm text-gray-500">
-            {destinationChain?.name.split(" ")[0] ||
-              destination?.name.split(" ")[0] ||
+            {/* Prefer destination from transaction record, fallback to derived from attestation */}
+            {destination?.name.split(" ")[0] ||
+              destinationChain?.name.split(" ")[0] ||
               (tx.targetChain ? `Chain ${tx.targetChain}` : "—")}
           </span>
         )}
@@ -275,7 +324,7 @@ export default function History() {
   if (isInitialLoad || isLoading) {
     return <HistoryTableSkeleton />;
   }
-  console.log(sortedTransactions);
+
   return (
     <div className="space-y-4 w-full">
       <div className="flex w-full justify-between items-center">

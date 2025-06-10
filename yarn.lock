@@ -1348,7 +1348,7 @@
 
 "@tailwindcss/postcss@^4.1.8":
   version "4.1.8"
-  resolved "https://registry.npmjs.org/@tailwindcss/postcss/-/postcss-4.1.8.tgz"
+  resolved "https://registry.yarnpkg.com/@tailwindcss/postcss/-/postcss-4.1.8.tgz#b12374b49f3accd9bd902a4324d124e67803350f"
   integrity sha512-vB/vlf7rIky+w94aWMw34bWW1ka6g6C3xIOdICKX2GC0VcLtL6fhlLiafF0DVIwa9V6EHz8kbWMkS2s2QvvNlw==
   dependencies:
     "@alloc/quick-lru" "^5.2.0"
@@ -5184,12 +5184,12 @@ tailwind-merge@^3.3.0:
 
 tailwindcss-animate@^1.0.7:
   version "1.0.7"
-  resolved "https://registry.npmjs.org/tailwindcss-animate/-/tailwindcss-animate-1.0.7.tgz"
+  resolved "https://registry.yarnpkg.com/tailwindcss-animate/-/tailwindcss-animate-1.0.7.tgz#318b692c4c42676cc9e67b19b78775742388bef4"
   integrity sha512-bl6mpH3T7I3UFxuvDEXLxy/VuFxBk5bbzplh7tXI68mwMokNYd1t9qPBHlnyTwfa4JGC4zP516I1hYYtQ/vspA==
 
-tailwindcss@4.1.8:
+tailwindcss@4.1.8, tailwindcss@^4.1.8:
   version "4.1.8"
-  resolved "https://registry.npmjs.org/tailwindcss/-/tailwindcss-4.1.8.tgz"
+  resolved "https://registry.yarnpkg.com/tailwindcss/-/tailwindcss-4.1.8.tgz#5d66d095ee7d82f03d6dbc6158bc248e064a5c05"
   integrity sha512-kjeW8gjdxasbmFKpVGrGd5T4i40mV5J2Rasw48QARfYeQ8YS9x02ON9SFWax3Qf616rt4Cp3nVNIj6Hd1mP3og==
 
 tapable@^2.2.0:

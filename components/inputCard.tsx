@@ -67,7 +67,9 @@ export function InputCard({ onBurn }: InputCardProps) {
     undefined
   );
   const [showSummary, setShowSummary] = useState<boolean>(false);
-  const [bridgeSummary, setBridgeSummary] = useState<BridgeSummaryState | null>(null);
+  const [bridgeSummary, setBridgeSummary] = useState<BridgeSummaryState | null>(
+    null
+  );
 
   // Memoized values
   const usableChains = useMemo(
@@ -175,22 +177,35 @@ export function InputCard({ onBurn }: InputCardProps) {
 
   // Prepare bridge summary
   const prepareBridgeSummary = useCallback(() => {
-    if (!validation.isValid || !validation.data || !chain || !targetChain || !amount) {
+    if (
+      !validation.isValid ||
+      !validation.data ||
+      !chain ||
+      !targetChain ||
+      !amount
+    ) {
       return;
     }
 
-    const finalTargetAddress = diffWallet ? validation.data.targetAddress : (address as `0x${string}`);
-    
+    const finalTargetAddress = diffWallet
+      ? validation.data.targetAddress
+      : (address as `0x${string}`);
+
     const sourceSupportsV2 = isV2Supported(chain.id);
     const targetSupportsV2 = isV2Supported(targetChain.id);
     const supportsV2 = sourceSupportsV2 && targetSupportsV2;
-    
-    const defaultVersion = supportsV2 ? 'v2' : 'v1';
-    const defaultTransferType = 'standard';
-    
-    const estimatedTime = defaultVersion === 'v2' && defaultTransferType === 'fast' 
-      ? blockConfirmations.fast[chain.id]?.time || '~8-20 seconds'
-      : blockConfirmations.standard[chain.id]?.time || '13-19 minutes';
+
+    const defaultVersion = supportsV2 ? "v2" : "v1";
+    const defaultTransferType = "fast";
+
+    const estimatedTime =
+      defaultVersion === "v2" && defaultTransferType === "fast"
+        ? blockConfirmations.fast[
+            chain.id as keyof typeof blockConfirmations.fast
+          ]?.time || "~8-20 seconds"
+        : blockConfirmations.standard[
+            chain.id as keyof typeof blockConfirmations.standard
+          ]?.time || "13-19 minutes";
 
     const summary: BridgeSummaryState = {
       sourceChain: chain,
@@ -200,7 +215,7 @@ export function InputCard({ onBurn }: InputCardProps) {
       version: defaultVersion,
       transferType: defaultTransferType,
       estimatedTime: estimatedTime,
-      fee: '0', // Will be fetched from API for fast transfers
+      fee: "0", // Will be fetched from API for fast transfers
       totalCost: amount.str,
     };
 
@@ -209,29 +224,43 @@ export function InputCard({ onBurn }: InputCardProps) {
   }, [validation, chain, targetChain, amount, diffWallet, address]);
 
   // Handle bridge transaction
-  const handleBridge = useCallback(async (version: 'v1' | 'v2', transferType: 'standard' | 'fast') => {
-    if (!validation.isValid || !validation.data || !chain) {
-      return;
-    }
+  const handleBridge = useCallback(
+    async (
+      version: "v1" | "v2",
+      transferType: "standard" | "fast",
+      fee?: number
+    ) => {
+      if (!validation.isValid || !validation.data || !chain) {
+        return;
+      }
 
-    try {
-      await burn({
-        amount: validation.data.amount,
-        sourceChainId: chain.id,
-        targetChainId: validation.data.targetChain,
-        targetAddress: validation.data.targetAddress,
-        sourceTokenAddress: contracts[chain.id].Usdc,
-        version,
-        transferType,
-      });
+      try {
+        const bridgeParams: any = {
+          amount: validation.data.amount,
+          sourceChainId: chain.id,
+          targetChainId: validation.data.targetChain,
+          targetAddress: validation.data.targetAddress,
+          sourceTokenAddress: contracts[chain.id].Usdc,
+          version,
+          transferType,
+        };
 
-      // Switch to claim mode after successful burn
-      setShowSummary(false);
-      onBurn(true);
-    } catch (error) {
-      console.error("Bridge transaction failed:", error);
-    }
-  }, [validation, chain, burn, onBurn]);
+        // Add fee for fast transfers (fee is in BPS)
+        if (version === "v2" && transferType === "fast" && fee !== undefined) {
+          bridgeParams.fee = BigInt(Math.floor(fee)); // Fee is already in BPS, just convert to BigInt
+        }
+
+        await burn(bridgeParams);
+
+        // Switch to claim mode after successful burn
+        setShowSummary(false);
+        onBurn(true);
+      } catch (error) {
+        console.error("Bridge transaction failed:", error);
+      }
+    },
+    [validation, chain, burn, onBurn]
+  );
 
   // Loading states
   const isLoading = isUsdcLoading || isBridgeLoading;
@@ -242,7 +271,7 @@ export function InputCard({ onBurn }: InputCardProps) {
   if (showSummary && bridgeSummary) {
     return (
       <div className="w-full">
-        <BridgeSummary 
+        <BridgeSummary
           summary={bridgeSummary}
           onConfirm={handleBridge}
           onBack={() => setShowSummary(false)}
@@ -274,7 +303,7 @@ export function InputCard({ onBurn }: InputCardProps) {
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Select Chain..." />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="bg-white">
               {availableChains.map(
                 (c) =>
                   c && (
@@ -288,6 +317,17 @@ export function InputCard({ onBurn }: InputCardProps) {
                           alt={c.name}
                         />
                         <span>{c.name}</span>
+                        {/* Show lightning bolt if both current and target chain support V2 (fast transfers) */}
+                        {chain &&
+                          isV2Supported(chain.id) &&
+                          isV2Supported(c.id) && (
+                            <span
+                              className="ml-2 text-yellow-500"
+                              title="Fast transfers available"
+                            >
+                              ⚡
+                            </span>
+                          )}
                       </div>
                     </SelectItem>
                   )

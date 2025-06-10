@@ -1,15 +1,13 @@
 import CryptoProivders from "@/components/crypto";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import "./globals.css";
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
-
-const inter = Inter({ subsets: ["latin"] });
+import { Geist, Geist_Mono } from "next/font/google";
+import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   applicationName: "CCTP Bridge",
-  title: "USDC Bridge - CCTP",
+  title: "Bridge USDC via CCTP",
   openGraph: {
     images: [
       {
@@ -37,14 +35,24 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://cctp.io"),
 };
 
+const geistSans = Geist({
+  variable: "--font-geist-sans",
+  subsets: ["latin"],
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <Analytics />
         <ErrorBoundary>
           <CryptoProivders>{children}</CryptoProivders>

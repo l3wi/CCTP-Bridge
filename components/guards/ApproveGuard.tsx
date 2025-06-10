@@ -12,7 +12,7 @@ import {
 } from "wagmi";
 import { watchContractEvent } from "@wagmi/core";
 import { useToast } from "../ui/use-toast";
-import { getErrorMessage, TransactionError, withRetry } from "@/lib/errors";
+import { getErrorMessage, TransactionError } from "@/lib/errors";
 
 interface ApproveGuardProps {
   token: `0x${string}`;
@@ -45,37 +45,12 @@ export default function ApproveGuard(props: ApproveGuardProps) {
     ? BigInt(eventApproved.toString()) >= BigInt(amount.toString())
     : false;
 
-  // useEffect(() => {
-  //   if (!token || !address || !spender || !amount) return;
-
-  //   const unwatch = watchContractEvent(config, {
-  //     address: token,
-  //     abi: erc20Abi,
-  //     eventName: "Approval",
-  //     args: { owner: address, spender: spender },
-  //     pollingInterval: 10_000,
-  //     onLogs: (logs) => {
-  //       if (logs.length > 0) {
-  //         setEventApproved(logs[0].args.value || null);
-  //         toast({
-  //           title: "Token Approved",
-  //           description: "You've successfully approved the token.",
-  //         });
-  //       }
-  //     },
-  //   });
-
-  //   return () => {
-  //     unwatch();
-  //   };
-  // }, [token, address, spender, config, toast, amount]);
-
   return (
     <div>
       {eventApproved || approved || !token || !address ? (
         props.children
       ) : (
-        <ApproveButton token={token} spender={spender} />
+        <ApproveButton token={token} spender={spender} amount={amount} />
       )}
     </div>
   );
@@ -84,9 +59,11 @@ export default function ApproveGuard(props: ApproveGuardProps) {
 const ApproveButton = ({
   token,
   spender,
+  amount,
 }: {
   token: `0x${string}`;
   spender: `0x${string}`;
+  amount: bigint;
 }) => {
   const { toast } = useToast();
   const { writeContract } = useWriteContract();
@@ -95,7 +72,7 @@ const ApproveButton = ({
     address: token,
     abi: erc20Abi,
     functionName: "approve",
-    args: [spender, maxUint256],
+    args: [spender, amount],
   });
 
   const approve = useCallback(async () => {
@@ -105,37 +82,28 @@ const ApproveButton = ({
         description: "Please wait while we approve the token.",
       });
 
-      await withRetry(
-        () =>
-          new Promise<`0x${string}`>((resolve, reject) => {
-            writeContract(
-              {
-                address: token,
-                abi: erc20Abi,
-                functionName: "approve",
-                args: [spender, maxUint256],
-              },
-              {
-                onSuccess(data: `0x${string}`) {
-                  toast({
-                    title: "Token Approved",
-                    description: "You've successfully approved the token.",
-                  });
-                  resolve(data);
-                },
-                onError(error: Error) {
-                  reject(new TransactionError(getErrorMessage(error)));
-                },
-              }
-            );
-          }),
-        {
-          maxRetries: 2,
-          shouldRetry: (error) => {
-            return !getErrorMessage(error).includes("cancelled by user");
+      await new Promise<`0x${string}`>((resolve, reject) => {
+        writeContract(
+          {
+            address: token,
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [spender, amount],
           },
-        }
-      );
+          {
+            onSuccess(data: `0x${string}`) {
+              toast({
+                title: "Token Approved",
+                description: "You've successfully approved the token.",
+              });
+              resolve(data);
+            },
+            onError(error: Error) {
+              reject(new TransactionError(getErrorMessage(error)));
+            },
+          }
+        );
+      });
     } catch (error) {
       console.error("Approval failed:", error);
       toast({
@@ -144,7 +112,7 @@ const ApproveButton = ({
         variant: "destructive",
       });
     }
-  }, [token, spender, writeContract, toast]);
+  }, [token, spender, amount, writeContract, toast]);
 
   return (
     <Button onClick={() => isSuccess && approve()} className="w-full">

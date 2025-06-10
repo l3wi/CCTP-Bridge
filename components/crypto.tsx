@@ -9,6 +9,10 @@ import {
   mainnet,
   arbitrum,
   avalanche,
+  worldchain,
+  sonic,
+  linea,
+  unichain,
   goerli,
   avalancheFuji,
   arbitrumGoerli,
@@ -19,12 +23,23 @@ import {
 } from "wagmi/chains";
 
 import { Toaster } from "./ui/toaster";
-import { rpcs } from "@/constants/endpoints";
 
 const config = getDefaultConfig({
   appName: "Vanilla CCTP",
   projectId: "0986356cfc85b6c59c45557e11c24451",
-  chains: [mainnet, arbitrum, avalanche, optimism, polygon, base, localhost],
+  chains: [
+    mainnet,
+    arbitrum,
+    avalanche,
+    optimism,
+    polygon,
+    base,
+    localhost,
+    worldchain,
+    sonic,
+    linea,
+    unichain,
+  ],
   // transports: {
   //   [mainnet.id]: http(rpcs[mainnet.id]),
   //   [arbitrum.id]: http(rpcs[arbitrum.id]),

@@ -1,19 +1,20 @@
 import { useEffect, useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { endpoints } from "@/constants/endpoints";
-import { domains, isTestnet } from "@/constants/contracts";
+import { domains, testnetDomains, isTestnet } from "@/constants/contracts";
 import { Chain } from "viem";
-import { withRetry } from "@/lib/errors";
-import { CircleAttestationResponse } from "@/lib/types";
+import { CircleAttestationResponse, V2MessageResponse } from "@/lib/types";
 
 interface AttestationData {
   attestation: `0x${string}`;
   message: `0x${string}`;
+  cctpVersion?: number;
 }
 
 interface UseAttestationOptions {
   enabled?: boolean;
   refetchInterval?: number;
+  version?: "v1" | "v2";
 }
 
 export const useAttestation = (
@@ -22,7 +23,7 @@ export const useAttestation = (
   destinationChain?: Chain,
   options: UseAttestationOptions = {}
 ) => {
-  const { enabled = true, refetchInterval = 10000 } = options;
+  const { enabled = true, refetchInterval = 10000, version = "v1" } = options;
   const isTestnetEnv = destinationChain && isTestnet(destinationChain);
 
   const fetchAttestation =
@@ -32,25 +33,26 @@ export const useAttestation = (
       }
 
       const endpoint = endpoints[isTestnetEnv ? "testnet" : "mainnet"];
-      const domain = domains[originChain];
+      const domainMap = isTestnetEnv ? testnetDomains : domains;
+      const domain = domainMap[originChain];
 
       if (domain === undefined) {
         throw new Error(`Unsupported chain: ${originChain}`);
       }
 
-      const response = await withRetry(
-        () => fetch(`${endpoint}/messages/${domain}/${hash}`),
-        {
-          maxRetries: 3,
-          baseDelay: 2000,
-        }
+      // Use V2 endpoint exclusively as it handles both V1 and V2 messages
+      const response = await fetch(
+        `${endpoint}/v2/messages/${domain}?transactionHash=${hash}`
       );
 
       if (!response.ok) {
+        if (response.status === 404) {
+          return null;
+        }
         throw new Error(`Failed to fetch attestation: ${response.statusText}`);
       }
 
-      const data: CircleAttestationResponse = await response.json();
+      const data: V2MessageResponse = await response.json();
 
       if (!data.messages || data.messages.length === 0) {
         return null;
@@ -58,14 +60,14 @@ export const useAttestation = (
 
       const message = data.messages[0];
 
-      // Check if attestation is ready
-      if (message.attestation === "PENDING") {
+      if (message.status !== "complete") {
         return null;
       }
 
       return {
         attestation: message.attestation as `0x${string}`,
         message: message.message as `0x${string}`,
+        cctpVersion: message.cctpVersion,
       };
     }, [hash, originChain, isTestnetEnv]);
 
@@ -79,16 +81,14 @@ export const useAttestation = (
     queryFn: fetchAttestation,
     enabled: enabled && !!hash && !!originChain,
     refetchInterval: (data) => {
-      // Stop polling once we have the attestation
       return data ? false : refetchInterval;
     },
-    staleTime: 30000, // 30 seconds
+    staleTime: 15000,
     retry: (failureCount, error) => {
-      // Don't retry on 404s or other client errors
       if (error instanceof Error && error.message.includes("404")) {
         return false;
       }
-      return failureCount < 3;
+      return failureCount < 5;
     },
   });
 
@@ -101,7 +101,6 @@ export const useAttestation = (
   };
 };
 
-// Hook for managing multiple attestations
 export const useAttestationManager = () => {
   const [attestations, setAttestations] = useState<
     Map<string, AttestationData>

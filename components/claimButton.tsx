@@ -1,19 +1,15 @@
 import { Button } from "./ui/button";
 import { Dispatch, SetStateAction, useEffect, useState } from "react";
-import abis from "@/constants/abi";
-import contracts, { domains } from "@/constants/contracts";
+import { domains, testnetDomains, getContracts } from "@/constants/contracts";
 import { useToast } from "./ui/use-toast";
 import { LocalTransaction } from "@/lib/types";
 import { ToastAction } from "@radix-ui/react-toast";
 import { explorers } from "@/constants/endpoints";
 import { Chain, fromHex, slice } from "viem";
-import {
-  useAccount,
-  useSimulateContract,
-  useSwitchChain,
-  useWriteContract,
-} from "wagmi";
+import { useAccount, useSimulateContract, useSwitchChain } from "wagmi";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { useBridge } from "@/lib/hooks/useBridge";
+import { getABI } from "@/constants/abi";
 
 export const SwitchGuard = ({
   bytes,
@@ -33,11 +29,29 @@ export const SwitchGuard = ({
     slice(bytes, 8, 12) as `0x${string}`,
     "number"
   );
-  const destination = parseInt(
-    (Object.entries(domains).find(
-      ([chain, domain]) => domain === destinationDomain
-    ) || ["1", 0])[0]
-  );
+
+  // Find chain ID from domain in both mainnet and testnet domains
+  const getChainIdFromDomain = (domain: number): number => {
+    // Check mainnet domains first
+    const mainnetEntry = Object.entries(domains).find(
+      ([chainId, domainId]) => domainId === domain
+    );
+    if (mainnetEntry) {
+      return parseInt(mainnetEntry[0]);
+    }
+
+    // Check testnet domains
+    const testnetEntry = Object.entries(testnetDomains).find(
+      ([chainId, domainId]) => domainId === domain
+    );
+    if (testnetEntry) {
+      return parseInt(testnetEntry[0]);
+    }
+
+    return 1; // Default fallback
+  };
+
+  const destination = getChainIdFromDomain(destinationDomain);
 
   // Check if transaction is already claimed
   const transaction = hash ? transactions.find((t) => t.hash === hash) : null;
@@ -91,11 +105,13 @@ export default function ClaimButton({
   hash,
   bytes,
   attestation,
+  version = "v1",
   onBurn,
 }: {
   hash: string;
   bytes: `0x${string}`;
   attestation: `0x${string}`;
+  version?: "v1" | "v2";
   onBurn: Dispatch<SetStateAction<boolean>>;
 }) {
   const { transactions, updateTransaction } = useTransactionStore();
@@ -103,17 +119,36 @@ export default function ClaimButton({
   const [errorProcessed, setErrorProcessed] = useState(false);
   const { toast } = useToast();
   const { chain } = useAccount();
+  const { claim, isLoading } = useBridge();
 
   /// Derive Destination ChainID from Bytes
   const destinationDomain = fromHex(
     slice(bytes, 8, 12) as `0x${string}`,
     "number"
   );
-  const destination = parseInt(
-    (Object.entries(domains).find(
-      ([chain, domain]) => domain === destinationDomain
-    ) || ["1", 0])[0]
-  );
+
+  // Find chain ID from domain in both mainnet and testnet domains
+  const getChainIdFromDomain = (domain: number): number => {
+    // Check mainnet domains first
+    const mainnetEntry = Object.entries(domains).find(
+      ([chainId, domainId]) => domainId === domain
+    );
+    if (mainnetEntry) {
+      return parseInt(mainnetEntry[0]);
+    }
+
+    // Check testnet domains
+    const testnetEntry = Object.entries(testnetDomains).find(
+      ([chainId, domainId]) => domainId === domain
+    );
+    if (testnetEntry) {
+      return parseInt(testnetEntry[0]);
+    }
+
+    return 1; // Default fallback
+  };
+
+  const destination = getChainIdFromDomain(destinationDomain);
 
   // Check if transaction is already claimed from store
   useEffect(() => {
@@ -123,14 +158,16 @@ export default function ClaimButton({
     }
   }, [transactions, hash]);
 
-  const { writeContract } = useWriteContract();
+  // Get the appropriate contracts for simulation
+  const contracts = chain ? getContracts(chain.id, version) : null;
+
   const { isSuccess, error } = useSimulateContract({
-    address: contracts[chain ? chain.id : 1].MessageTransmitter,
-    abi: abis["MessageTransmitter"],
+    address: contracts?.MessageTransmitter,
+    abi: getABI("MessageTransmitter", version),
     functionName: "receiveMessage",
     args: [bytes, attestation],
     query: {
-      enabled: !alreadyClaimed, // Don't simulate if already claimed
+      enabled: !alreadyClaimed && !!contracts, // Don't simulate if already claimed or no contracts
     },
   });
 
@@ -141,8 +178,6 @@ export default function ClaimButton({
       !errorProcessed &&
       error.message.includes("Nonce already used")
     ) {
-      console.log("Nonce already used error detected");
-
       toast({
         title: "You have already claimed your USDC!",
         description:
@@ -169,53 +204,48 @@ export default function ClaimButton({
     onBurn,
   ]);
 
-  const claim = async () => {
-    if (alreadyClaimed) return;
+  const handleClaim = async () => {
+    if (alreadyClaimed || !isSuccess) return;
 
     try {
-      isSuccess &&
-        writeContract(
-          {
-            address: contracts[chain ? chain.id : 1].MessageTransmitter,
-            abi: abis["MessageTransmitter"],
-            functionName: "receiveMessage",
-            args: [bytes, attestation],
-          },
-          {
-            onSuccess(data) {
-              toast({
-                title: "You have successfully claimed your USDC!",
-                description:
-                  "Please check your wallet to ensure the tokens have arrived.",
-                action: (
-                  <ToastAction
-                    onClick={() => {
-                      chain && data
-                        ? window.open(explorers[chain.id] + `/tx/${data}`)
-                        : null;
-                    }}
-                    altText="View"
-                  >
-                    View
-                  </ToastAction>
-                ),
-              });
+      const txHash = await claim(bytes, attestation, version);
 
-              // Update transaction in store
-              updateTransaction(hash as `0x${string}`, {
-                claimHash: data,
-                targetChain: destination,
-                status: "claimed",
-              });
+      if (txHash) {
+        toast({
+          title: "You have successfully claimed your USDC!",
+          description:
+            "Please check your wallet to ensure the tokens have arrived.",
+          action: (
+            <ToastAction
+              onClick={() => {
+                chain && txHash
+                  ? window.open(explorers[chain.id] + `/tx/${txHash}`)
+                  : null;
+              }}
+              altText="View"
+            >
+              View
+            </ToastAction>
+          ),
+        });
 
-              setAlreadyClaimed(true);
-              console.log("TX Finalized");
-              onBurn(false);
-            },
-          }
-        );
+        // Update transaction in store
+        updateTransaction(hash as `0x${string}`, {
+          claimHash: txHash,
+          targetChain: destination,
+          status: "claimed",
+        });
+
+        setAlreadyClaimed(true);
+        onBurn(false);
+      }
     } catch (error) {
-      console.log(error);
+      console.error("Claim failed:", error);
+      toast({
+        title: "Claim Failed",
+        description: "Please try again or check your connection.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -228,8 +258,12 @@ export default function ClaimButton({
   }
 
   return (
-    <Button className="" onClick={() => claim()}>
-      Claim USDC
+    <Button
+      className=""
+      onClick={handleClaim}
+      disabled={isLoading || !isSuccess}
+    >
+      {isLoading ? "Processing..." : "Claim USDC"}
     </Button>
   );
 }
