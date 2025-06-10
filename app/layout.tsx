@@ -19,7 +19,7 @@ export const metadata: Metadata = {
     ],
   },
   description:
-    "The simple CCTP bridge interface for USDC that Circle should have built.",
+    "A native USDC bridge directly powered by Circle's CCTP. Now with CCTP v2!",
   keywords: [
     "USDC",
     "CCTP",

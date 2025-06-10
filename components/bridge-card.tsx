@@ -271,7 +271,7 @@ export function BridgeCard({
         setTargetChain(firstDifferentChain);
       }
     }
-  }, [chain?.id, chains.length, availableChains, targetChain]);
+  }, [chain?.id, chains.length, availableChains, targetChain, chain]);
 
   // Fetch fast transfer fee when chains change
   useEffect(() => {
@@ -313,7 +313,14 @@ export function BridgeCard({
     };
 
     fetchFee();
-  }, [chain?.id, targetChain?.id, fastTransfer, getFastTransferFee]);
+  }, [
+    chain?.id,
+    targetChain?.id,
+    fastTransfer,
+    getFastTransferFee,
+    chain,
+    targetChain,
+  ]);
 
   const handleSend = useCallback(async () => {
     if (
@@ -470,7 +477,7 @@ export function BridgeCard({
       isV2Supported(chain.id) && isV2Supported(targetChain.id) ? "v2" : "v1";
     const contractSet = getContracts(chain.id, version);
     return contractSet?.TokenMessenger as `0x${string}`;
-  }, [chain?.id, targetChain?.id]);
+  }, [chain, targetChain]);
 
   const tokenAddress = useMemo(() => {
     if (!chain || !targetChain) return undefined;
@@ -478,7 +485,7 @@ export function BridgeCard({
       isV2Supported(chain.id) && isV2Supported(targetChain.id) ? "v2" : "v1";
     const contractSet = getContracts(chain.id, version);
     return contractSet?.Usdc as `0x${string}`;
-  }, [chain?.id, targetChain?.id]);
+  }, [chain, targetChain]);
 
   // Effect to handle loaded transaction from history
   useEffect(() => {
@@ -589,8 +596,8 @@ export function BridgeCard({
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
         <CardContent className="p-6 space-y-6">
           {/* Chain Selectors */}
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
+          <div className="flex items-center gap-3 md:flex-row flex-col">
+            <div className="w-full md:flex-1">
               <Label className="text-sm text-slate-300 mb-2 block">From</Label>
               {showChainLoader ? (
                 <ChainSelectorSkeleton />
@@ -662,13 +669,13 @@ export function BridgeCard({
               )}
             </div>
 
-            <div className="flex justify-center pt-6">
+            <div className="justify-center pt-6 hidden md:flex">
               <div className="rounded-full bg-slate-700/50 border border-slate-600 h-8 w-8 flex items-center justify-center">
                 <ArrowRight className="h-4 w-4 text-slate-400" />
               </div>
             </div>
 
-            <div className="flex-1">
+            <div className="w-full md:flex-1">
               <Label className="text-sm text-slate-300 mb-2 block">To</Label>
               {showChainLoader ? (
                 <ChainSelectorSkeleton />
@@ -775,7 +782,7 @@ export function BridgeCard({
               <Input
                 value={amount?.str || ""}
                 onChange={(e) => handleAmountChange(e.target.value)}
-                className="bg-transparent border-none text-2xl font-semibold p-0 h-auto focus-visible:ring-0 flex-1"
+                className="bg-transparent border-none text-2xl font-semibold p-0 h-auto focus:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 flex-1"
                 placeholder="0.0"
                 disabled={isLoading}
               />
@@ -802,7 +809,7 @@ export function BridgeCard({
               />
               <Label
                 htmlFor="custom-address"
-                className="text-sm text-slate-300"
+                className="text-xs text-slate-300"
               >
                 Send USDC to a different wallet
                 {targetChain && ` on ${targetChain.name}`}?
