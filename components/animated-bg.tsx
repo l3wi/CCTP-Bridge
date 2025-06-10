@@ -57,47 +57,8 @@ interface PlusSymbol {
 export default function AnimatedBackground({
   children,
 }: AnimatedBackgroundProps) {
-  const [plusSymbols, setPlusSymbols] = useState<PlusSymbol[]>([]);
-  const [nextId, setNextId] = useState(0);
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      // Only add symbols occasionally to keep it minimal
-      if (Math.random() > 0.85) {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Add some randomness around the cursor
-        const offsetX = (Math.random() - 0.5) * 100;
-        const offsetY = (Math.random() - 0.5) * 100;
-
-        const newSymbol: PlusSymbol = {
-          id: nextId,
-          x: x + offsetX,
-          y: y + offsetY,
-          opacity: 0.1,
-        };
-
-        setPlusSymbols((prev) => [...prev, newSymbol]);
-        setNextId((prev) => prev + 1);
-
-        // Remove the symbol after a short time
-        setTimeout(() => {
-          setPlusSymbols((prev) =>
-            prev.filter((symbol) => symbol.id !== newSymbol.id)
-          );
-        }, 2000);
-      }
-    },
-    [nextId]
-  );
-
   return (
-    <div
-      className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4 relative overflow-hidden"
-      onMouseMove={handleMouseMove}
-    >
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4 relative overflow-hidden">
       {/* Perspective Grid */}
       <div className="absolute inset-0 opacity-25">
         <div
@@ -133,26 +94,6 @@ export default function AnimatedBackground({
             `,
           }}
         />
-      </div>
-
-      {/* Interactive Plus Symbols */}
-      <div className="absolute inset-0 pointer-events-none">
-        {plusSymbols.map((symbol) => (
-          <div
-            key={symbol.id}
-            className="absolute text-slate-400 animate-fade-out"
-            style={{
-              left: `${symbol.x}px`,
-              top: `${symbol.y}px`,
-              fontSize: "10px",
-              fontWeight: "bold",
-              opacity: symbol.opacity,
-              transform: "translate(-50%, -50%)",
-            }}
-          >
-            +
-          </div>
-        ))}
       </div>
 
       {/* Your content goes here */}
