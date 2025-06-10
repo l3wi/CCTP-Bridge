@@ -22,7 +22,11 @@ export const getChainsFromId = (
   }
 };
 
-export const supportsV2: number[] = [1, 43114, 8453];
+// CCTP V2 supported chains (mainnet)
+export const supportsV2: number[] = [1, 43114, 42161, 8453];
+
+// CCTP V2 supported chains (testnet) 
+export const supportsV2Testnet: number[] = [11155111, 43113, 421614, 84532]; // Sepolia, Fuji, Arbitrum Sepolia, Base Sepolia
 
 // Map of chainId to domain
 export const domains: DomainMap = {
@@ -38,6 +42,39 @@ export const isTestnet = (chain: Chain) => {
   return ["arbitrum-goerli", "goerli", "avalanche-fuji"].includes(chain.name);
 };
 
+// V2 Contract addresses
+const contractsV2: ContractsMap = {
+  1: {
+    // Ethereum V2
+    TokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    MessageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
+    Usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+  },
+  43114: {
+    // Avalanche V2
+    TokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    MessageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
+    Usdc: "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+  },
+  42161: {
+    // Arbitrum V2
+    TokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    MessageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
+    Usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+  },
+  8453: {
+    // Base V2
+    TokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    MessageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
+    Usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  },
+};
+
+// V1 Contract addresses (existing)
 const contracts: ContractsMap = {
   1: {
     // Mainnet
@@ -106,3 +143,14 @@ const contracts: ContractsMap = {
 };
 
 export default contracts;
+export { contractsV2 };
+
+// Helper function to get contracts based on version
+export const getContracts = (chainId: number, version: 'v1' | 'v2' = 'v1') => {
+  return version === 'v2' ? contractsV2[chainId] : contracts[chainId];
+};
+
+// Helper function to check if chain supports V2
+export const isV2Supported = (chainId: number) => {
+  return supportsV2.includes(chainId) || supportsV2Testnet.includes(chainId);
+};

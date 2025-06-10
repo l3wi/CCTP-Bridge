@@ -16,9 +16,12 @@ import {
 import { Chain } from "viem";
 import { validateBridgeParams } from "@/lib/validation";
 import { getErrorMessage } from "@/lib/errors";
-import { AmountState } from "@/lib/types";
+import { AmountState, BridgeSummaryState } from "@/lib/types";
 import { useBridge } from "@/lib/hooks/useBridge";
 import { useBalance } from "@/lib/hooks/useBalance";
+import { BridgeSummary } from "./BridgeSummary";
+import { isV2Supported } from "@/constants/contracts";
+import { blockConfirmations } from "@/constants/endpoints";
 
 import {
   Select,
@@ -63,6 +66,8 @@ export function InputCard({ onBurn }: InputCardProps) {
   const [targetAddress, setTargetAddress] = useState<string | undefined>(
     undefined
   );
+  const [showSummary, setShowSummary] = useState<boolean>(false);
+  const [bridgeSummary, setBridgeSummary] = useState<BridgeSummaryState | null>(null);
 
   // Memoized values
   const usableChains = useMemo(
@@ -168,8 +173,43 @@ export function InputCard({ onBurn }: InputCardProps) {
     ]
   );
 
+  // Prepare bridge summary
+  const prepareBridgeSummary = useCallback(() => {
+    if (!validation.isValid || !validation.data || !chain || !targetChain || !amount) {
+      return;
+    }
+
+    const finalTargetAddress = diffWallet ? validation.data.targetAddress : (address as `0x${string}`);
+    
+    const sourceSupportsV2 = isV2Supported(chain.id);
+    const targetSupportsV2 = isV2Supported(targetChain.id);
+    const supportsV2 = sourceSupportsV2 && targetSupportsV2;
+    
+    const defaultVersion = supportsV2 ? 'v2' : 'v1';
+    const defaultTransferType = 'standard';
+    
+    const estimatedTime = defaultVersion === 'v2' && defaultTransferType === 'fast' 
+      ? blockConfirmations.fast[chain.id]?.time || '~8-20 seconds'
+      : blockConfirmations.standard[chain.id]?.time || '13-19 minutes';
+
+    const summary: BridgeSummaryState = {
+      sourceChain: chain,
+      targetChain: targetChain,
+      amount: amount,
+      targetAddress: finalTargetAddress,
+      version: defaultVersion,
+      transferType: defaultTransferType,
+      estimatedTime: estimatedTime,
+      fee: '0', // Will be fetched from API for fast transfers
+      totalCost: amount.str,
+    };
+
+    setBridgeSummary(summary);
+    setShowSummary(true);
+  }, [validation, chain, targetChain, amount, diffWallet, address]);
+
   // Handle bridge transaction
-  const handleBridge = useCallback(async () => {
+  const handleBridge = useCallback(async (version: 'v1' | 'v2', transferType: 'standard' | 'fast') => {
     if (!validation.isValid || !validation.data || !chain) {
       return;
     }
@@ -181,9 +221,12 @@ export function InputCard({ onBurn }: InputCardProps) {
         targetChainId: validation.data.targetChain,
         targetAddress: validation.data.targetAddress,
         sourceTokenAddress: contracts[chain.id].Usdc,
+        version,
+        transferType,
       });
 
       // Switch to claim mode after successful burn
+      setShowSummary(false);
       onBurn(true);
     } catch (error) {
       console.error("Bridge transaction failed:", error);
@@ -194,6 +237,20 @@ export function InputCard({ onBurn }: InputCardProps) {
   const isLoading = isUsdcLoading || isBridgeLoading;
   const showChainLoader = !chain || !chains.length;
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
+
+  // If showing summary, render the summary component
+  if (showSummary && bridgeSummary) {
+    return (
+      <div className="w-full">
+        <BridgeSummary 
+          summary={bridgeSummary}
+          onConfirm={handleBridge}
+          onBack={() => setShowSummary(false)}
+          isLoading={isBridgeLoading}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full">
@@ -325,12 +382,12 @@ export function InputCard({ onBurn }: InputCardProps) {
       <div className="mt-4">
         <LoadingButton
           className="w-full"
-          onClick={handleBridge}
-          isLoading={isBridgeLoading}
+          onClick={prepareBridgeSummary}
+          isLoading={false}
           disabled={!validation.isValid || isLoading}
         >
           {validation.isValid
-            ? "Begin Bridging USDC"
+            ? "Review Bridge Transaction"
             : validation.errors[0] || "Please complete the form"}
         </LoadingButton>
       </div>

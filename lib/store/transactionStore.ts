@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { LocalTransaction } from "@/lib/types";
+import { LocalTransaction, LegacyLocalTransaction } from "@/lib/types";
 
 interface TransactionState {
   transactions: LocalTransaction[];
@@ -16,7 +16,40 @@ interface TransactionState {
   clearAllTransactions: () => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
+  migrateFromLegacy: () => void;
 }
+
+// Migration function to convert legacy transactions
+const migrateLegacyTransaction = (legacyTx: LegacyLocalTransaction): LocalTransaction => {
+  return {
+    ...legacyTx,
+    version: 'v1' as const,
+    transferType: 'standard' as const,
+    estimatedTime: '13-19 minutes',
+  };
+};
+
+// Check for legacy data and migrate
+const migrateLegacyData = (): LocalTransaction[] => {
+  try {
+    const legacyData = localStorage.getItem('cctp-transactions');
+    if (legacyData) {
+      const parsed = JSON.parse(legacyData);
+      if (parsed?.state?.transactions) {
+        const legacyTransactions = parsed.state.transactions as LegacyLocalTransaction[];
+        const migratedTransactions = legacyTransactions.map(migrateLegacyTransaction);
+        
+        // Remove legacy data after migration
+        localStorage.removeItem('cctp-transactions');
+        
+        return migratedTransactions;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to migrate legacy transaction data:', error);
+  }
+  return [];
+};
 
 export const useTransactionStore = create<TransactionState>()(
   persist(
@@ -29,6 +62,9 @@ export const useTransactionStore = create<TransactionState>()(
         const newTransaction: LocalTransaction = {
           ...transaction,
           date: new Date(),
+          version: transaction.version || 'v1',
+          transferType: transaction.transferType || 'standard',
+          estimatedTime: transaction.estimatedTime || '13-19 minutes',
         };
 
         set((state) => ({
@@ -70,10 +106,25 @@ export const useTransactionStore = create<TransactionState>()(
       setError: (error) => {
         set({ error });
       },
+
+      migrateFromLegacy: () => {
+        const migratedTransactions = migrateLegacyData();
+        if (migratedTransactions.length > 0) {
+          set((state) => ({
+            transactions: [...migratedTransactions, ...state.transactions],
+          }));
+        }
+      },
     }),
     {
-      name: "cctp-transactions",
+      name: "cctp-transactions-v2",
       partialize: (state) => ({ transactions: state.transactions }),
+      onRehydrateStorage: () => (state) => {
+        // Migrate legacy data on store initialization
+        if (state) {
+          state.migrateFromLegacy();
+        }
+      },
     }
   )
 );
