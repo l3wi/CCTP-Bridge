@@ -74,7 +74,8 @@ export const SwitchGuard = ({
   if (isAlreadyClaimed && transaction?.claimHash && transaction?.targetChain) {
     return (
       <Button
-        className=""
+        variant="outline"
+        className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
         onClick={() => {
           window.open(
             explorers[transaction.targetChain!] +
@@ -90,7 +91,12 @@ export const SwitchGuard = ({
 
   if (chain && chain.id !== destination) {
     return (
-      <Button className="" onClick={() => initiateSwitch()}>
+      <Button
+        variant="outline"
+        className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
+        onClick={() => initiateSwitch()}
+        disabled={false}
+      >
         Switch Chain
       </Button>
     );
@@ -251,7 +257,11 @@ export default function ClaimButton({
 
   if (alreadyClaimed) {
     return (
-      <Button className="" disabled>
+      <Button
+        variant="outline"
+        className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
+        disabled
+      >
         Already Claimed
       </Button>
     );
@@ -259,7 +269,8 @@ export default function ClaimButton({
 
   return (
     <Button
-      className=""
+      variant="outline"
+      className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
       onClick={handleClaim}
       disabled={isLoading || !isSuccess}
     >

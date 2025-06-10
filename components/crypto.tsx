@@ -40,15 +40,6 @@ const config = getDefaultConfig({
     linea,
     unichain,
   ],
-  // transports: {
-  //   [mainnet.id]: http(rpcs[mainnet.id]),
-  //   [arbitrum.id]: http(rpcs[arbitrum.id]),
-  //   [avalanche.id]: http(rpcs[avalanche.id]),
-  //   [optimism.id]: http(rpcs[optimism.id]),
-  //   [polygon.id]: http(rpcs[polygon.id]),
-  //   [base.id]: http(rpcs[base.id]),
-  //   [localhost.id]: http(rpcs[localhost.id]),
-  // },
   batch: {
     multicall: true,
   },

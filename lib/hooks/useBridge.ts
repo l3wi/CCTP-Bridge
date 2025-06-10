@@ -90,14 +90,12 @@ export const useBridge = (): UseBridgeReturn => {
 
           if (version === "v2") {
             // V2 always uses the extended depositForBurn function
-            // For fast transfers, calculate maxFee from BPS; for standard transfers, use 0
+            // For fast transfers, use the calculated fee amount; for standard transfers, use 0
             let maxFee = BigInt(0);
             if (isV2FastTransfer && (params as FastTransferParams).fee) {
-              // The fee in params is expected to be the BPS value
-              const feeBPS = (params as FastTransferParams).fee;
-              // Calculate maxFee: (amount * feeBPS) / 10000
-              // Since amount is already in wei (6 decimals for USDC), we calculate accordingly
-              maxFee = (params.amount * feeBPS) / BigInt(10000);
+              // The fee in params is now the calculated fee amount (not BPS)
+              // This amount was already calculated as (amount * BPS) / 10000 in the UI
+              maxFee = (params as FastTransferParams).fee;
             }
             const minFinalityThreshold = isV2FastTransfer ? 0 : 65; // Fast: 0, Standard: 65
 

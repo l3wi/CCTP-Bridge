@@ -39,36 +39,33 @@ export const useAttestation = (
       if (domain === undefined) {
         throw new Error(`Unsupported chain: ${originChain}`);
       }
+      try {
+        // Use V2 endpoint exclusively as it handles both V1 and V2 messages
+        const response = await fetch(
+          `${endpoint}/v2/messages/${domain}?transactionHash=${hash}`
+        );
 
-      // Use V2 endpoint exclusively as it handles both V1 and V2 messages
-      const response = await fetch(
-        `${endpoint}/v2/messages/${domain}?transactionHash=${hash}`
-      );
+        const data: V2MessageResponse = await response.json();
 
-      if (!response.ok) {
-        if (response.status === 404) {
+        if (!data.messages || data.messages.length === 0) {
           return null;
         }
-        throw new Error(`Failed to fetch attestation: ${response.statusText}`);
-      }
 
-      const data: V2MessageResponse = await response.json();
+        const message = data.messages[0];
 
-      if (!data.messages || data.messages.length === 0) {
+        if (message.status !== "complete") {
+          return null;
+        }
+
+        return {
+          attestation: message.attestation as `0x${string}`,
+          message: message.message as `0x${string}`,
+          cctpVersion: message.cctpVersion,
+        };
+      } catch (error) {
+        console.warn("Error fetching attestation:", error);
         return null;
       }
-
-      const message = data.messages[0];
-
-      if (message.status !== "complete") {
-        return null;
-      }
-
-      return {
-        attestation: message.attestation as `0x${string}`,
-        message: message.message as `0x${string}`,
-        cctpVersion: message.cctpVersion,
-      };
     }, [hash, originChain, isTestnetEnv]);
 
   const {
@@ -83,7 +80,7 @@ export const useAttestation = (
     refetchInterval: (data) => {
       return data ? false : refetchInterval;
     },
-    staleTime: 15000,
+    staleTime: 10000,
     retry: (failureCount, error) => {
       if (error instanceof Error && error.message.includes("404")) {
         return false;

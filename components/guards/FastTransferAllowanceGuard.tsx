@@ -70,7 +70,10 @@ export default function FastTransferAllowanceGuard({
   // If still loading allowance data
   if (isLoading) {
     return (
-      <Button disabled className="w-full">
+      <Button
+        disabled
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
+      >
         Checking Fast Transfer Allowance...
       </Button>
     );
@@ -79,7 +82,10 @@ export default function FastTransferAllowanceGuard({
   // If error fetching allowance
   if (hasError) {
     return (
-      <Button disabled className="w-full">
+      <Button
+        disabled
+        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
+      >
         Error Checking Fast Transfer Allowance
       </Button>
     );

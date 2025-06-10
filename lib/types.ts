@@ -58,7 +58,7 @@ export interface BridgeParams {
 export interface FastTransferParams extends BridgeParams {
   version: "v2";
   transferType: "fast";
-  fee: bigint; // Fee in BPS (Basis Points) where 1 = 0.01%
+  fee: bigint; // Maximum fee amount in token wei (calculated from BPS)
 }
 
 export interface DepositForBurnArgs {
