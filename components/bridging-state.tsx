@@ -183,7 +183,7 @@ export function BridgingState({
                   hash={hash}
                   bytes={attestationData.message}
                   attestation={attestationData.attestation}
-                  version={version}
+                  cctpVersion={attestationData.cctpVersion}
                   onBurn={setIsBurning}
                 />
               </SwitchGuard>

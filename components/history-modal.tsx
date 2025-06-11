@@ -317,7 +317,7 @@ function TransactionRow({
                   hash={tx.hash}
                   bytes={attestationData.message}
                   attestation={attestationData.attestation}
-                  version={tx.version || "v1"}
+                  cctpVersion={attestationData.cctpVersion}
                   onBurn={() => {}}
                 />
               </SwitchGuard>
@@ -389,30 +389,32 @@ function TransactionRow({
               </a>
             </div>
             <span className="text-slate-400">→</span>
-            <div className="flex items-center">
-              <Image
-                src={`/${destination?.id}.svg`}
-                width={24}
-                height={24}
-                className="w-6 h-6 mr-2"
-                alt={destinationName}
-              />
-              {tx.claimHash && tx.targetChain ? (
-                <a
-                  href={`${explorers[tx.targetChain]}tx/${tx.claimHash}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-400 text-sm font-medium hover:underline"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {destinationName}
-                </a>
-              ) : (
-                <span className="text-slate-400 text-sm font-medium">
-                  {destinationName}
-                </span>
-              )}
-            </div>
+            {destination && (
+              <div className="flex items-center">
+                <Image
+                  src={`/${destination?.id}.svg`}
+                  width={24}
+                  height={24}
+                  className="w-6 h-6 mr-2"
+                  alt={destinationName}
+                />
+                {tx.claimHash && tx.targetChain ? (
+                  <a
+                    href={`${explorers[tx.targetChain]}tx/${tx.claimHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 text-sm font-medium hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {destinationName}
+                  </a>
+                ) : (
+                  <span className="text-slate-400 text-sm font-medium">
+                    {destinationName}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <div className="text-lg font-semibold">{tx.amount} USDC</div>
           <div className="text-sm text-slate-400">

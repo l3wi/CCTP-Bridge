@@ -112,12 +112,14 @@ export default function ClaimButton({
   bytes,
   attestation,
   version = "v1",
+  cctpVersion,
   onBurn,
 }: {
   hash: string;
   bytes: `0x${string}`;
   attestation: `0x${string}`;
   version?: "v1" | "v2";
+  cctpVersion?: number;
   onBurn: Dispatch<SetStateAction<boolean>>;
 }) {
   const { transactions, updateTransaction } = useTransactionStore();
@@ -126,6 +128,14 @@ export default function ClaimButton({
   const { toast } = useToast();
   const { chain } = useAccount();
   const { claim, isLoading } = useBridge();
+
+  // Determine the correct version to use
+  // Priority: cctpVersion from API response > version prop
+  const actualVersion: "v1" | "v2" = cctpVersion
+    ? cctpVersion === 1
+      ? "v1"
+      : "v2"
+    : version;
 
   /// Derive Destination ChainID from Bytes
   const destinationDomain = fromHex(
@@ -164,12 +174,12 @@ export default function ClaimButton({
     }
   }, [transactions, hash]);
 
-  // Get the appropriate contracts for simulation
-  const contracts = chain ? getContracts(chain.id, version) : null;
+  // Get the appropriate contracts for simulation using detected version
+  const contracts = chain ? getContracts(chain.id, actualVersion) : null;
 
   const { isSuccess, error } = useSimulateContract({
     address: contracts?.MessageTransmitter,
-    abi: getABI("MessageTransmitter", version),
+    abi: getABI("MessageTransmitter", actualVersion),
     functionName: "receiveMessage",
     args: [bytes, attestation],
     query: {
@@ -190,10 +200,11 @@ export default function ClaimButton({
           "Please check your wallet to ensure the tokens have arrived.",
       });
 
-      // Update transaction in store
+      // Update transaction in store with the correct version
       updateTransaction(hash as `0x${string}`, {
         targetChain: destination,
         status: "claimed",
+        version: actualVersion,
       });
 
       setAlreadyClaimed(true);
@@ -214,7 +225,7 @@ export default function ClaimButton({
     if (alreadyClaimed || !isSuccess) return;
 
     try {
-      const txHash = await claim(bytes, attestation, version);
+      const txHash = await claim(bytes, attestation, actualVersion);
 
       if (txHash) {
         toast({
@@ -235,11 +246,12 @@ export default function ClaimButton({
           ),
         });
 
-        // Update transaction in store
+        // Update transaction in store with the correct version
         updateTransaction(hash as `0x${string}`, {
           claimHash: txHash,
           targetChain: destination,
           status: "claimed",
+          version: actualVersion,
         });
 
         setAlreadyClaimed(true);
@@ -274,7 +286,9 @@ export default function ClaimButton({
       onClick={handleClaim}
       disabled={isLoading || !isSuccess}
     >
-      {isLoading ? "Processing..." : "Claim USDC"}
+      {isLoading
+        ? "Processing..."
+        : `Claim USDC (${actualVersion.toUpperCase()})`}
     </Button>
   );
 }
