@@ -31,14 +31,14 @@ export default function Home() {
         {/* Floating Header */}
         <div className="mb-4">
           <h1 className="relative inline-block text-4xl font-bold text-white pb-2 ">
-            USDC Bridge
+            CCTP Bridge
             <span className="hidden md:block absolute text-xs text-blue-500 -top-3 -right-15 transform rotate-15 bg-slate-800/50 px-2 py-1 rounded-md">
-              Now using v2!
+              {`Now using v2!`}
             </span>
           </h1>
 
           <div className="text-xs text-slate-500">
-            A native USDC bridge directly powered by Circle's CCTP.
+            {`A native USDC bridge powered by Circle's CCTP infrastructure.`}
           </div>
         </div>
         <BridgeCard

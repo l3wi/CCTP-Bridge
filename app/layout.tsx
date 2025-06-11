@@ -12,14 +12,14 @@ export const metadata: Metadata = {
     images: [
       {
         url: "https://cctp.io/og.png",
-        width: 1200,
-        height: 630,
+        width: 1000,
+        height: 525,
         alt: "CCTP Bridge",
       },
     ],
   },
   description:
-    "A native USDC bridge directly powered by Circle's CCTP. Now with CCTP v2!",
+    "A native USDC bridge powered by Circle's CCTP infrastructure. Now with CCTP v2!",
   keywords: [
     "USDC",
     "CCTP",
