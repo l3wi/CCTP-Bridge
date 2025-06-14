@@ -167,6 +167,7 @@ function TransactionRow({
     isLoading: isAttestationLoading,
     isPending: isAttestationPending,
     error: attestationError,
+    refetch,
   } = useAttestation(tx.hash, tx.originChain, destination, {
     enabled: tx.status === "pending",
     refetchInterval: 10000,
@@ -318,7 +319,12 @@ function TransactionRow({
                   bytes={attestationData.message}
                   attestation={attestationData.attestation}
                   cctpVersion={attestationData.cctpVersion}
+                  eventNonce={attestationData.eventNonce}
                   onBurn={() => {}}
+                  onAttestationUpdate={() => {
+                    // Trigger refetch of attestation data
+                    refetch();
+                  }}
                 />
               </SwitchGuard>
             </ConnectGuard>

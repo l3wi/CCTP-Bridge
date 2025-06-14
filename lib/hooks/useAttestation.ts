@@ -9,6 +9,7 @@ interface AttestationData {
   attestation: `0x${string}`;
   message: `0x${string}`;
   cctpVersion?: number;
+  eventNonce?: number;
 }
 
 interface UseAttestationOptions {
@@ -61,6 +62,7 @@ export const useAttestation = (
           attestation: message.attestation as `0x${string}`,
           message: message.message as `0x${string}`,
           cctpVersion: message.cctpVersion,
+          eventNonce: message.eventNonce,
         };
       } catch (error) {
         console.warn("Error fetching attestation:", error);

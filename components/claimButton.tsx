@@ -4,12 +4,13 @@ import { domains, testnetDomains, getContracts } from "@/constants/contracts";
 import { useToast } from "./ui/use-toast";
 import { LocalTransaction } from "@/lib/types";
 import { ToastAction } from "@radix-ui/react-toast";
-import { explorers } from "@/constants/endpoints";
+import { explorers, endpoints } from "@/constants/endpoints";
 import { Chain, fromHex, slice } from "viem";
 import { useAccount, useSimulateContract, useSwitchChain } from "wagmi";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useBridge } from "@/lib/hooks/useBridge";
 import { getABI } from "@/constants/abi";
+import { isTestnet } from "@/constants/contracts";
 
 export const SwitchGuard = ({
   bytes,
@@ -113,18 +114,23 @@ export default function ClaimButton({
   attestation,
   version = "v1",
   cctpVersion,
+  eventNonce,
   onBurn,
+  onAttestationUpdate,
 }: {
   hash: string;
   bytes: `0x${string}`;
   attestation: `0x${string}`;
   version?: "v1" | "v2";
   cctpVersion?: number;
+  eventNonce?: number;
   onBurn: Dispatch<SetStateAction<boolean>>;
+  onAttestationUpdate?: () => void;
 }) {
   const { transactions, updateTransaction } = useTransactionStore();
   const [alreadyClaimed, setAlreadyClaimed] = useState(false);
   const [errorProcessed, setErrorProcessed] = useState(false);
+  const [isReattesting, setIsReattesting] = useState(false);
   const { toast } = useToast();
   const { chain } = useAccount();
   const { claim, isLoading } = useBridge();
@@ -183,12 +189,77 @@ export default function ClaimButton({
     functionName: "receiveMessage",
     args: [bytes, attestation],
     query: {
-      enabled: !alreadyClaimed && !!contracts, // Don't simulate if already claimed or no contracts
+      enabled: !alreadyClaimed && !!contracts && !isReattesting, // Don't simulate if already claimed, no contracts, or reattesting
     },
   });
 
-  // Handle nonce already used error
+  // Function to handle re-attestation
+  const handleReAttestation = async (nonce: number) => {
+    if (!chain) return;
+
+    setIsReattesting(true);
+
+    try {
+      const isTestnetEnv = isTestnet(chain);
+      const endpoint = endpoints[isTestnetEnv ? "testnet" : "mainnet"];
+
+      toast({
+        title: "Attestation Expired",
+        description:
+          "Your attestation has expired and is being re-issued. Please wait...",
+      });
+
+      const response = await fetch(`${endpoint}/v2/reattest/${nonce}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.message ||
+            `HTTP ${response.status}: ${response.statusText}`
+        );
+      }
+
+      const data = await response.json();
+
+      toast({
+        title: "Re-attestation Requested",
+        description:
+          "Your attestation is being re-issued. It may take a few minutes to complete.",
+      });
+
+      // Trigger refetch of attestation data if callback provided
+      if (onAttestationUpdate) {
+        // Wait a bit before triggering refetch to allow time for re-attestation
+        setTimeout(() => {
+          onAttestationUpdate();
+        }, 5000);
+      }
+    } catch (error) {
+      console.error("Re-attestation failed:", error);
+      toast({
+        title: "Re-attestation Failed",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Please try again or contact support.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsReattesting(false);
+    }
+  };
+
+  // Handle nonce already used error and message expired error
   useEffect(() => {
+    if (error && !errorProcessed) {
+      console.log("Error", error);
+    }
+
     if (
       error &&
       !errorProcessed &&
@@ -210,6 +281,29 @@ export default function ClaimButton({
       setAlreadyClaimed(true);
       setErrorProcessed(true);
       onBurn(false);
+    } else if (
+      error &&
+      !errorProcessed &&
+      error.message.includes("Message expired and must be re-signed") &&
+      eventNonce &&
+      actualVersion === "v2" // Re-attestation is only available for V2 messages
+    ) {
+      setErrorProcessed(true);
+      handleReAttestation(eventNonce);
+    } else if (
+      error &&
+      !errorProcessed &&
+      error.message.includes("Message expired and must be re-signed") &&
+      (!eventNonce || actualVersion === "v1")
+    ) {
+      // For V1 messages or when eventNonce is not available
+      toast({
+        title: "Message Expired",
+        description:
+          "This message has expired and cannot be claimed. Please contact support if you need assistance.",
+        variant: "destructive",
+      });
+      setErrorProcessed(true);
     }
   }, [
     error,
@@ -219,10 +313,12 @@ export default function ClaimButton({
     hash,
     destination,
     onBurn,
+    eventNonce,
+    actualVersion,
   ]);
 
   const handleClaim = async () => {
-    if (alreadyClaimed || !isSuccess) return;
+    if (alreadyClaimed || !isSuccess || isReattesting) return;
 
     try {
       const txHash = await claim(bytes, attestation, actualVersion);
@@ -275,6 +371,18 @@ export default function ClaimButton({
         disabled
       >
         Already Claimed
+      </Button>
+    );
+  }
+
+  if (isReattesting) {
+    return (
+      <Button
+        variant="outline"
+        className="w-full border-yellow-700 text-white hover:bg-yellow-700/50 hover:text-white bg-yellow-800"
+        disabled
+      >
+        Re-issuing Attestation...
       </Button>
     );
   }

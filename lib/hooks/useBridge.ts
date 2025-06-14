@@ -376,7 +376,7 @@ export const useBridge = (): UseBridgeReturn => {
     ): Promise<V2FastBurnFeesResponse> => {
       try {
         const response = await fetch(
-          `${endpoints.mainnet}/v2/fastBurn/USDC/fees/${sourceDomain}/${destDomain}`
+          `${endpoints.mainnet}/v2/burn/USDC/fees/${sourceDomain}/${destDomain}`
         );
         if (!response.ok) {
           throw new Error("Failed to fetch fast transfer fees");

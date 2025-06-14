@@ -54,6 +54,7 @@ export function BridgingState({
     isLoading: isAttestationLoading,
     error: attestationError,
     isPending: isAttestationPending,
+    refetch,
   } = useAttestation(
     hash || ("0x" as `0x${string}`),
     originChainId || 0,
@@ -184,7 +185,12 @@ export function BridgingState({
                   bytes={attestationData.message}
                   attestation={attestationData.attestation}
                   cctpVersion={attestationData.cctpVersion}
+                  eventNonce={attestationData.eventNonce}
                   onBurn={setIsBurning}
+                  onAttestationUpdate={() => {
+                    // Trigger refetch of attestation data
+                    refetch();
+                  }}
                 />
               </SwitchGuard>
             </div>
