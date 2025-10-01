@@ -1,16 +1,16 @@
-import { isAddress, parseUnits } from "viem";
+import { isAddress, isHex, parseUnits } from "viem";
 import { ValidationError } from "./errors";
 
 // Constants for validation
 export const MAX_USDC_AMOUNT = parseUnits("1000000", 6); // 1M USDC
 export const MIN_USDC_AMOUNT = parseUnits("0.01", 6); // 0.01 USDC
 export const USDC_DECIMALS = 6;
-export const MAX_DECIMAL_PLACES = 6;
 
 export interface AmountValidation {
   isValid: boolean;
   error?: string;
   parsedAmount?: bigint;
+  normalizedAmount?: string;
 }
 
 export const validateAmount = (
@@ -19,12 +19,34 @@ export const validateAmount = (
   decimals: number = USDC_DECIMALS
 ): AmountValidation => {
   try {
-    // Clean the input string
-    const cleanStr = amountStr.replace(/[^0-9.]/g, "");
+    const trimmed = amountStr.trim();
 
-    if (!cleanStr || cleanStr === "") {
+    if (!trimmed) {
       return { isValid: false, error: "Please enter an amount" };
     }
+
+    // Remove whitespace characters that may appear from copy/paste
+    const collapsed = trimmed.replace(/\s+/g, "");
+
+    if (!collapsed) {
+      return { isValid: false, error: "Please enter an amount" };
+    }
+
+    // Reject characters other than numbers, commas, and decimal points
+    if (/[^0-9.,]/.test(collapsed)) {
+      return {
+        isValid: false,
+        error: "Amount can only include numbers, commas, and a decimal point",
+      };
+    }
+
+    // Ensure there's at least one digit present
+    if (!/[0-9]/.test(collapsed)) {
+      return { isValid: false, error: "Please enter a valid number" };
+    }
+
+    // Normalize by removing commas
+    const cleanStr = collapsed.replace(/,/g, "");
 
     // Check for multiple decimal points
     const decimalCount = (cleanStr.match(/\./g) || []).length;
@@ -79,6 +101,7 @@ export const validateAmount = (
     return {
       isValid: true,
       parsedAmount,
+      normalizedAmount: cleanStr,
     };
   } catch (error) {
     return {
@@ -188,6 +211,41 @@ export const validateBridgeParams = (params: {
             targetAddress: finalTargetAddress,
           }
         : undefined,
+  };
+};
+
+export const validateTransactionHash = (
+  hash: string
+): { isValid: boolean; error?: string; normalizedHash?: `0x${string}` } => {
+  const trimmed = hash.trim();
+
+  if (!trimmed) {
+    return {
+      isValid: false,
+      error: "Please enter a transaction hash",
+    };
+  }
+
+  const normalized = trimmed.toLowerCase();
+
+  if (!isHex(normalized, { strict: true })) {
+    return {
+      isValid: false,
+      error: "Transaction hash must be a 0x-prefixed hexadecimal value",
+    };
+  }
+
+  // Ethereum transaction hashes are 32-byte values (66 characters with 0x prefix)
+  if (normalized.length !== 66) {
+    return {
+      isValid: false,
+      error: "Transaction hash must be 66 characters long",
+    };
+  }
+
+  return {
+    isValid: true,
+    normalizedHash: normalized as `0x${string}`,
   };
 };
 

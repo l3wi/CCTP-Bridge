@@ -27,8 +27,8 @@ import contracts, {
   getAllSupportedChainIds,
 } from "@/constants/contracts";
 import { useAccount, useChains, useSwitchChain } from "wagmi";
-import { Chain } from "viem";
-import { validateBridgeParams } from "@/lib/validation";
+import { Chain, parseUnits } from "viem";
+import { USDC_DECIMALS, validateBridgeParams } from "@/lib/validation";
 import { getErrorMessage } from "@/lib/errors";
 import { AmountState, BridgeSummaryState, LocalTransaction } from "@/lib/types";
 import { useBridge } from "@/lib/hooks/useBridge";
@@ -134,13 +134,26 @@ export function BridgeCard({
   const handleAmountChange = useCallback(
     (inputStr: string) => {
       try {
-        // Clean the input string
-        const cleanStr = inputStr.replace(/[^0-9.]/g, "");
+        const trimmed = inputStr.trim();
+        const collapsed = trimmed.replace(/\s+/g, "");
 
-        if (cleanStr === "") {
+        if (collapsed === "") {
           setAmount(null);
           return;
         }
+
+        if (/[^0-9.,]/.test(collapsed)) {
+          toast({
+            title: "Invalid Characters",
+            description:
+              "Amount can only include numbers, commas, and a decimal point",
+            variant: "destructive",
+          });
+          return;
+        }
+
+        // Normalize by removing commas
+        const cleanStr = collapsed.replace(/,/g, "");
 
         // Basic format validation
         const decimalCount = (cleanStr.match(/\./g) || []).length;
@@ -153,13 +166,22 @@ export function BridgeCard({
           return;
         }
 
+        if (!/[0-9]/.test(cleanStr)) {
+          toast({
+            title: "Invalid Amount",
+            description: "Please enter a valid number",
+            variant: "destructive",
+          });
+          return;
+        }
+
         // Check decimal places
         if (cleanStr.includes(".")) {
           const decimalPart = cleanStr.split(".")[1];
-          if (decimalPart && decimalPart.length > 6) {
+          if (decimalPart && decimalPart.length > USDC_DECIMALS) {
             toast({
               title: "Too Many Decimals",
-              description: "Maximum 6 decimal places allowed",
+              description: `Maximum ${USDC_DECIMALS} decimal places allowed`,
               variant: "destructive",
             });
             return;
@@ -168,17 +190,11 @@ export function BridgeCard({
 
         try {
           // Convert to BigInt for validation
-          let divisor = BigInt(1);
-          for (let i = 0; i < 6; i++) {
-            divisor = divisor * BigInt(10);
-          }
-          const [integerPart, decimalPart = ""] = cleanStr.split(".");
-          const paddedDecimal = decimalPart.padEnd(6, "0");
-          const bigIntValue = BigInt(integerPart + paddedDecimal);
+          const parsedAmount = parseUnits(cleanStr, USDC_DECIMALS);
 
           setAmount({
             str: cleanStr,
-            bigInt: bigIntValue,
+            bigInt: parsedAmount,
           });
         } catch (error) {
           console.error("Amount parsing error:", error);
