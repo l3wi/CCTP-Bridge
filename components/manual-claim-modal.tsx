@@ -25,6 +25,7 @@ import { getChainsFromId } from "@/constants/contracts";
 import { LoadingButton } from "@/components/loading/LoadingStates";
 import Image from "next/image";
 import { DialogDescription } from "@radix-ui/react-dialog";
+import { validateTransactionHash } from "@/lib/validation";
 
 interface ManualClaimModalProps {
   open: boolean;
@@ -60,8 +61,26 @@ export function ManualClaimModal({
     setIsSubmitting(true);
 
     try {
+      const hashValidation = validateTransactionHash(txHash);
+      if (!hashValidation.isValid || !hashValidation.normalizedHash) {
+        toast({
+          title: "Invalid Transaction Hash",
+          description:
+            hashValidation.error ||
+            "Please enter a valid 66 character transaction hash.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const normalizedHash = hashValidation.normalizedHash;
+
       // Check if the transaction already exists
-      if (transactions.find((t: LocalTransaction) => t.hash === txHash)) {
+      if (
+        transactions.find(
+          (t: LocalTransaction) => t.hash.toLowerCase() === normalizedHash
+        )
+      ) {
         toast({
           title: "Transaction Already Exists",
           description:
@@ -74,7 +93,7 @@ export function ManualClaimModal({
       // Add the transaction to the list
       addTransaction({
         originChain: originChain.id,
-        hash: txHash as `0x${string}`,
+        hash: normalizedHash,
         status: "pending",
       });
 
