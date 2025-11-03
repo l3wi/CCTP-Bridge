@@ -20,6 +20,7 @@ interface BridgingStateProps {
   toChain: ChainInfo;
   amount: string;
   estimatedTime: number; // in seconds
+  recipientAddress?: `0x${string}` | string;
   onViewHistory: () => void;
   onBack: () => void;
   // Transaction hash to fetch attestation for
@@ -36,6 +37,7 @@ export function BridgingState({
   toChain,
   amount,
   estimatedTime,
+  recipientAddress,
   onViewHistory,
   onBack,
   hash,
@@ -53,7 +55,6 @@ export function BridgingState({
     data: attestationData,
     isLoading: isAttestationLoading,
     error: attestationError,
-    isPending: isAttestationPending,
     refetch,
   } = useAttestation(
     hash || ("0x" as `0x${string}`),
@@ -64,6 +65,11 @@ export function BridgingState({
       version,
     }
   );
+
+  // Reset countdown when estimate changes
+  useEffect(() => {
+    setTimeLeft(estimatedTime);
+  }, [estimatedTime]);
 
   useEffect(() => {
     if (timeLeft <= 0) return;
@@ -106,6 +112,10 @@ export function BridgingState({
     0,
     Math.min(100, 100 - (timeLeft / estimatedTime) * 100)
   );
+
+  const recipientLabel = recipientAddress
+    ? `${recipientAddress.slice(0, 6)}...${recipientAddress.slice(-4)}`
+    : "Pending";
 
   // Show claim interface when attestation is ready
   if (isAttestationReady && attestationData) {
@@ -252,7 +262,7 @@ export function BridgingState({
                 />
                 <div className="font-medium">{toChain.label}</div>
               </div>
-              <div className="text-sm text-slate-400">0x12345...cded</div>
+              <div className="text-sm text-slate-400">{recipientLabel}</div>
             </div>
           </div>
         </div>

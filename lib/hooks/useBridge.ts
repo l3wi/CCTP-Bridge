@@ -97,7 +97,8 @@ export const useBridge = (): UseBridgeReturn => {
               // This amount was already calculated as (amount * BPS) / 10000 in the UI
               maxFee = (params as FastTransferParams).fee;
             }
-            const minFinalityThreshold = isV2FastTransfer ? 0 : 65; // Fast: 0, Standard: 65
+            // Circle docs: 1000 = confirmed (fast), 2000 = finalized (standard)
+            const minFinalityThreshold = isV2FastTransfer ? 1000 : 2000;
 
             const args = [
               depositArgs.amount,
@@ -381,7 +382,11 @@ export const useBridge = (): UseBridgeReturn => {
         if (!response.ok) {
           throw new Error("Failed to fetch fast transfer fees");
         }
-        return await response.json();
+        const data = (await response.json()) as V2FastBurnFeesResponse;
+        if (!Array.isArray(data)) {
+          throw new Error("Unexpected fee response format");
+        }
+        return data;
       } catch (error) {
         console.error("Error fetching fast transfer fees:", error);
         throw error;

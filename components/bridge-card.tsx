@@ -86,6 +86,7 @@ export function BridgeCard({
     toChain: { value: string; label: string };
     amount: string;
     estimatedTime: number;
+    recipient: string | null;
   } | null>(null);
   const [bridgeTransactionHash, setBridgeTransactionHash] = useState<
     `0x${string}` | null
@@ -302,8 +303,26 @@ export function BridgeCard({
           return;
         }
 
-        const feeData = await getFastTransferFee(sourceDomain, destDomain);
-        setFetchedFee(feeData.minimumFee);
+        if (sourceDomain === destDomain) {
+          // Same-domain transfers aren't valid and Circle responds 400; skip fee lookup.
+          setFetchedFee(null);
+          return;
+        }
+
+        const feeTiers = await getFastTransferFee(sourceDomain, destDomain);
+        const fastTier = feeTiers.find(
+          (tier) => tier.finalityThreshold <= 1000
+        );
+        if (!fastTier) {
+          console.warn(
+            "No fast transfer fee tier returned for domains:",
+            sourceDomain,
+            destDomain
+          );
+          setFetchedFee(null);
+          return;
+        }
+        setFetchedFee(fastTier.minimumFee);
       } catch (error) {
         console.error("Failed to fetch fast transfer fee:", error);
         setFetchedFee(null);
@@ -360,7 +379,7 @@ export function BridgeCard({
 
       // Add fee for fast transfers if applicable
       if (version === "v2" && transferType === "fast") {
-        if (!fetchedFee) {
+        if (fetchedFee === null) {
           toast({
             title: "Error",
             description: "No fee fetched",
@@ -370,9 +389,13 @@ export function BridgeCard({
         }
 
         // Calculate the actual fee amount from BPS
-        // fetchedFee is in BPS, so we calculate: (amount * BPS) / 10000
+        // fetchedFee is in BPS; Circle requires the minimum fee or higher
+        // so we round up instead of truncating to avoid insufficient_fee reverts.
+        const bps = BigInt(fetchedFee);
         const feeAmount =
-          (validation.data.amount * BigInt(fetchedFee)) / BigInt(10000);
+          bps === BigInt(0)
+            ? BigInt(0)
+            : (validation.data.amount * bps + BigInt(9999)) / BigInt(10000);
 
         // Pass the calculated fee amount as maxFee (not the BPS value)
         bridgeParams.fee = feeAmount;
@@ -426,25 +449,41 @@ export function BridgeCard({
   };
 
   // Calculate estimated values
-  const estimatedTime = useMemo(() => {
-    if (!chain || !targetChain) return "~8-20s";
+  const estimatedTiming = useMemo(() => {
+    const fallback = { label: "~8-20s", seconds: 30 };
+
+    if (!chain || !targetChain) {
+      return fallback;
+    }
 
     const sourceSupportsV2 = isV2Supported(chain.id);
     const targetSupportsV2 = isV2Supported(targetChain.id);
     const supportsV2 = sourceSupportsV2 && targetSupportsV2;
 
     if (fastTransfer && supportsV2) {
-      return (
+      const fastData =
         blockConfirmations.fast[
           chain.id as keyof typeof blockConfirmations.fast
-        ]?.time || "~8-20s"
-      );
+        ];
+      if (fastData) {
+        return {
+          label: fastData.time,
+          seconds: fastData.seconds ?? fallback.seconds,
+        };
+      }
+      return fallback;
     }
-    return (
+    const standardData =
       blockConfirmations.standard[
         chain.id as keyof typeof blockConfirmations.standard
-      ]?.time || "~15m"
-    );
+      ];
+    if (standardData) {
+      return {
+        label: standardData.time,
+        seconds: standardData.seconds ?? 15 * 60,
+      };
+    }
+    return { label: "~15m", seconds: 15 * 60 };
   }, [chain, targetChain, fastTransfer]);
 
   const bridgeFee = useMemo(() => {
@@ -511,19 +550,27 @@ export function BridgeCard({
         // Calculate estimated time based on transaction details
         const version = loadedTransaction.version || "v1";
         const transferType = loadedTransaction.transferType || "standard";
-        let estimatedTime = 900; // 15 minutes default
-
-        if (version === "v2" && transferType === "fast") {
-          estimatedTime = 30; // 30 seconds for fast transfers
-        } else if (version === "v2") {
-          estimatedTime = 60 * 15; // 15 minutes for v2 standard
-        }
+        const fastEntry =
+          blockConfirmations.fast[
+            originChain.id as keyof typeof blockConfirmations.fast
+          ];
+        const standardEntry =
+          blockConfirmations.standard[
+            originChain.id as keyof typeof blockConfirmations.standard
+          ];
+        const fallbackSeconds =
+          version === "v2" && transferType === "fast" ? 30 : 15 * 60;
+        const estimatedTime =
+          version === "v2" && transferType === "fast"
+            ? fastEntry?.seconds ?? fallbackSeconds
+            : standardEntry?.seconds ?? fallbackSeconds;
 
         setLoadedTransactionData({
           fromChain,
           toChain,
           amount: loadedTransaction.amount,
           estimatedTime,
+          recipient: loadedTransaction.targetAddress || null,
         });
         setIsBridging(true);
       }
@@ -548,6 +595,7 @@ export function BridgeCard({
           toChain={loadedTransactionData.toChain}
           amount={loadedTransactionData.amount}
           estimatedTime={loadedTransactionData.estimatedTime}
+          recipientAddress={loadedTransactionData.recipient || undefined}
           onViewHistory={() => setHistoryOpen(true)}
           onBack={handleBackToNew}
           // Required props for attestation fetching
@@ -573,12 +621,18 @@ export function BridgeCard({
       const supportsV2 = sourceSupportsV2 && targetSupportsV2;
       const version = supportsV2 ? "v2" : "v1";
 
+      const recipientAddressValue =
+        diffWallet && targetAddress
+          ? targetAddress
+          : (address as `0x${string}` | undefined);
+
       return (
         <BridgingState
           fromChain={fromChain}
           toChain={toChain}
           amount={amount.str}
-          estimatedTime={fastTransfer ? 8 : 900}
+          estimatedTime={estimatedTiming.seconds}
+          recipientAddress={recipientAddressValue}
           onViewHistory={() => setHistoryOpen(true)}
           onBack={handleBackToNew}
           // Required props for attestation fetching
@@ -936,7 +990,7 @@ export function BridgeCard({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Time spend</span>
-                  <span className="text-slate-300">{estimatedTime}</span>
+                  <span className="text-slate-300">{estimatedTiming.label}</span>
                 </div>
                 <div className="flex justify-between font-medium">
                   <span className="text-slate-300">You will receive</span>

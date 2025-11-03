@@ -23,7 +23,16 @@ export const getChainsFromId = (
 };
 
 // CCTP V2 supported chains (mainnet only)
-export const supportsV2: number[] = [1, 43114, 42161, 8453, 59144, 146, 480];
+export const supportsV2: number[] = [
+  1,
+  43114,
+  42161,
+  8453,
+  137,
+  59144,
+  146,
+  480,
+];
 
 // CCTP V2 supported chains (testnet)
 export const supportsV2Testnet: number[] = [11155111, 43113, 421614, 84532];
@@ -94,6 +103,14 @@ const contractsV2: ContractsMap = {
     TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
     Message: "0xec546b6B005471ECf012e5aF77FBeC07e0FD8f78",
     Usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  },
+  137: {
+    // Polygon PoS V2
+    TokenMessenger: "0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d",
+    MessageTransmitter: "0x81D40F21F12A8F0E3252Bccb954D722d4c464B64",
+    TokenMinter: "0xfd78EE919681417d192449715b2594ab58f5D002",
+    Message: "0xec546b6B005471ECf012e5aF77FBeC07e0FD8f78",
+    Usdc: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
   },
   59144: {
     // Linea V2

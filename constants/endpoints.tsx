@@ -6,35 +6,35 @@ export const endpoints = {
 // Block confirmation requirements for V2
 export const blockConfirmations = {
   fast: {
-    1: { blocks: 2, time: "~20 seconds" }, // Ethereum
-    42161: { blocks: 1, time: "~8 seconds" }, // Arbitrum
-    8453: { blocks: 1, time: "~8 seconds" }, // Base
-    43114: { blocks: 1, time: "~8 seconds" }, // Avalanche
-    10: { blocks: 1, time: "~8 seconds" }, // Optimism
-    59144: { blocks: 1, time: "~8 seconds" }, // Linea
-    59140: { blocks: 1, time: "~8 seconds" }, // Codex
-    5000: { blocks: 1, time: "~8 seconds" }, // World Chain
+    1: { blocks: 2, time: "~20 seconds", seconds: 20 }, // Ethereum
+    42161: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Arbitrum
+    8453: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Base
+    10: { blocks: 1, time: "~8 seconds", seconds: 8 }, // OP Mainnet
+    59144: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Linea
+    59140: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Codex
+    130: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Unichain
+    480: { blocks: 1, time: "~8 seconds", seconds: 8 }, // World Chain
   },
   standard: {
-    1: { blocks: 65, time: "13-19 minutes" }, // Ethereum
-    42161: { blocks: 65, time: "13-19 minutes" }, // Arbitrum (L2 to Ethereum)
-    8453: { blocks: 65, time: "13-19 minutes" }, // Base (L2 to Ethereum)
-    43114: { blocks: 1, time: "~8 seconds" }, // Avalanche
-    59144: { blocks: 1, time: "6-32 hours" }, // Linea
-    59140: { blocks: 65, time: "13-19 minutes" }, // Codex (L2 to Ethereum)
-    10: { blocks: 65, time: "13-19 minutes" }, // Optimism (L2 to Ethereum)
-    5000: { blocks: 65, time: "13-19 minutes" }, // World Chain (L2 to Ethereum)
+    1: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Ethereum
+    42161: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Arbitrum -> Ethereum
+    8453: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Base -> Ethereum
+    43114: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Avalanche
+    59144: { blocks: 1, time: "~6-32 hours", seconds: 32 * 60 * 60 }, // Linea hard finality
+    59140: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Codex -> Ethereum
+    10: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // OP Mainnet -> Ethereum
+    130: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Unichain -> Ethereum
+    137: { blocks: 3, time: "~8 seconds", seconds: 8 }, // Polygon PoS (~2-3 blocks)
+    146: { blocks: 1, time: "~8 seconds", seconds: 8 }, // Sonic
+    480: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // World Chain -> Ethereum
+    18: { blocks: 3, time: "~10 seconds", seconds: 10 }, // XDC
+    16: { blocks: 1, time: "~5 seconds", seconds: 5 }, // Sei
+    19: { blocks: 1, time: "~5 seconds", seconds: 5 }, // HyperEVM
+    14: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // World Chain alias (domain 14)
+    21: { blocks: 65, time: "~30 minutes", seconds: 30 * 60 }, // Ink
+    22: { blocks: 65, time: "~13-19 minutes", seconds: 19 * 60 }, // Plume
   },
 };
-
-// export const rpcs: { [key: number]: string } = {
-//   1: `https://rpc.ankr.com/eth/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-//   137: `https://rpc.ankr.com/polygon/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-//   10: `https://rpc.ankr.com/optimism/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-//   8453: `https://rpc.ankr.com/base/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-//   43114: `https://rpc.ankr.com/avalanche/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-//   42161: `https://rpc.ankr.com/arbitrum/c4428913f099976eb6bc210098b1e868034ffd9091733f168b0117ba05ebf405`,
-// };
 
 export const explorers: { [key: number]: string } = {
   1: "https://etherscan.io/", // Mainnet

@@ -9,6 +9,8 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@circle-fin/adapter-viem-v2": "^1.0.1",
+    "@circle-fin/bridge-kit": "^1.1.0",
     "@radix-ui/react-checkbox": "^1.0.4",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-label": "^2.0.2",
@@ -41,7 +43,7 @@
     "tailwindcss-animate": "^1.0.7",
     "typescript": "5.8.3",
     "usehooks-ts": "^3.1.1",
-    "viem": "^2.31.0",
+    "viem": "^2.38.6",
     "wagmi": "^2.5.19",
     "zustand": "^5.0.5"
   },

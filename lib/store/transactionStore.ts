@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { LocalTransaction, LegacyLocalTransaction } from "@/lib/types";
 
+const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
+
 interface TransactionState {
   transactions: LocalTransaction[];
   isLoading: boolean;
@@ -20,33 +22,62 @@ interface TransactionState {
 }
 
 // Migration function to convert legacy transactions
-const migrateLegacyTransaction = (legacyTx: LegacyLocalTransaction): LocalTransaction => {
+const normalizeTransaction = (
+  tx: Partial<LocalTransaction>
+): LocalTransaction => {
+  return {
+    date: tx.date ? new Date(tx.date) : new Date(),
+    originChain: tx.originChain ?? 1,
+    hash: tx.hash as `0x${string}`,
+    status: tx.status ?? "pending",
+    amount: tx.amount,
+    chain: tx.chain,
+    targetChain: tx.targetChain,
+    targetAddress: tx.targetAddress,
+    claimHash: tx.claimHash,
+    version: tx.version ?? "v1",
+    transferType: tx.transferType ?? "standard",
+    fee: tx.fee,
+    estimatedTime: tx.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+  };
+};
+
+const migrateLegacyTransaction = (
+  legacyTx: LegacyLocalTransaction
+): LocalTransaction => {
   return {
     ...legacyTx,
-    version: 'v1' as const,
-    transferType: 'standard' as const,
-    estimatedTime: '13-19 minutes',
+    date: legacyTx.date ? new Date(legacyTx.date) : new Date(),
+    version: "v1" as const,
+    transferType: "standard" as const,
+    estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,
   };
 };
 
 // Check for legacy data and migrate
 const migrateLegacyData = (): LocalTransaction[] => {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
   try {
-    const legacyData = localStorage.getItem('cctp-transactions');
+    const legacyData = localStorage.getItem("cctp-transactions");
     if (legacyData) {
       const parsed = JSON.parse(legacyData);
       if (parsed?.state?.transactions) {
-        const legacyTransactions = parsed.state.transactions as LegacyLocalTransaction[];
-        const migratedTransactions = legacyTransactions.map(migrateLegacyTransaction);
-        
+        const legacyTransactions =
+          parsed.state.transactions as LegacyLocalTransaction[];
+        const migratedTransactions =
+          legacyTransactions.map(migrateLegacyTransaction);
+
         // Remove legacy data after migration
-        localStorage.removeItem('cctp-transactions');
-        
+        localStorage.removeItem("cctp-transactions");
+
         return migratedTransactions;
       }
     }
   } catch (error) {
-    console.warn('Failed to migrate legacy transaction data:', error);
+    console.warn("Failed to migrate legacy transaction data:", error);
   }
   return [];
 };
@@ -59,16 +90,18 @@ export const useTransactionStore = create<TransactionState>()(
       error: null,
 
       addTransaction: (transaction) => {
-        const newTransaction: LocalTransaction = {
+        const incoming = {
           ...transaction,
           date: new Date(),
-          version: transaction.version || 'v1',
-          transferType: transaction.transferType || 'standard',
-          estimatedTime: transaction.estimatedTime || '13-19 minutes',
-        };
+        } as LocalTransaction;
+        const newTransaction = normalizeTransaction(incoming);
 
         set((state) => ({
-          transactions: [newTransaction, ...state.transactions],
+          transactions: state.transactions.some(
+            (tx) => tx.hash === newTransaction.hash
+          )
+            ? state.transactions
+            : [newTransaction, ...state.transactions],
           error: null,
         }));
       },
@@ -109,11 +142,23 @@ export const useTransactionStore = create<TransactionState>()(
 
       migrateFromLegacy: () => {
         const migratedTransactions = migrateLegacyData();
-        if (migratedTransactions.length > 0) {
-          set((state) => ({
-            transactions: [...migratedTransactions, ...state.transactions],
-          }));
-        }
+        set((state) => {
+          const deduped = new Map<string, LocalTransaction>();
+
+          state.transactions
+            .map(normalizeTransaction)
+            .forEach((tx) => deduped.set(tx.hash, tx));
+
+          migratedTransactions
+            .map(normalizeTransaction)
+            .forEach((tx) => deduped.set(tx.hash, tx));
+
+          return {
+            transactions: Array.from(deduped.values()).sort(
+              (a, b) => b.date.getTime() - a.date.getTime()
+            ),
+          };
+        });
       },
     }),
     {
@@ -123,6 +168,9 @@ export const useTransactionStore = create<TransactionState>()(
         // Migrate legacy data on store initialization
         if (state) {
           state.migrateFromLegacy();
+          set((prev) => ({
+            transactions: prev.transactions.map(normalizeTransaction),
+          }));
         }
       },
     }

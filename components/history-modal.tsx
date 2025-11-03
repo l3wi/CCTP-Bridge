@@ -243,41 +243,31 @@ function TransactionRow({
     const version = tx.version || "v1";
     const transferType = tx.transferType || "standard";
 
-    let estimatedMinutes = 25; // Default fallback
+    let estimatedSeconds = 25 * 60; // Default fallback of 25 minutes
 
     if (version === "v2" && transferType === "fast") {
       const fastTime =
         blockConfirmations.fast[
           tx.originChain as keyof typeof blockConfirmations.fast
         ];
-      if (fastTime) {
-        const timeStr = fastTime.time;
-        if (timeStr.includes("seconds")) {
-          const seconds = parseInt(timeStr.match(/\d+/)?.[0] || "20");
-          estimatedMinutes = Math.max(1, seconds / 60);
-        } else if (timeStr.includes("minutes")) {
-          estimatedMinutes = parseInt(timeStr.match(/\d+/)?.[0] || "1");
-        }
+      if (fastTime?.seconds) {
+        estimatedSeconds = fastTime.seconds;
       } else {
-        estimatedMinutes = 1;
+        estimatedSeconds = 30;
       }
     } else {
       const standardTime =
         blockConfirmations.standard[
           tx.originChain as keyof typeof blockConfirmations.standard
         ];
-      if (standardTime) {
-        const timeStr = standardTime.time;
-        if (timeStr.includes("minutes")) {
-          estimatedMinutes = parseInt(timeStr.match(/\d+/)?.[0] || "15");
-        } else if (timeStr.includes("hours")) {
-          const hours = parseInt(timeStr.match(/\d+/)?.[0] || "1");
-          estimatedMinutes = hours * 60;
-        }
+      if (standardTime?.seconds) {
+        estimatedSeconds = standardTime.seconds;
+      } else {
+        estimatedSeconds = 15 * 60;
       }
     }
 
-    return new Date(tx.date).getTime() + 1000 * 60 * estimatedMinutes;
+    return new Date(tx.date).getTime() + 1000 * estimatedSeconds;
   };
 
   const renderStatus = () => {

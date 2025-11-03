@@ -1,5 +1,5 @@
 import { Button } from "./ui/button";
-import { Dispatch, SetStateAction, useEffect, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useMemo, useState } from "react";
 import { domains, testnetDomains, getContracts } from "@/constants/contracts";
 import { useToast } from "./ui/use-toast";
 import { LocalTransaction } from "@/lib/types";
@@ -11,6 +11,7 @@ import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useBridge } from "@/lib/hooks/useBridge";
 import { getABI } from "@/constants/abi";
 import { isTestnet } from "@/constants/contracts";
+import { inferCctpVersionFromMessage } from "@/lib/utils";
 
 export const SwitchGuard = ({
   bytes,
@@ -135,13 +136,22 @@ export default function ClaimButton({
   const { chain } = useAccount();
   const { claim, isLoading } = useBridge();
 
+  const inferredVersion = useMemo(
+    () => inferCctpVersionFromMessage(bytes),
+    [bytes]
+  );
+
   // Determine the correct version to use
-  // Priority: cctpVersion from API response > version prop
-  const actualVersion: "v1" | "v2" = cctpVersion
-    ? cctpVersion === 1
-      ? "v1"
-      : "v2"
-    : version;
+  // Priority: cctpVersion from API response > inferred from message payload > version prop
+  const actualVersion: "v1" | "v2" = useMemo(() => {
+    if (cctpVersion) {
+      return cctpVersion === 1 ? "v1" : "v2";
+    }
+    if (inferredVersion) {
+      return inferredVersion;
+    }
+    return version ?? "v1";
+  }, [cctpVersion, inferredVersion, version]);
 
   /// Derive Destination ChainID from Bytes
   const destinationDomain = fromHex(
@@ -183,7 +193,12 @@ export default function ClaimButton({
   // Get the appropriate contracts for simulation using detected version
   const contracts = chain ? getContracts(chain.id, actualVersion) : null;
 
-  const { isSuccess, error } = useSimulateContract({
+  const {
+    isSuccess,
+    error,
+    isLoading: isSimulationLoading,
+    status: simulationStatus,
+  } = useSimulateContract({
     address: contracts?.MessageTransmitter,
     abi: getABI("MessageTransmitter", actualVersion),
     functionName: "receiveMessage",
@@ -392,10 +407,12 @@ export default function ClaimButton({
       variant="outline"
       className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
       onClick={handleClaim}
-      disabled={isLoading || !isSuccess}
+      disabled={isLoading || isSimulationLoading || !isSuccess}
     >
       {isLoading
         ? "Processing..."
+        : isSimulationLoading
+        ? "Checking attestation..."
         : `Claim USDC (${actualVersion.toUpperCase()})`}
     </Button>
   );

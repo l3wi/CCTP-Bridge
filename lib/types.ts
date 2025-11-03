@@ -120,10 +120,12 @@ export interface V2FastBurnAllowanceResponse {
   lastUpdated: string;
 }
 
-export interface V2FastBurnFeesResponse {
+export interface V2FastBurnFeeTier {
   finalityThreshold: number; // The finality threshold used to determine Fast vs Standard Transfer
   minimumFee: number; // Fee in BPS (Basis Points) where 1 = 0.01%
 }
+
+export type V2FastBurnFeesResponse = V2FastBurnFeeTier[];
 
 export interface V2PublicKeysResponse {
   publicKeys: Array<{
