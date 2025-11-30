@@ -10,6 +10,8 @@ import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { useAccount, useSwitchChain } from "wagmi";
 import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/bridgeKit";
+import { useClaim } from "@/lib/hooks/useClaim";
+import { useTransactionStore } from "@/lib/store/transactionStore";
 
 interface ChainInfo {
   value: string;
@@ -29,6 +31,7 @@ interface BridgingStateProps {
   transferType?: "fast" | "standard";
   startedAt?: Date;
   estimatedTimeLabel?: string;
+  onBridgeResultUpdate?: (result: BridgeResult) => void;
 }
 
 export function BridgingState({
@@ -44,11 +47,104 @@ export function BridgingState({
   transferType,
   startedAt,
   estimatedTimeLabel,
+  onBridgeResultUpdate,
 }: BridgingStateProps) {
   const { chain } = useAccount();
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const { toast } = useToast();
+  const { retryClaim, isClaiming } = useClaim();
+  const { updateTransaction } = useTransactionStore();
   const [timeLeft, setTimeLeft] = useState(estimatedTime ?? 0);
+  const [localBridgeResult, setLocalBridgeResult] = useState<BridgeResult | undefined>(
+    bridgeResult
+  );
+
+  useEffect(() => {
+    setLocalBridgeResult(bridgeResult);
+  }, [bridgeResult]);
+
+  const baseResult = localBridgeResult ?? bridgeResult;
+
+  const CLAIMED_MESSAGE = "USDC claimed. Check your wallet for the USDC";
+
+  const extractHashes = (res: BridgeResult) => {
+    let burnHash: `0x${string}` | undefined;
+    let mintHash: `0x${string}` | undefined;
+    let completedAt: Date | undefined;
+
+    for (const step of res.steps) {
+      if (!burnHash && step.txHash) {
+        burnHash = step.txHash as `0x${string}`;
+      }
+      if (step.txHash && /mint|claim|receive/i.test(step.name)) {
+        mintHash = step.txHash as `0x${string}`;
+      }
+      if (step.state === "success") {
+        completedAt = new Date();
+      }
+    }
+
+    return { burnHash, mintHash, completedAt };
+  };
+
+  const displayResult = useMemo(() => {
+    if (!baseResult) return undefined;
+    const hasNonceUsed = baseResult.steps.some(
+      (step) =>
+        /nonce already used/i.test(step.errorMessage || "") ||
+        /nonce already used/i.test(String(step.error || ""))
+    );
+    if (!hasNonceUsed) return baseResult;
+
+    const normalizedSteps = baseResult.steps.map((step) => {
+      const nonceUsed =
+        /nonce already used/i.test(step.errorMessage || "") ||
+        /nonce already used/i.test(String(step.error || ""));
+
+      if (nonceUsed && /mint/i.test(step.name)) {
+        return {
+          ...step,
+          state: "success" as const,
+          errorMessage: CLAIMED_MESSAGE,
+        };
+      }
+      return step;
+    });
+
+    return {
+      ...baseResult,
+      state: "success" as const,
+      steps: normalizedSteps,
+    };
+  }, [baseResult]);
+
+  useEffect(() => {
+    if (
+      baseResult &&
+      displayResult &&
+      baseResult.state !== displayResult.state &&
+      onBridgeResultUpdate
+    ) {
+      onBridgeResultUpdate(displayResult);
+    }
+  }, [baseResult, displayResult, onBridgeResultUpdate]);
+
+  useEffect(() => {
+    if (!displayResult) return;
+    const { burnHash, mintHash, completedAt } = extractHashes(displayResult);
+    if (!burnHash) return;
+
+    if (displayResult.state === "success") {
+      updateTransaction(burnHash, {
+        bridgeResult: displayResult,
+        bridgeState: "success",
+        status: "claimed",
+        steps: displayResult.steps,
+        claimHash: mintHash,
+        completedAt: displayResult.completedAt ?? completedAt ?? new Date(),
+      });
+    }
+  }, [displayResult, updateTransaction]);
 
   // Reset countdown when estimate changes
   useEffect(() => {
@@ -102,8 +198,8 @@ export function BridgingState({
   const etaLabel =
     estimatedTimeLabel || finalityEstimate || (transferType === "fast" ? "~1 minute" : "13-19 minutes");
   const completedLabel =
-    bridgeResult?.state === "success" && bridgeResult.completedAt
-      ? new Date(bridgeResult.completedAt).toLocaleString(undefined, {
+    displayResult?.state === "success" && displayResult.completedAt
+      ? new Date(displayResult.completedAt).toLocaleString(undefined, {
           month: "short",
           day: "numeric",
           hour: "2-digit",
@@ -113,58 +209,58 @@ export function BridgingState({
 
   const destinationChainId = useMemo(() => {
     const bridgeDest =
-      (bridgeResult?.destination?.chain as { chainId?: number } | undefined)
+      (displayResult?.destination?.chain as { chainId?: number } | undefined)
         ?.chainId;
     if (bridgeDest) return bridgeDest;
     return toChain?.value ? Number(toChain.value) : undefined;
-  }, [bridgeResult?.destination?.chain, toChain?.value]);
+  }, [displayResult?.destination?.chain, toChain?.value]);
 
   const sourceChainId = useMemo(() => {
     const bridgeSource =
-      (bridgeResult?.source?.chain as { chainId?: number } | undefined)?.chainId;
+      (displayResult?.source?.chain as { chainId?: number } | undefined)?.chainId;
     if (bridgeSource) return bridgeSource;
     return fromChain?.value ? Number(fromChain.value) : undefined;
-  }, [bridgeResult?.source?.chain, fromChain?.value]);
+  }, [displayResult?.source?.chain, fromChain?.value]);
 
   const displayFrom = useMemo(() => {
     const chainName =
-      (bridgeResult?.source?.chain as { name?: string } | undefined)?.name ||
+      (displayResult?.source?.chain as { name?: string } | undefined)?.name ||
       fromChain.label;
     const value =
-      (bridgeResult?.source?.chain as { chainId?: number } | undefined)?.chainId ||
+      (displayResult?.source?.chain as { chainId?: number } | undefined)?.chainId ||
       (fromChain.value ? Number(fromChain.value) : undefined);
     return {
       label: chainName,
       value: value?.toString() || fromChain.value,
     };
-  }, [bridgeResult?.source?.chain, fromChain.label, fromChain.value]);
+  }, [displayResult?.source?.chain, fromChain.label, fromChain.value]);
 
   const displayTo = useMemo(() => {
     const chainName =
-      (bridgeResult?.destination?.chain as { name?: string } | undefined)?.name ||
+      (displayResult?.destination?.chain as { name?: string } | undefined)?.name ||
       toChain.label;
     const value =
-      (bridgeResult?.destination?.chain as { chainId?: number } | undefined)
+      (displayResult?.destination?.chain as { chainId?: number } | undefined)
         ?.chainId ||
       (toChain.value ? Number(toChain.value) : undefined);
     return {
       label: chainName,
       value: value?.toString() || toChain.value,
     };
-  }, [bridgeResult?.destination?.chain, toChain.label, toChain.value]);
+  }, [displayResult?.destination?.chain, toChain.label, toChain.value]);
 
   const onDestinationChain = chain?.id && destinationChainId
     ? chain.id === destinationChainId
     : false;
 
-  if (bridgeResult) {
+  if (displayResult) {
     const primaryStep =
-      bridgeResult.steps.find((step) => step.state === "success" && step.txHash) ||
-      bridgeResult.steps.find((step) => step.txHash);
+      displayResult.steps.find((step) => step.state === "success" && step.txHash) ||
+      displayResult.steps.find((step) => step.txHash);
     const primaryHash = primaryStep?.txHash;
     const primaryExplorer = primaryStep?.explorerUrl;
     const stateLabel =
-      bridgeResult.state === "success"
+      displayResult.state === "success"
         ? "Bridge Completed"
         : pendingTitle;
 
@@ -209,121 +305,154 @@ export function BridgingState({
               <div>
                 <div className="font-medium">{displayTo.label}</div>
                 <div className="text-xs text-slate-400">
-                  {bridgeResult.state === "success" ? "Minted" : "Pending"}
+                  {displayResult.state === "success" ? "Minted" : "Pending"}
                 </div>
               </div>
             </div>
           </div>
 
           <div className="space-y-3 text-sm">
-            {bridgeResult.steps.map((step) => (
-              <div
-                key={step.name}
-                className="flex items-center justify-between rounded-md bg-slate-800/60 px-3 py-2 border border-slate-700/50"
-              >
-                <div className="flex items-center gap-2">
-                  <div
-                    className={`h-2 w-2 rounded-full ${
-                      step.state === "success"
-                        ? "bg-green-400"
-                        : (step.name.toLowerCase().includes("mint") &&
-                            !step.txHash &&
-                            step.state === "error") ||
-                          step.state === "pending"
-                        ? "bg-yellow-400"
-                        : "bg-red-400"
-                    }`}
-                  />
-                  <span>{step.name}</span>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-400">
-                  {step.txHash ? (
-                    <>
-                      <span>{`${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-slate-300 hover:text-white"
-                        onClick={() => {
-                          const explorer =
-                            step.explorerUrl ||
-                            (destinationChainId && step.name.toLowerCase().includes("mint")
-                              ? getExplorerTxUrl(destinationChainId, step.txHash)
-                              : sourceChainId
-                              ? getExplorerTxUrl(sourceChainId, step.txHash)
-                              : null);
-                          if (explorer) {
-                            window.open(explorer, "_blank");
-                          } else {
-                            navigator.clipboard.writeText(step.txHash);
-                            toast({
-                              title: "Hash copied",
-                              description: "No explorer link available",
-                            });
+            {displayResult.steps.map((step, idx) => {
+              const nonceClaimed =
+                /nonce already used/i.test(step.errorMessage || "") ||
+                /nonce already used/i.test(String(step.error || ""));
+              const shortError = nonceClaimed
+                ? CLAIMED_MESSAGE
+                : step.errorMessage
+                ? step.errorMessage.split("\n")[0]
+                : null;
+              const statusLabel = nonceClaimed ? "success" : step.state;
+              return (
+                <div
+                  key={`${step.name}-${step.txHash ?? idx}`}
+                  className="rounded-md bg-slate-800/60 px-3 py-2 border border-slate-700/50 space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div
+                        className={`h-2 w-2 rounded-full ${
+                          step.state === "success" || nonceClaimed
+                            ? "bg-green-400"
+                            : step.state === "pending"
+                            ? "bg-yellow-400"
+                            : "bg-red-400"
+                        }`}
+                      />
+                      <span>{step.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-400">
+                      {step.txHash ? (
+                        <>
+                          <span>{`${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6 text-slate-300 hover:text-white"
+                            onClick={() => {
+                              const explorer =
+                                step.explorerUrl ||
+                                (destinationChainId && step.name.toLowerCase().includes("mint")
+                                  ? getExplorerTxUrl(destinationChainId, step.txHash)
+                                  : sourceChainId
+                                  ? getExplorerTxUrl(sourceChainId, step.txHash)
+                                  : null);
+                              if (explorer) {
+                                window.open(explorer, "_blank");
+                              } else {
+                                navigator.clipboard.writeText(step.txHash);
+                                toast({
+                                  title: "Hash copied",
+                                  description: "No explorer link available",
+                                });
+                              }
+                            }}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </Button>
+                        </>
+                      ) : (
+                        <span
+                          className={
+                            nonceClaimed
+                              ? "text-green-300"
+                              : step.state === "error"
+                              ? "text-red-300"
+                              : ""
                           }
-                        }}
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                      </Button>
-                    </>
-                  ) : (
-                    <span>
-                      {(step.name.toLowerCase().includes("mint") &&
-                        step.state === "error") ||
-                      step.state === "pending"
-                        ? "pending"
-                        : step.state}
-                    </span>
+                        >
+                          {statusLabel}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {shortError && (
+                    <div className={`text-xs ${nonceClaimed ? "text-green-300" : "text-red-300"} line-clamp-2`}>
+                      {shortError}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          {bridgeResult.state !== "success" && (
+          {displayResult.state !== "success" && (
             <div className="flex flex-col gap-2">
               <Button
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={isSwitchingChain}
-                onClick={() => {
-                  if (!destinationChainId) return;
-                  if (!onDestinationChain) {
-                    switchChain({ chainId: destinationChainId }).catch((err) =>
-                      toast({
-                        title: "Switch failed",
-                        description:
-                          err instanceof Error ? err.message : "Could not switch chain",
-                        variant: "destructive",
-                      })
-                    );
-                    return;
-                  }
-
-                  const claimStep =
-                    bridgeResult?.steps.find((step) => /mint|claim/i.test(step.name)) ||
-                    bridgeResult?.steps.find((step) => step.txHash);
-
-                  if (claimStep?.txHash) {
-                    const explorer =
-                      claimStep.explorerUrl ||
-                      (destinationChainId
-                        ? getExplorerTxUrl(destinationChainId, claimStep.txHash)
-                        : null);
-                    if (explorer) {
-                      window.open(explorer, "_blank");
-                      return;
+                disabled={isSwitchingChain || isClaiming}
+                onClick={async () => {
+                  if (!destinationChainId || !displayResult) return;
+                  try {
+                    if (!onDestinationChain) {
+                      await switchChain({ chainId: destinationChainId });
                     }
-                  }
 
-                  toast({
-                    title: "Claim pending",
-                    description: "Circle will prompt you to claim once ready.",
-                  });
+                    const claimStep =
+                      displayResult?.steps.find((step) => /mint|claim/i.test(step.name)) ||
+                      displayResult?.steps.find((step) => step.txHash);
+
+                    if (claimStep?.txHash) {
+                      const explorer =
+                        claimStep.explorerUrl ||
+                        (destinationChainId
+                          ? getExplorerTxUrl(destinationChainId, claimStep.txHash)
+                          : null);
+                      if (explorer) {
+                        window.open(explorer, "_blank");
+                        return;
+                      }
+                    }
+
+                    const retryResult = await retryClaim(displayResult, {
+                      onStep: (steps) => {
+                        setLocalBridgeResult((prev) =>
+                          prev ? { ...prev, steps } : prev
+                        );
+                      },
+                    });
+                    setLocalBridgeResult(retryResult);
+                    onBridgeResultUpdate?.(retryResult);
+                  } catch (err) {
+                    console.error("Claim retry failed", err);
+                    toast({
+                      title: "Claim failed",
+                      description:
+                        err instanceof Error ? err.message : "Unable to submit claim",
+                      variant: "destructive",
+                    });
+                  }
                 }}
               >
-                {onDestinationChain
-                  ? `Claim ${amount} USDC`
-                  : `Switch chain to ${displayTo.label}`}
+                {isClaiming ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Claiming...
+                  </span>
+                ) : onDestinationChain ? (
+                  `Claim ${amount} USDC`
+                ) : (
+                  `Switch chain to ${displayTo.label}`
+                )}
               </Button>
             </div>
           )}
@@ -339,14 +468,14 @@ export function BridgingState({
             </div>
             <div className="flex items-center justify-between">
               <span className="text-slate-400">
-                {bridgeResult?.state === "success" ? "Completed at" : "Estimated time"}
+                {displayResult?.state === "success" ? "Completed at" : "Estimated time"}
               </span>
-              <span>{bridgeResult?.state === "success" ? completedLabel || "—" : etaLabel}</span>
+              <span>{displayResult?.state === "success" ? completedLabel || "—" : etaLabel}</span>
             </div>
           </div>
 
           <div className="text-center text-xs text-slate-500">
-            {bridgeResult.state === "success"
+            {displayResult.state === "success"
               ? "Your burn & mint has been completed."
               : "Circle is processing your transfer. It’s safe to close the window."}
           </div>

@@ -698,6 +698,7 @@ export function BridgeCard({
           amount={loadedTransactionData.amount}
           recipientAddress={loadedTransactionData.recipient || undefined}
           onBack={handleBackToNew}
+          onBridgeResultUpdate={(next) => setBridgeResult(next)}
           confirmations={getCctpConfirmations(loadedTransaction.originChain) || undefined}
           finalityEstimate={(() => {
             const chainDef = getBridgeChainById(loadedTransaction.originChain);
@@ -791,6 +792,7 @@ export function BridgeCard({
           estimatedTime={undefined}
           recipientAddress={recipientAddressValue}
           onBack={handleBackToNew}
+          onBridgeResultUpdate={(next) => setBridgeResult(next)}
           confirmations={confirmations}
           finalityEstimate={finalityEstimate}
           transferType={activeTransferSpeed === TransferSpeed.FAST ? "fast" : "standard"}
