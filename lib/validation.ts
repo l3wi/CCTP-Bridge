@@ -126,17 +126,14 @@ export interface BridgeValidation {
   data?: {
     amount: bigint;
     targetChain: number;
-    targetAddress: `0x${string}`;
   };
 }
 
 export const validateBridgeParams = (params: {
   amount?: { str: string; bigInt: bigint } | null;
   targetChain?: number | null;
-  targetAddress?: string;
   sourceChain?: number;
   balance?: bigint;
-  isCustomAddress?: boolean;
   userAddress?: `0x${string}`;
 }): BridgeValidation => {
   const errors: string[] = [];
@@ -161,17 +158,7 @@ export const validateBridgeParams = (params: {
   }
 
   // Validate target address
-  let finalTargetAddress = params.userAddress;
-  if (params.isCustomAddress && params.targetAddress) {
-    const addressValidation = validateAddress(params.targetAddress);
-    if (!addressValidation.isValid && addressValidation.error) {
-      errors.push(addressValidation.error);
-    } else {
-      finalTargetAddress = params.targetAddress as `0x${string}`;
-    }
-  }
-
-  if (!finalTargetAddress) {
+  if (!params.userAddress) {
     errors.push("Target address is required");
   }
 
@@ -181,11 +168,10 @@ export const validateBridgeParams = (params: {
     isValid,
     errors,
     data:
-      isValid && params.amount && params.targetChain && finalTargetAddress
+      isValid && params.amount && params.targetChain
         ? {
             amount: params.amount.bigInt,
             targetChain: params.targetChain,
-            targetAddress: finalTargetAddress,
           }
         : undefined,
   };

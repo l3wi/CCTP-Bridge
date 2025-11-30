@@ -11,40 +11,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture Overview
 
-This is a Next.js 13+ app router application for bridging USDC using Circle's Cross-Chain Transfer Protocol (CCTP). The app enables users to burn USDC on one chain and claim it on another.
+This is a Next.js 13+ app router application for bridging USDC using Circle Bridge Kit (CCTPv2, EVM-first). The app relies on the SDK for routing, approvals, attestation, and minting.
 
 ### Core Bridge Flow
-1. **Approve** - User approves USDC spending to TokenMessenger contract
-2. **Burn** - User burns USDC via `depositForBurn` on source chain
-3. **Attestation** - Circle API provides attestation for the burn transaction
-4. **Claim** - User claims USDC on destination chain via `receiveMessage`
+1. **Estimate** - Bridge Kit `estimate` provides fees/gas for the selected route
+2. **Approve + Burn** - Bridge Kit handles USDC approval and burn on the source chain
+3. **Attestation + Mint** - Bridge Kit fetches attestation and mints on the destination chain
+4. **Status** - Steps and state are surfaced via Bridge Kit `BridgeResult`; manual claim UI is removed
 
 ### Key Architecture Components
 
 **State Management**
 - Zustand store (`lib/store/transactionStore.ts`) manages transaction history with localStorage persistence
-- React hooks pattern for blockchain interactions
+- React hooks pattern for blockchain interactions (Bridge Kit + Wagmi)
 
 **Blockchain Integration**
-- Wagmi v2 + Viem for Ethereum interactions
+- Wagmi v2 + Viem for Ethereum interactions, backed by Bridge Kit viem adapter
 - RainbowKit for wallet connections
-- Contract addresses and ABIs centralized in `constants/`
+- Chain metadata (RPCs, explorers, USDC addresses) comes from Bridge Kit; no local contract maps
 
 **Transaction Lifecycle**
-- Local transaction tracking with optimistic updates
-- Retry logic with exponential backoff for failed transactions
+- Local transaction tracking with persisted `BridgeResult` + steps
+- Bridge Kit retry/resume planned for pending transfers
 - Error handling with user-friendly messages
 
 **Multi-Chain Support**
-- Mainnet: Ethereum, Avalanche, Arbitrum, Optimism, Base, Polygon
-- Testnet: Goerli, Avalanche Fuji, Arbitrum Goerli
-- Domain mapping for CCTP protocol
+- Bridge Kit-supported EVM chains only (env-driven mainnet/testnet list pulled from SDK)
 
 ### Key Files
-- `lib/hooks/useBridge.ts` - Core bridge operations (burn/approve/claim)
-- `constants/contracts.tsx` - Chain configs and contract addresses
-- `lib/store/transactionStore.ts` - Transaction state management
-- `lib/types.ts` - TypeScript interfaces for the entire app
+- `lib/bridgeKit.ts` - Bridge Kit singleton, chain filters, RPC overrides, explorer helpers
+- `lib/hooks/useBridge.ts` - Core bridge operations via Bridge Kit
+- `components/bridge-card.tsx` - Bridge UI wired to Bridge Kit estimate + status
+- `lib/store/transactionStore.ts` - Transaction state management (persisted steps/BridgeResult)
+- `lib/types.ts` - TypeScript interfaces for the app
 
 ### UI Patterns
 - Radix UI components with Tailwind CSS styling

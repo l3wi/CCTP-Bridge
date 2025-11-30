@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -9,23 +9,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { History, CheckCircle, ExternalLink, Plus, Clock } from "lucide-react";
-import { ManualClaimModal } from "@/components/manual-claim-modal";
-import { useAccount, useChains } from "wagmi";
+import { History, CheckCircle, ExternalLink, Clock } from "lucide-react";
+import { useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
-import { explorers, blockConfirmations } from "@/constants/endpoints";
-import { domains, testnetDomains, isTestnet } from "@/constants/contracts";
-import { fromHex, slice } from "viem";
-import ClaimButton, { SwitchGuard } from "@/components/claimButton";
-import ConnectGuard from "@/components/guards/ConnectGuard";
-import Countdown from "react-countdown";
 import { useTransactionStore } from "@/lib/store/transactionStore";
-import { useAttestation } from "@/lib/hooks/useAttestation";
-import {
-  AttestationLoader,
-  TransactionStatus,
-} from "@/components/loading/LoadingStates";
 import Image from "next/image";
+import { getExplorerTxUrl } from "@/lib/bridgeKit";
 
 interface HistoryModalProps {
   open?: boolean;
@@ -39,7 +28,6 @@ export function HistoryModal({
   onLoadBridging,
 }: HistoryModalProps) {
   const [isOpen, setIsOpen] = useState(open || false);
-  const [manualClaimOpen, setManualClaimOpen] = useState(false);
   const { transactions, updateTransaction } = useTransactionStore();
   const chains = useChains();
 
@@ -79,18 +67,6 @@ export function HistoryModal({
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl">
           <DialogHeader className="flex flex-row items-center justify-between">
             <DialogTitle>Transaction History</DialogTitle>
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-slate-600 text-white hover:bg-slate-700 hover:text-white bg-slate-800"
-              onClick={() => {
-                setManualClaimOpen(true);
-                handleOpenChange(false);
-              }}
-            >
-              <Plus className="h-4 w-4 mr-1" />
-              Manual Claim
-            </Button>
           </DialogHeader>
           <div className="space-y-4 max-h-96 overflow-y-auto">
             {sortedTransactions.length > 0 ? (
@@ -114,17 +90,6 @@ export function HistoryModal({
           </div>
         </DialogContent>
       </Dialog>
-
-      <ManualClaimModal
-        open={manualClaimOpen}
-        onOpenChange={(open) => {
-          setManualClaimOpen(open);
-          if (!open) {
-            // Reopen history modal when manual claim modal is closed
-            setTimeout(() => handleOpenChange(true), 100);
-          }
-        }}
-      />
     </>
   );
 }
@@ -156,121 +121,72 @@ function TransactionRow({
     [chains, tx.targetChain]
   );
 
-  const isTestnetTx = useMemo(
-    () => (destination ? isTestnet(destination) : false),
-    [destination]
-  );
-
-  // Fetch attestation data
-  const {
-    data: attestationData,
-    isLoading: isAttestationLoading,
-    isPending: isAttestationPending,
-    error: attestationError,
-    refetch,
-  } = useAttestation(tx.hash, tx.originChain, destination, {
-    enabled: tx.status === "pending",
-    refetchInterval: 10000,
-    version: tx.version || "v1",
-  });
-
-  // Update transaction when attestation is found
-  useEffect(() => {
-    if (attestationData && tx.status === "pending") {
-      updateTransaction(tx.hash, {
-        status: "pending", // Keep as pending until claimed
-      });
-    }
-  }, [attestationData, tx.hash, tx.status, updateTransaction]);
-
-  // Derive destination chain from attestation message
-  const destinationDomain = useMemo(
-    () =>
-      attestationData &&
-      fromHex(slice(attestationData.message, 8, 12) as `0x${string}`, "number"),
-    [attestationData]
-  );
-
-  const destinationChain = useMemo(() => {
-    if (!destinationDomain) return null;
-
-    // Use appropriate domain map based on testnet status
-    const domainMap = isTestnetTx ? testnetDomains : domains;
-
-    // Find chain ID by domain
-    const chainIdEntry = Object.entries(domainMap).find(
-      ([chainId, domain]) => domain === destinationDomain
-    );
-
-    if (!chainIdEntry) return null;
-
-    const chainId = parseInt(chainIdEntry[0]);
-    return chains.find((c) => c.id === chainId) || null;
-  }, [chains, destinationDomain, isTestnetTx]);
-
-  // Get chain colors based on chain names
-  const getChainColor = (chainName: string) => {
-    const name = chainName?.toLowerCase() || "";
-    if (name.includes("base")) return "bg-blue-600";
-    if (name.includes("arbitrum")) return "bg-blue-500";
-    if (name.includes("polygon")) return "bg-purple-500";
-    if (name.includes("ethereum")) return "bg-slate-600";
-    if (name.includes("avalanche")) return "bg-red-500";
-    if (name.includes("optimism")) return "bg-red-600";
-    return "bg-slate-500"; // Default color
-  };
-
-  // Countdown renderer
-  const countdownRenderer = ({ minutes, seconds, completed }: any) => {
-    if (completed) {
-      return <span className="text-yellow-400 text-xs">Still waiting...</span>;
-    }
-    return (
-      <div className="flex items-center space-x-1 text-blue-400 text-xs">
-        <span>ETA:</span>
-        <span className="font-mono">
-          {`${minutes.toString().padStart(2, "0")}:${seconds
-            .toString()
-            .padStart(2, "0")}`}
-        </span>
-      </div>
-    );
-  };
-
-  const getCountdownTime = () => {
-    if (!tx.date) return null;
-
-    const version = tx.version || "v1";
-    const transferType = tx.transferType || "standard";
-
-    let estimatedSeconds = 25 * 60; // Default fallback of 25 minutes
-
-    if (version === "v2" && transferType === "fast") {
-      const fastTime =
-        blockConfirmations.fast[
-          tx.originChain as keyof typeof blockConfirmations.fast
-        ];
-      if (fastTime?.seconds) {
-        estimatedSeconds = fastTime.seconds;
-      } else {
-        estimatedSeconds = 30;
-      }
-    } else {
-      const standardTime =
-        blockConfirmations.standard[
-          tx.originChain as keyof typeof blockConfirmations.standard
-        ];
-      if (standardTime?.seconds) {
-        estimatedSeconds = standardTime.seconds;
-      } else {
-        estimatedSeconds = 15 * 60;
-      }
-    }
-
-    return new Date(tx.date).getTime() + 1000 * estimatedSeconds;
-  };
+  const isBridgeKit = !!tx.provider;
 
   const renderStatus = () => {
+    if (isBridgeKit) {
+      const bridgeState = tx.bridgeState || tx.bridgeResult?.state || "pending";
+      const steps = tx.steps || tx.bridgeResult?.steps || [];
+      const primaryStep =
+        steps.find((step) => step.state === "success" && step.txHash) ||
+        steps.find((step) => step.txHash);
+
+      return (
+        <div className="flex flex-col gap-2 w-full">
+          <div className="flex items-center gap-1">
+            <span
+              className={`h-2 w-2 rounded-full ${
+                bridgeState === "success"
+                  ? "bg-green-500"
+                  : bridgeState === "error"
+                  ? "bg-red-500"
+                  : "bg-yellow-500"
+              }`}
+            />
+            <span className="text-sm capitalize">{bridgeState}</span>
+          </div>
+          {steps.length > 0 && (
+            <div className="space-y-1">
+              {steps.map((step) => (
+                <div
+                  key={step.name}
+                  className="flex items-center justify-between rounded-md bg-slate-800/60 px-3 py-1 text-xs"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        step.state === "success"
+                          ? "bg-green-500"
+                          : step.state === "error"
+                          ? "bg-red-500"
+                          : "bg-yellow-500"
+                      }`}
+                    />
+                    <span>{step.name}</span>
+                  </div>
+                  {step.txHash && (
+                    <span className="text-slate-400">
+                      {`${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {primaryStep?.explorerUrl && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-blue-400 hover:text-blue-300 justify-start px-0"
+              onClick={() => window.open(primaryStep.explorerUrl, "_blank")}
+            >
+              View transaction
+            </Button>
+          )}
+        </div>
+      );
+    }
+
     if (tx.status === "claimed") {
       return (
         <div className="flex items-center gap-1">
@@ -290,53 +206,6 @@ function TransactionRow({
     }
 
     if (tx.status === "pending") {
-      if (attestationError) {
-        return (
-          <div className="flex items-center gap-1">
-            <Clock className="h-4 w-4 text-red-500" />
-            <span className="text-sm text-red-400">Error</span>
-          </div>
-        );
-      }
-
-      if (attestationData) {
-        return (
-          <div className="space-y-1">
-            <ConnectGuard>
-              <SwitchGuard bytes={attestationData.message} hash={tx.hash}>
-                <ClaimButton
-                  hash={tx.hash}
-                  bytes={attestationData.message}
-                  attestation={attestationData.attestation}
-                  cctpVersion={attestationData.cctpVersion}
-                  eventNonce={attestationData.eventNonce}
-                  onBurn={() => {}}
-                  onAttestationUpdate={() => {
-                    // Trigger refetch of attestation data
-                    refetch();
-                  }}
-                />
-              </SwitchGuard>
-            </ConnectGuard>
-          </div>
-        );
-      }
-
-      if (isAttestationLoading || isAttestationPending) {
-        const countdownTime = getCountdownTime();
-        return (
-          <div className="space-y-1">
-            <div className="flex items-center gap-1">
-              <Clock className="h-4 w-4 text-yellow-500 animate-pulse" />
-              <span className="text-sm text-yellow-400">Pending</span>
-            </div>
-            {countdownTime && (
-              <Countdown date={countdownTime} renderer={countdownRenderer} />
-            )}
-          </div>
-        );
-      }
-
       return (
         <div className="flex items-center gap-1">
           <Clock className="h-4 w-4 text-yellow-500" />
@@ -351,7 +220,6 @@ function TransactionRow({
   const originName = origin?.name.split(" ")[0] || `Chain ${tx.originChain}`;
   const destinationName =
     destination?.name.split(" ")[0] ||
-    destinationChain?.name.split(" ")[0] ||
     (tx.targetChain ? `Chain ${tx.targetChain}` : "Unknown");
 
   return (
@@ -374,15 +242,24 @@ function TransactionRow({
                 className="w-6 h-6 mr-2"
                 alt={originName}
               />
-              <a
-                href={`${explorers[tx.originChain]}tx/${tx.hash}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-blue-400 text-sm font-medium hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {originName}
-              </a>
+              {(() => {
+                const url = getExplorerTxUrl(tx.originChain, tx.hash);
+                return url ? (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-blue-400 text-sm font-medium hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {originName}
+                  </a>
+                ) : (
+                  <span className="text-slate-300 text-sm font-medium">
+                    {originName}
+                  </span>
+                );
+              })()}
             </div>
             <span className="text-slate-400">→</span>
             {destination && (
@@ -395,15 +272,27 @@ function TransactionRow({
                   alt={destinationName}
                 />
                 {tx.claimHash && tx.targetChain ? (
-                  <a
-                    href={`${explorers[tx.targetChain]}tx/${tx.claimHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-400 text-sm font-medium hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {destinationName}
-                  </a>
+                  (() => {
+                    const claimUrl = getExplorerTxUrl(
+                      tx.targetChain,
+                      tx.claimHash
+                    );
+                    return claimUrl ? (
+                      <a
+                        href={claimUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-400 text-sm font-medium hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {destinationName}
+                      </a>
+                    ) : (
+                      <span className="text-slate-400 text-sm font-medium">
+                        {destinationName}
+                      </span>
+                    );
+                  })()
                 ) : (
                   <span className="text-slate-400 text-sm font-medium">
                     {destinationName}
@@ -425,10 +314,10 @@ function TransactionRow({
             className="h-6 w-6 hover:bg-slate-700"
             onClick={(e) => {
               e.stopPropagation();
-              window.open(
-                `${explorers[tx.originChain]}tx/${tx.hash}`,
-                "_blank"
-              );
+              const originUrl = getExplorerTxUrl(tx.originChain, tx.hash);
+              if (originUrl) {
+                window.open(originUrl, "_blank");
+              }
             }}
           >
             <ExternalLink className="h-3 w-3" />

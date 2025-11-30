@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useCallback, useMemo, useEffect } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,29 +10,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Zap, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { BridgingState } from "@/components/bridging-state";
-import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
-import contracts, {
-  contractsV2,
-  getChainsFromId,
-  isV2Supported,
-  getContracts,
-  getDomain,
-  getAllSupportedChainIds,
-} from "@/constants/contracts";
-import { useAccount, useChains, useSwitchChain } from "wagmi";
-import { Chain } from "viem";
-import { validateBridgeParams } from "@/lib/validation";
+import {
+  useAccount,
+  useChains,
+  useSwitchChain,
+  useWalletClient,
+} from "wagmi";
+import { Chain, formatUnits } from "viem";
+import {
+  validateBridgeParams,
+  validateAmount,
+  validateChainSelection,
+} from "@/lib/validation";
 import { getErrorMessage } from "@/lib/errors";
-import { AmountState, BridgeSummaryState, LocalTransaction } from "@/lib/types";
+import { AmountState, LocalTransaction } from "@/lib/types";
 import { useBridge } from "@/lib/hooks/useBridge";
 import { useBalance } from "@/lib/hooks/useBalance";
-import { blockConfirmations } from "@/constants/endpoints";
 import { useToast } from "@/components/ui/use-toast";
 import {
   LoadingButton,
@@ -41,8 +37,23 @@ import {
   ChainSelectorSkeleton,
 } from "@/components/loading/LoadingStates";
 import ConnectGuard from "@/components/guards/ConnectGuard";
-import ApproveGuard from "@/components/guards/ApproveGuard";
-import FastTransferAllowanceGuard from "@/components/guards/FastTransferAllowanceGuard";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
+import { TransferSpeed } from "@circle-fin/bridge-kit";
+import {
+  createViemAdapter,
+  getBridgeChainById,
+  getCctpConfirmations,
+  getBridgeKit,
+  getChainIdentifier,
+  getSupportedEvmChains,
+  getProviderFromWalletClient,
+} from "@/lib/bridgeKit";
+import { useQuery } from "@tanstack/react-query";
+import { getFinalityEstimate } from "@/lib/cctpFinality";
+
+type BridgeEstimateResult = Awaited<
+  ReturnType<ReturnType<typeof getBridgeKit>["estimate"]>
+>;
 
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
@@ -60,56 +71,48 @@ export function BridgeCard({
   const { toast } = useToast();
   const chains = useChains();
   const { switchChain } = useSwitchChain();
-  const { burn, getFastTransferFee, isLoading: isBridgeLoading } = useBridge();
-  const {
-    usdcBalance,
-    usdcFormatted,
-    isUsdcLoading,
-    hasSufficientBalance,
-    needsApproval,
-  } = useBalance();
+  const { bridge, isLoading: isBridgeLoading } = useBridge();
+  const { usdcBalance, usdcFormatted, isUsdcLoading } = useBalance();
+  const { data: walletClient } = useWalletClient();
+  const provider = getProviderFromWalletClient(walletClient);
 
   // State
   const [targetChain, setTargetChain] = useState<Chain | null>(null);
   const [amount, setAmount] = useState<AmountState | null>(null);
-  const [fastTransfer, setFastTransfer] = useState(true);
-  const [diffWallet, setDiffWallet] = useState(false);
-  const [targetAddress, setTargetAddress] = useState<string | undefined>(
-    undefined
+  const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeed>(
+    TransferSpeed.FAST
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isBridging, setIsBridging] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const [loadedTransactionData, setLoadedTransactionData] = useState<{
     fromChain: { value: string; label: string };
     toChain: { value: string; label: string };
     amount: string;
-    estimatedTime: number;
     recipient: string | null;
   } | null>(null);
   const [bridgeTransactionHash, setBridgeTransactionHash] = useState<
     `0x${string}` | null
   >(null);
-  const [fetchedFee, setFetchedFee] = useState<number | null>(null);
-  const [isFetchingFee, setIsFetchingFee] = useState(false);
+  const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
 
   // Memoized values
-  const usableChains = useMemo(
-    () => (chain && chains ? getChainsFromId(chain.id, chains) : null),
-    [chain, chains]
+  const bridgeKitChains = useMemo(() => getSupportedEvmChains(), []);
+  const supportedChainIds = useMemo(
+    () => new Set(bridgeKitChains.map((c) => c.chainId)),
+    [bridgeKitChains]
+  );
+
+  // All supported chains for selectors (only those exposed by Bridge Kit)
+  const supportedChains = useMemo(
+    () => chains.filter((c) => supportedChainIds.has(c.id)),
+    [chains, supportedChainIds]
   );
 
   const availableChains = useMemo(
-    () => usableChains?.filter((c) => c && c.id !== chain?.id) || [],
-    [usableChains, chain?.id]
+    () => supportedChains.filter((c) => c && c.id !== chain?.id),
+    [supportedChains, chain?.id]
   );
-
-  // All supported chains for "From" selector
-  const supportedChains = useMemo(() => {
-    const supportedChainIds = getAllSupportedChainIds();
-    return chains.filter((c) => supportedChainIds.includes(c.id));
-  }, [chains]);
 
   const chainOptions = useMemo(() => {
     return availableChains
@@ -130,6 +133,21 @@ export function BridgeCard({
       chain: c,
     }));
   }, [supportedChains]);
+
+  const fastTransferSupported = useMemo(() => {
+    if (!chain) return false;
+    return Boolean(getCctpConfirmations(chain.id)?.fast);
+  }, [chain]);
+
+  useEffect(() => {
+    if (
+      chain &&
+      !fastTransferSupported &&
+      activeTransferSpeed === TransferSpeed.FAST
+    ) {
+      setActiveTransferSpeed(TransferSpeed.SLOW);
+    }
+  }, [chain, fastTransferSupported, activeTransferSpeed]);
 
   // Handle amount change with validation
   const handleAmountChange = useCallback(
@@ -207,21 +225,28 @@ export function BridgeCard({
       validateBridgeParams({
         amount,
         targetChain: targetChain?.id || null,
-        targetAddress,
         sourceChain: chain?.id,
         balance: usdcBalance,
-        isCustomAddress: diffWallet,
         userAddress: address,
       }),
     [
       amount,
       targetChain?.id,
-      targetAddress,
       chain?.id,
       usdcBalance,
-      diffWallet,
       address,
     ]
+  );
+
+  const amountForEstimate = useMemo(
+    () => (amount ? validateAmount(amount.str) : { isValid: false }),
+    [amount]
+  );
+
+  const chainSelectionValid = useMemo(
+    () =>
+      validateChainSelection(chain?.id, targetChain?.id || undefined).isValid,
+    [chain?.id, targetChain?.id]
   );
 
   const handleMaxAmount = () => {
@@ -229,6 +254,152 @@ export function BridgeCard({
       handleAmountChange(usdcFormatted);
     }
   };
+
+  const hasCompleteForm = !!chain && !!targetChain && !!amount;
+  const canEstimate =
+    !!provider &&
+    !!walletClient &&
+    amountForEstimate.isValid &&
+    chainSelectionValid;
+
+  const estimateBridge = useCallback(
+    async (transferSpeed: TransferSpeed): Promise<BridgeEstimateResult> => {
+      if (!provider || !walletClient || !chain || !targetChain || !amount) {
+        throw new Error("Bridge parameters incomplete");
+      }
+
+      const sourceIdentifier = getChainIdentifier(chain.id);
+      const destinationIdentifier = getChainIdentifier(targetChain.id);
+
+      if (!sourceIdentifier || !destinationIdentifier) {
+        throw new Error("Unsupported chain selection for Bridge Kit");
+      }
+
+      const adapter = await createViemAdapter(provider);
+
+      return getBridgeKit().estimate({
+        from: {
+          adapter,
+          chain: sourceIdentifier,
+        },
+        to: {
+          adapter,
+          chain: destinationIdentifier,
+        },
+        amount: formatUnits(amount.bigInt, 6),
+        token: "USDC",
+        config: { transferSpeed },
+      });
+    },
+    [provider, walletClient, chain, targetChain, amount]
+  );
+
+  const {
+    data: standardEstimate,
+    isFetching: isStandardEstimating,
+    error: standardEstimateError,
+    isError: isStandardEstimateError,
+  } = useQuery<BridgeEstimateResult>({
+    queryKey: [
+      "bridge-estimate",
+      chain?.id,
+      targetChain?.id,
+      amount?.str,
+      "standard",
+    ],
+    queryFn: () => estimateBridge(TransferSpeed.SLOW),
+    enabled: canEstimate,
+    staleTime: 300_000,
+    retry: 1,
+  });
+
+  const {
+    data: fastEstimate,
+    isFetching: isFastEstimating,
+    error: fastEstimateError,
+    isError: isFastEstimateError,
+  } = useQuery<BridgeEstimateResult>({
+    queryKey: ["bridge-estimate", chain?.id, targetChain?.id, amount?.str, "fast"],
+    queryFn: () => estimateBridge(TransferSpeed.FAST),
+    enabled: canEstimate && fastTransferSupported,
+    staleTime: 300_000,
+    retry: 1,
+  });
+
+  useEffect(() => {
+    if (isStandardEstimateError && standardEstimateError) {
+      toast({
+        title: "Estimate unavailable",
+        description: getErrorMessage(standardEstimateError),
+        variant: "destructive",
+      });
+    }
+  }, [standardEstimateError, isStandardEstimateError, toast]);
+
+  useEffect(() => {
+    if (isFastEstimateError && fastEstimateError) {
+      toast({
+        title: "Fast estimate unavailable",
+        description: getErrorMessage(fastEstimateError),
+        variant: "destructive",
+      });
+    }
+  }, [fastEstimateError, isFastEstimateError, toast]);
+
+  const getTotalProtocolFee = useCallback(
+    (estimate?: BridgeEstimateResult | null) => {
+      if (!estimate?.fees) return 0;
+      return estimate.fees.reduce(
+        (acc, fee) => acc + (fee.amount ? Number(fee.amount) : 0),
+        0
+      );
+    },
+    []
+  );
+
+  const getGasEstimateLabel = useCallback(
+    (estimate?: BridgeEstimateResult | null) => {
+      if (!estimate?.gasFees) return null;
+
+      const parts = estimate.gasFees
+        .filter((fee) => fee.fees?.fee)
+        .map((fee) => `${fee.fees?.fee} ${fee.token}`);
+
+      if (!parts.length) return null;
+      return parts.join(" + ");
+    },
+    []
+  );
+
+  const getTransferSpeedLabel = useCallback(
+    (speed: TransferSpeed) => {
+      const sourceChain = chain ? getBridgeChainById(chain.id) : undefined;
+      const confirmations = chain ? getCctpConfirmations(chain.id) : null;
+      const blocks =
+        speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
+      const finality = sourceChain
+        ? getFinalityEstimate(
+            sourceChain.name || String(sourceChain.chain),
+            speed
+          )?.averageTime
+        : undefined;
+
+      const detail = finality ?? (blocks ? `${blocks} blocks` : null);
+      return detail ?? "Estimate unavailable";
+    },
+    [chain]
+  );
+
+  const getYouWillReceive = useCallback(
+    (feeTotal: number) => {
+      if (!amount) return "0.00 USDC";
+      const numericAmount = Number(amount.str);
+      if (Number.isNaN(numericAmount)) return "0.00 USDC";
+      const received = Math.max(0, numericAmount - (feeTotal ?? 0));
+      return `${received.toFixed(6)} USDC`;
+    },
+    [amount]
+  );
 
   const handleSwitchChain = async (chainId: string) => {
     try {
@@ -274,257 +445,70 @@ export function BridgeCard({
     }
   }, [chain?.id, chains.length, availableChains, targetChain, chain]);
 
-  // Fetch fast transfer fee when chains change
-  useEffect(() => {
-    if (
-      !chain ||
-      !targetChain ||
-      !fastTransfer ||
-      !isV2Supported(chain.id) ||
-      !isV2Supported(targetChain.id)
-    ) {
-      setFetchedFee(null);
-      return;
-    }
+  const handleSend = useCallback(
+    async (transferSpeed: TransferSpeed) => {
+      if (
+        !validation.isValid ||
+        !validation.data ||
+        !chain ||
+        !targetChain ||
+        !amount
+      ) {
+        return;
+      }
 
-    const fetchFee = async () => {
+      setIsLoading(true);
+      setActiveTransferSpeed(transferSpeed);
+
       try {
-        setIsFetchingFee(true);
-        const sourceDomain = getDomain(chain.id);
-        const destDomain = getDomain(targetChain.id);
+        const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
 
-        if (sourceDomain === undefined || destDomain === undefined) {
-          console.warn(
-            "Could not find domain for chains:",
-            chain.id,
-            targetChain.id
-          );
-          setFetchedFee(null);
-          return;
+        const result = await bridge({
+          amount: validation.data.amount,
+          sourceChainId: chain.id,
+          targetChainId: validation.data.targetChain,
+          transferType,
+        });
+
+        const primaryHash = result.steps.find((step) => step.txHash)?.txHash;
+
+        if (primaryHash) {
+          setBridgeTransactionHash(primaryHash as `0x${string}`);
         }
 
-        if (sourceDomain === destDomain) {
-          // Same-domain transfers aren't valid and Circle responds 400; skip fee lookup.
-          setFetchedFee(null);
-          return;
-        }
+        setBridgeResult(result);
 
-        const feeTiers = await getFastTransferFee(sourceDomain, destDomain);
-        const fastTier = feeTiers.find(
-          (tier) => tier.finalityThreshold <= 1000
-        );
-        if (!fastTier) {
-          console.warn(
-            "No fast transfer fee tier returned for domains:",
-            sourceDomain,
-            destDomain
-          );
-          setFetchedFee(null);
-          return;
+        setIsLoading(false);
+        setIsBridging(true);
+
+        if (onBurn) {
+          onBurn(true);
         }
-        setFetchedFee(fastTier.minimumFee);
       } catch (error) {
-        console.error("Failed to fetch fast transfer fee:", error);
-        setFetchedFee(null);
-      } finally {
-        setIsFetchingFee(false);
+        console.error("Bridge transaction failed:", error);
+        setIsLoading(false);
+        setBridgeTransactionHash(null); // Reset on error
+        toast({
+          title: "Transaction Failed",
+          description: getErrorMessage(error),
+          variant: "destructive",
+        });
       }
-    };
-
-    fetchFee();
-  }, [
-    chain?.id,
-    targetChain?.id,
-    fastTransfer,
-    getFastTransferFee,
-    chain,
-    targetChain,
-  ]);
-
-  const handleSend = useCallback(async () => {
-    if (
-      !validation.isValid ||
-      !validation.data ||
-      !chain ||
-      !targetChain ||
-      !amount
-    ) {
-      return;
-    }
-
-    setIsLoading(true);
-
-    try {
-      const finalTargetAddress = diffWallet
-        ? validation.data.targetAddress
-        : (address as `0x${string}`);
-
-      const sourceSupportsV2 = isV2Supported(chain.id);
-      const targetSupportsV2 = isV2Supported(targetChain.id);
-      const supportsV2 = sourceSupportsV2 && targetSupportsV2;
-
-      const version = supportsV2 ? "v2" : "v1";
-      const transferType = fastTransfer && supportsV2 ? "fast" : "standard";
-
-      const contractSet = getContracts(chain.id, version);
-      const bridgeParams: any = {
-        amount: validation.data.amount,
-        sourceChainId: chain.id,
-        targetChainId: validation.data.targetChain,
-        targetAddress: finalTargetAddress,
-        sourceTokenAddress: contractSet?.Usdc,
-        version,
-        transferType,
-      };
-
-      // Add fee for fast transfers if applicable
-      if (version === "v2" && transferType === "fast") {
-        if (fetchedFee === null) {
-          toast({
-            title: "Error",
-            description: "No fee fetched",
-            variant: "destructive",
-          });
-          return;
-        }
-
-        // Calculate the actual fee amount from BPS
-        // fetchedFee is in BPS; Circle requires the minimum fee or higher
-        // so we round up instead of truncating to avoid insufficient_fee reverts.
-        const bps = BigInt(fetchedFee);
-        const feeAmount =
-          bps === BigInt(0)
-            ? BigInt(0)
-            : (validation.data.amount * bps + BigInt(9999)) / BigInt(10000);
-
-        // Pass the calculated fee amount as maxFee (not the BPS value)
-        bridgeParams.fee = feeAmount;
-      }
-
-      // Capture the transaction hash from the burn operation
-      const transactionHash = await burn(bridgeParams);
-      if (transactionHash) {
-        setBridgeTransactionHash(transactionHash);
-      }
-
-      setIsLoading(false);
-      setIsBridging(true);
-
-      if (onBurn) {
-        onBurn(true);
-      }
-    } catch (error) {
-      console.error("Bridge transaction failed:", error);
-      setIsLoading(false);
-      setBridgeTransactionHash(null); // Reset on error
-      toast({
-        title: "Transaction Failed",
-        description: getErrorMessage(error),
-        variant: "destructive",
-      });
-    }
-  }, [
-    validation,
-    chain,
-    targetChain,
-    amount,
-    diffWallet,
-    address,
-    fastTransfer,
-    fetchedFee,
-    burn,
-    onBurn,
-    toast,
-  ]);
+    },
+    [validation, chain, targetChain, amount, bridge, onBurn, toast]
+  );
 
   const handleBackToNew = () => {
     setIsBridging(false);
     setIsLoading(false);
     setLoadedTransactionData(null);
     setBridgeTransactionHash(null); // Reset bridge transaction hash
+    setBridgeResult(null);
     // Call parent callback to reset loaded transaction
     if (onBackToNew) {
       onBackToNew();
     }
   };
-
-  // Calculate estimated values
-  const estimatedTiming = useMemo(() => {
-    const fallback = { label: "~8-20s", seconds: 30 };
-
-    if (!chain || !targetChain) {
-      return fallback;
-    }
-
-    const sourceSupportsV2 = isV2Supported(chain.id);
-    const targetSupportsV2 = isV2Supported(targetChain.id);
-    const supportsV2 = sourceSupportsV2 && targetSupportsV2;
-
-    if (fastTransfer && supportsV2) {
-      const fastData =
-        blockConfirmations.fast[
-          chain.id as keyof typeof blockConfirmations.fast
-        ];
-      if (fastData) {
-        return {
-          label: fastData.time,
-          seconds: fastData.seconds ?? fallback.seconds,
-        };
-      }
-      return fallback;
-    }
-    const standardData =
-      blockConfirmations.standard[
-        chain.id as keyof typeof blockConfirmations.standard
-      ];
-    if (standardData) {
-      return {
-        label: standardData.time,
-        seconds: standardData.seconds ?? 15 * 60,
-      };
-    }
-    return { label: "~15m", seconds: 15 * 60 };
-  }, [chain, targetChain, fastTransfer]);
-
-  const bridgeFee = useMemo(() => {
-    if (!amount) return "0.000000";
-
-    let feePercentage = 0;
-
-    if (fastTransfer) {
-      if (fetchedFee !== null) {
-        // Convert BPS to percentage: BPS / 10000
-        feePercentage = fetchedFee / 10000;
-        return (Number.parseFloat(amount.str) * feePercentage).toFixed(6);
-      }
-    }
-
-    return "0.000000";
-  }, [amount, fastTransfer, fetchedFee]);
-
-  const youWillReceive = useMemo(() => {
-    if (!amount) return "0.00";
-    return (
-      Number.parseFloat(amount.str) - Number.parseFloat(bridgeFee)
-    ).toFixed(2);
-  }, [amount, bridgeFee]);
-
-  // Memoized addresses for ApproveGuard
-  const spenderAddress = useMemo(() => {
-    if (!chain || !targetChain) return undefined;
-    const version =
-      isV2Supported(chain.id) && isV2Supported(targetChain.id) ? "v2" : "v1";
-    const contractSet = getContracts(chain.id, version);
-    return contractSet?.TokenMessenger as `0x${string}`;
-  }, [chain, targetChain]);
-
-  const tokenAddress = useMemo(() => {
-    if (!chain || !targetChain) return undefined;
-    const version =
-      isV2Supported(chain.id) && isV2Supported(targetChain.id) ? "v2" : "v1";
-    const contractSet = getContracts(chain.id, version);
-    return contractSet?.Usdc as `0x${string}`;
-  }, [chain, targetChain]);
 
   // Effect to handle loaded transaction from history
   useEffect(() => {
@@ -547,31 +531,19 @@ export function BridgeCard({
           label: targetChainData.name,
         };
 
-        // Calculate estimated time based on transaction details
-        const version = loadedTransaction.version || "v1";
-        const transferType = loadedTransaction.transferType || "standard";
-        const fastEntry =
-          blockConfirmations.fast[
-            originChain.id as keyof typeof blockConfirmations.fast
-          ];
-        const standardEntry =
-          blockConfirmations.standard[
-            originChain.id as keyof typeof blockConfirmations.standard
-          ];
-        const fallbackSeconds =
-          version === "v2" && transferType === "fast" ? 30 : 15 * 60;
-        const estimatedTime =
-          version === "v2" && transferType === "fast"
-            ? fastEntry?.seconds ?? fallbackSeconds
-            : standardEntry?.seconds ?? fallbackSeconds;
-
         setLoadedTransactionData({
           fromChain,
           toChain,
           amount: loadedTransaction.amount,
-          estimatedTime,
           recipient: loadedTransaction.targetAddress || null,
         });
+        if (loadedTransaction.transferType) {
+          setActiveTransferSpeed(
+            loadedTransaction.transferType === "fast"
+              ? TransferSpeed.FAST
+              : TransferSpeed.SLOW
+          );
+        }
         setIsBridging(true);
       }
     }
@@ -580,29 +552,161 @@ export function BridgeCard({
   // Loading states
   const showChainLoader = !chains.length; // Only show loader when chains haven't loaded
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
+  const hasAmountInput = !!amount?.str;
+
+  const renderSpeedCard = (
+    speed: TransferSpeed,
+    estimate: BridgeEstimateResult | null | undefined,
+    isEstimating: boolean
+  ) => {
+    const feeTotal = getTotalProtocolFee(estimate);
+    const blockedEstimateLabel = !amountForEstimate.isValid
+      ? "Complete the form to estimate"
+      : !chainSelectionValid
+      ? "Select different chains"
+      : !canEstimate
+      ? "Connect wallet to estimate"
+      : null;
+
+    const feeLabel = !hasAmountInput
+      ? "Enter amount to calculate fees"
+      : blockedEstimateLabel
+      ? blockedEstimateLabel
+      : isEstimating
+      ? "Fetching..."
+      : estimate
+      ? `${feeTotal.toFixed(6)} USDC`
+      : "Awaiting estimate";
+
+    const gasLabel = !hasAmountInput
+      ? "Enter amount to calculate gas"
+      : blockedEstimateLabel
+      ? blockedEstimateLabel
+      : isEstimating
+      ? "Fetching..."
+      : getGasEstimateLabel(estimate) || "Awaiting estimate";
+
+    const receiveLabel =
+      hasAmountInput && estimate && !blockedEstimateLabel
+        ? getYouWillReceive(feeTotal)
+        : blockedEstimateLabel ?? "Enter amount";
+
+    const isSpeedSubmitting =
+      (isLoading || isBridgeLoading) && activeTransferSpeed === speed;
+
+    const validationMessage = validation.isValid
+      ? null
+      : validation.errors[0] || "Complete the form";
+
+    const badgeClasses =
+      speed === TransferSpeed.FAST
+        ? "bg-amber-500/10 text-amber-300 border-amber-500/40"
+        : "bg-slate-700/50 text-slate-200 border-slate-600/60";
+
+    return (
+      <div
+        key={speed}
+        className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-5 space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-base font-semibold text-white">
+              {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
+            </p>
+          </div>
+          <span className={`text-xs px-2 py-1 rounded-full border ${badgeClasses}`}>
+            {speed === TransferSpeed.FAST ? "Priority" : "Standard"}
+          </span>
+        </div>
+
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between">
+            <span className="text-slate-400">Estimate speed</span>
+            <span className="text-slate-100">{getTransferSpeedLabel(speed)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-400">Fee amount</span>
+            <span className="text-slate-100 text-right">{feeLabel}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-400">Estimated gas</span>
+            <span className="text-slate-100 text-right">{gasLabel}</span>
+          </div>
+          <div className="flex justify-between font-medium">
+            <span className="text-slate-200">You will receive</span>
+            <span className="text-white">{receiveLabel}</span>
+          </div>
+        </div>
+
+        <ConnectGuard>
+          <LoadingButton
+            className={
+              speed === TransferSpeed.FAST
+                ? "w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
+                : "w-full border border-slate-600 bg-slate-800/80 hover:bg-slate-800 text-white font-medium py-3"
+            }
+            onClick={() => handleSend(speed)}
+            isLoading={isSpeedSubmitting}
+            disabled={!validation.isValid || isLoading || isBridgeLoading}
+          >
+            {validationMessage ||
+              (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard")}
+          </LoadingButton>
+        </ConnectGuard>
+      </div>
+    );
+  };
 
   if (isBridging) {
     // Use loaded transaction data if available, otherwise use form data
     if (loadedTransactionData && loadedTransaction) {
-      // Find the destination chain object for loaded transaction
-      const destinationChain = chains.find(
-        (c) => c.id === loadedTransaction.targetChain
-      );
-
       return (
         <BridgingState
           fromChain={loadedTransactionData.fromChain}
           toChain={loadedTransactionData.toChain}
           amount={loadedTransactionData.amount}
-          estimatedTime={loadedTransactionData.estimatedTime}
           recipientAddress={loadedTransactionData.recipient || undefined}
-          onViewHistory={() => setHistoryOpen(true)}
           onBack={handleBackToNew}
-          // Required props for attestation fetching
-          hash={loadedTransaction.hash}
-          originChainId={loadedTransaction.originChain}
-          destinationChain={destinationChain}
-          version={loadedTransaction.version || "v2"}
+          confirmations={getCctpConfirmations(loadedTransaction.originChain) || undefined}
+          finalityEstimate={(() => {
+            const chainDef = getBridgeChainById(loadedTransaction.originChain);
+            if (!chainDef) return undefined;
+            const speed =
+              loadedTransaction.transferType === "fast"
+                ? TransferSpeed.FAST
+                : TransferSpeed.SLOW;
+            return getFinalityEstimate(
+              chainDef.name || String(chainDef.chain),
+              speed
+            )?.averageTime;
+          })()}
+          bridgeResult={(() => {
+            if (loadedTransaction.bridgeResult) return loadedTransaction.bridgeResult;
+            if (!loadedTransaction.steps) return undefined;
+            const sourceChainDef = getBridgeChainById(loadedTransaction.originChain);
+            const destChainDef =
+              (loadedTransaction.targetChain &&
+                getBridgeChainById(loadedTransaction.targetChain)) ||
+              sourceChainDef;
+
+            if (!sourceChainDef || !destChainDef) return undefined;
+
+            return {
+              amount: loadedTransaction.amount ?? "0",
+              token: "USDC",
+              state: loadedTransaction.bridgeState ?? "pending",
+              provider: loadedTransaction.provider ?? "CCTPV2BridgingProvider",
+              source: {
+                address: loadedTransaction.targetAddress || "",
+                chain: sourceChainDef,
+              },
+              destination: {
+                address: loadedTransaction.targetAddress || "",
+                chain: destChainDef,
+              },
+              steps: loadedTransaction.steps || [],
+            };
+          })()}
         />
       );
     } else if (targetChain && amount && bridgeTransactionHash && chain) {
@@ -615,31 +719,42 @@ export function BridgeCard({
         label: targetChain.name,
       };
 
-      // Determine version for current bridge
-      const sourceSupportsV2 = isV2Supported(chain.id);
-      const targetSupportsV2 = isV2Supported(targetChain.id);
-      const supportsV2 = sourceSupportsV2 && targetSupportsV2;
-      const version = supportsV2 ? "v2" : "v1";
-
-      const recipientAddressValue =
-        diffWallet && targetAddress
-          ? targetAddress
-          : (address as `0x${string}` | undefined);
+      const recipientAddressValue = address as `0x${string}` | undefined;
+      const sourceChain = getBridgeChainById(chain.id);
+      const confirmations = getCctpConfirmations(chain.id) || undefined;
+      const finalityEstimate =
+        sourceChain &&
+        getFinalityEstimate(
+          sourceChain.name || String(sourceChain.chain),
+          activeTransferSpeed
+        )?.averageTime;
 
       return (
         <BridgingState
           fromChain={fromChain}
           toChain={toChain}
           amount={amount.str}
-          estimatedTime={estimatedTiming.seconds}
+          estimatedTime={undefined}
           recipientAddress={recipientAddressValue}
-          onViewHistory={() => setHistoryOpen(true)}
           onBack={handleBackToNew}
-          // Required props for attestation fetching
-          hash={bridgeTransactionHash}
-          originChainId={chain.id}
-          destinationChain={targetChain}
-          version={version}
+          confirmations={confirmations}
+          finalityEstimate={finalityEstimate}
+          bridgeResult={(() => {
+            if (bridgeResult) return bridgeResult;
+            const destChain = getBridgeChainById(targetChain.id);
+            if (sourceChain && destChain && bridgeTransactionHash) {
+              return {
+                amount: amount.str,
+                token: "USDC" as const,
+                state: "pending" as const,
+                provider: "CCTPV2BridgingProvider",
+                source: { address: recipientAddressValue || "", chain: sourceChain },
+                destination: { address: recipientAddressValue || "", chain: destChain },
+                steps: [],
+              } as BridgeResult;
+            }
+            return undefined;
+          })()}
         />
       );
     }
@@ -761,11 +876,6 @@ export function BridgeCard({
                             <span className="truncate">
                               {displayChain.name}
                             </span>
-                            {/* Show lightning bolt if both chains support V2 */}
-                            {isV2Supported(chain?.id || 1) &&
-                              isV2Supported(displayChain.id) && (
-                                <Zap className="h-4 w-4 text-yellow-400" />
-                              )}
                           </div>
                         ) : null;
                       })()}
@@ -795,11 +905,6 @@ export function BridgeCard({
                               alt={chainOption.label}
                             />
                             <span>{chainOption.label}</span>
-                            {/* Show lightning bolt if both chains support V2 */}
-                            {isV2Supported(chain?.id || 1) &&
-                              isV2Supported(chainOption.id) && (
-                                <Zap className="h-4 w-4 text-yellow-400" />
-                              )}
                           </div>
                         </SelectItem>
                       ))}
@@ -844,163 +949,35 @@ export function BridgeCard({
             </div>
           </div>
 
-          {/* Custom Address Option */}
-          {address && (
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="custom-address"
-                checked={diffWallet}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    setDiffWallet(true);
-                    setTargetAddress(address);
-                  } else {
-                    setDiffWallet(false);
-                    setTargetAddress(undefined);
-                  }
-                }}
-                disabled={isLoading}
-              />
-              <Label
-                htmlFor="custom-address"
-                className="text-xs text-slate-300"
-              >
-                Send USDC to a different wallet
-                {targetChain && ` on ${targetChain.name}`}?
-              </Label>
+          {/* Transfer Options */}
+          {hasAmountInput ? (
+            <div className="space-y-4">
+              {fastTransferSupported &&
+                renderSpeedCard(
+                  TransferSpeed.FAST,
+                  fastEstimate,
+                  isFastEstimating
+                )}
+              {renderSpeedCard(
+                TransferSpeed.SLOW,
+                standardEstimate,
+                isStandardEstimating
+              )}
             </div>
-          )}
-          {diffWallet && (
-            <div className="space-y-2">
-              <Label className="text-sm text-slate-300">
-                Destination Wallet
-              </Label>
-              <Input
-                placeholder="0x..."
-                value={targetAddress || ""}
-                onChange={(e) => setTargetAddress(e.target.value)}
-                className="bg-slate-700/50 border-slate-600 text-white"
-                disabled={isLoading}
-              />
-            </div>
-          )}
-
-          {/* Send Button */}
-          <ConnectGuard>
-            {chain && amount && targetChain ? (
-              <ApproveGuard
-                token={tokenAddress!}
-                spender={spenderAddress!}
-                amount={amount.bigInt}
-              >
-                <FastTransferAllowanceGuard
-                  transferAmount={amount.str}
-                  isEnabled={
-                    fastTransfer &&
-                    isV2Supported(chain.id) &&
-                    isV2Supported(targetChain.id)
-                  }
-                >
-                  <LoadingButton
-                    className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                    onClick={handleSend}
-                    isLoading={isLoading || isBridgeLoading}
-                    disabled={
-                      !validation.isValid || isLoading || isBridgeLoading
-                    }
-                  >
-                    {validation.isValid
-                      ? "Bridge USDC"
-                      : validation.errors[0] || "Complete the form"}
-                  </LoadingButton>
-                </FastTransferAllowanceGuard>
-              </ApproveGuard>
-            ) : (
+          ) : (
+            <ConnectGuard>
               <LoadingButton
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                onClick={handleSend}
+                onClick={() => handleSend(TransferSpeed.FAST)}
                 isLoading={isLoading || isBridgeLoading}
                 disabled={!validation.isValid || isLoading || isBridgeLoading}
               >
                 {validation.isValid
                   ? "Bridge USDC"
-                  : validation.errors[0] || "Complete the form"}
+                  : validation.errors[0] || "Enter an amount to bridge"}
               </LoadingButton>
-            )}
-          </ConnectGuard>
-
-          {/* Bridge Summary */}
-          <div className="space-y-3 pt-2 border-t border-slate-700/50">
-            {isV2Supported(chain?.id || 0) &&
-              isV2Supported(targetChain?.id || 0) && (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Zap className="h-4 w-4 text-yellow-400" />
-                    <Label htmlFor="fast-transfer" className="text-sm">
-                      Fast Transfer
-                    </Label>
-                  </div>
-                  <Switch
-                    id="fast-transfer"
-                    checked={fastTransfer}
-                    onCheckedChange={setFastTransfer}
-                    disabled={
-                      isLoading ||
-                      !chain ||
-                      !targetChain ||
-                      !isV2Supported(chain?.id || 0) ||
-                      !isV2Supported(targetChain?.id || 0)
-                    }
-                  />
-                </div>
-              )}
-
-            {isLoading ? (
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Recipient address</span>
-                  <Skeleton className="h-4 w-24 bg-slate-700" />
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Time spend</span>
-                  <Skeleton className="h-4 w-16 bg-slate-700" />
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Transaction fees</span>
-                  <Skeleton className="h-4 w-20 bg-slate-700" />
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-300">You will receive</span>
-                  <Skeleton className="h-4 w-24 bg-slate-700" />
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Recipient address</span>
-                  <span className="text-slate-300">
-                    {diffWallet && targetAddress
-                      ? `${targetAddress.slice(0, 6)}...${targetAddress.slice(
-                          -4
-                        )}`
-                      : address
-                      ? `${address.slice(0, 6)}...${address.slice(-4)}`
-                      : "Not connected"}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400">Time spend</span>
-                  <span className="text-slate-300">{estimatedTiming.label}</span>
-                </div>
-                <div className="flex justify-between font-medium">
-                  <span className="text-slate-300">You will receive</span>
-                  <span className="text-white">
-                    {`${youWillReceive} USDC (${bridgeFee} USDC)`}
-                  </span>
-                </div>
-              </div>
-            )}
-          </div>
+            </ConnectGuard>
+          )}
         </CardContent>
       </Card>
     </>

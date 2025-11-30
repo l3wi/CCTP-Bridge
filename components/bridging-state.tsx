@@ -3,12 +3,10 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Loader2, X, CheckCircle } from "lucide-react";
+import { ArrowRight, Loader2, X } from "lucide-react";
 import { formatTime } from "@/lib/utils";
 import Image from "next/image";
-import ClaimButton, { SwitchGuard } from "@/components/claimButton";
-import { useAttestation } from "@/lib/hooks/useAttestation";
-import { Chain as ViemChain } from "viem";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 
 interface ChainInfo {
   value: string;
@@ -19,17 +17,12 @@ interface BridgingStateProps {
   fromChain: ChainInfo;
   toChain: ChainInfo;
   amount: string;
-  estimatedTime: number; // in seconds
+  estimatedTime?: number; // in seconds
   recipientAddress?: `0x${string}` | string;
-  onViewHistory: () => void;
   onBack: () => void;
-  // Transaction hash to fetch attestation for
-  hash?: `0x${string}`;
-  // Chain IDs for attestation fetching
-  originChainId?: number;
-  destinationChain?: ViemChain; // viem Chain type for destination
-  version?: "v1" | "v2";
-  onClaimComplete?: () => void; // Callback when claim is completed
+  bridgeResult?: BridgeResult;
+  confirmations?: { standard?: number; fast?: number };
+  finalityEstimate?: string;
 }
 
 export function BridgingState({
@@ -38,92 +31,58 @@ export function BridgingState({
   amount,
   estimatedTime,
   recipientAddress,
-  onViewHistory,
   onBack,
-  hash,
-  originChainId,
-  destinationChain,
-  version = "v2",
-  onClaimComplete,
+  bridgeResult,
+  confirmations,
+  finalityEstimate,
 }: BridgingStateProps) {
-  const [timeLeft, setTimeLeft] = useState(estimatedTime);
-  const [isBurning, setIsBurning] = useState(false);
-  const [prevBurningState, setPrevBurningState] = useState(false);
-
-  // Use the attestation hook to fetch attestation data
-  const {
-    data: attestationData,
-    isLoading: isAttestationLoading,
-    error: attestationError,
-    refetch,
-  } = useAttestation(
-    hash || ("0x" as `0x${string}`),
-    originChainId || 0,
-    destinationChain,
-    {
-      enabled: !!(hash && originChainId && hash !== "0x" && originChainId > 0),
-      version,
-    }
-  );
+  const [timeLeft, setTimeLeft] = useState(estimatedTime ?? 0);
 
   // Reset countdown when estimate changes
   useEffect(() => {
-    setTimeLeft(estimatedTime);
+    setTimeLeft(estimatedTime ?? 0);
   }, [estimatedTime]);
 
   useEffect(() => {
-    if (timeLeft <= 0) return;
+    if (!estimatedTime || timeLeft <= 0) return;
 
     const timer = setInterval(() => {
       setTimeLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [timeLeft]);
-
-  // Check if attestation is available from the hook
-  const isAttestationReady =
-    attestationData &&
-    attestationData.attestation &&
-    attestationData.message &&
-    hash;
-
-  // Handle claim completion when burning state changes from true to false
-  useEffect(() => {
-    if (
-      prevBurningState &&
-      !isBurning &&
-      isAttestationReady &&
-      onClaimComplete
-    ) {
-      // When burning transitions from true to false, claim is completed
-      onClaimComplete();
-    }
-    setPrevBurningState(isBurning);
-  }, [isBurning, prevBurningState, isAttestationReady, onClaimComplete]);
-
-  // Debug history button handler
-  const handleViewHistory = () => {
-    console.log("History button clicked, calling onViewHistory");
-    onViewHistory();
-  };
+  }, [timeLeft, estimatedTime]);
 
   const progress = Math.max(
     0,
-    Math.min(100, 100 - (timeLeft / estimatedTime) * 100)
+    Math.min(
+      100,
+      estimatedTime ? 100 - (timeLeft / estimatedTime) * 100 : 0
+    )
   );
 
   const recipientLabel = recipientAddress
     ? `${recipientAddress.slice(0, 6)}...${recipientAddress.slice(-4)}`
     : "Pending";
 
-  // Show claim interface when attestation is ready
-  if (isAttestationReady && attestationData) {
+  if (bridgeResult) {
+    const primaryStep =
+      bridgeResult.steps.find((step) => step.state === "success" && step.txHash) ||
+      bridgeResult.steps.find((step) => step.txHash);
+    const primaryHash = primaryStep?.txHash;
+    const primaryExplorer = primaryStep?.explorerUrl;
+    const stateLabel =
+      bridgeResult.state === "success"
+        ? "Bridge Completed"
+        : bridgeResult.state === "error"
+        ? "Bridge Failed"
+        : "Bridge Processing";
+
     return (
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 space-y-8">
+        <CardContent className="p-6 space-y-6">
           <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Ready to Claim</h2>
+            <h2 className="text-xl font-semibold">{stateLabel}</h2>
             <Button
               variant="ghost"
               size="icon"
@@ -134,82 +93,98 @@ export function BridgingState({
             </Button>
           </div>
 
-          <div className="flex items-center justify-between mb-8">
-            <div className="flex flex-col items-center">
-              <div className="text-center">
-                <div className="flex items-center justify-center mb-2">
-                  <Image
-                    src={`/${fromChain.value}.svg`}
-                    width={24}
-                    height={24}
-                    className="w-6 h-6 mr-2"
-                    alt={fromChain.label}
-                  />
-                  <div className="font-medium">{fromChain.label}</div>
-                </div>
-                <div className="text-sm text-slate-400">{amount} USDC</div>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Image
+                src={`/${fromChain.value}.svg`}
+                width={24}
+                height={24}
+                className="w-6 h-6"
+                alt={fromChain.label}
+              />
+              <div>
+                <div className="font-medium">{fromChain.label}</div>
+                <div className="text-xs text-slate-400">{amount} USDC</div>
               </div>
             </div>
-
             <ArrowRight className="text-slate-500" />
+            <div className="flex items-center gap-2">
+              <Image
+                src={`/${toChain.value}.svg`}
+                width={24}
+                height={24}
+                className="w-6 h-6"
+                alt={toChain.label}
+              />
+              <div>
+                <div className="font-medium">{toChain.label}</div>
+                <div className="text-xs text-slate-400">
+                  {bridgeResult.state === "success" ? "Minted" : "Pending"}
+                </div>
+              </div>
+            </div>
+          </div>
 
-            <div className="flex flex-col items-center">
-              <div className="text-center">
-                <div className="flex items-center justify-center mb-2">
-                  <Image
-                    src={`/${toChain.value}.svg`}
-                    width={24}
-                    height={24}
-                    className="w-6 h-6 mr-2"
-                    alt={toChain.label}
+          <div className="space-y-3 text-sm">
+            {bridgeResult.steps.map((step) => (
+              <div
+                key={step.name}
+                className="flex items-center justify-between rounded-md bg-slate-800/60 px-3 py-2 border border-slate-700/50"
+              >
+                <div className="flex items-center gap-2">
+                  <div
+                    className={`h-2 w-2 rounded-full ${
+                      step.state === "success"
+                        ? "bg-green-400"
+                        : step.state === "pending"
+                        ? "bg-yellow-400"
+                        : "bg-red-400"
+                    }`}
                   />
-                  <div className="font-medium">{toChain.label}</div>
+                  <span>{step.name}</span>
                 </div>
-                <div className="text-sm text-slate-400">Ready to Receive</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <div className="relative w-20 h-20 mb-4">
-              <div className="absolute inset-0 rounded-full border-4 border-green-500 bg-green-500/10">
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <CheckCircle className="h-10 w-10 text-green-500" />
+                <div className="text-xs text-slate-400">
+                  {step.txHash
+                    ? `${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`
+                    : step.state}
                 </div>
               </div>
-            </div>
-
-            <div className="text-center mb-8">
-              <div className="text-xl font-bold mb-1 text-green-400">
-                Attestation Ready
-              </div>
-              <div className="text-sm text-slate-400">
-                Click below to claim your USDC
-              </div>
-            </div>
-
-            <div className="w-full space-y-4">
-              <SwitchGuard bytes={attestationData.message} hash={hash}>
-                <ClaimButton
-                  hash={hash}
-                  bytes={attestationData.message}
-                  attestation={attestationData.attestation}
-                  cctpVersion={attestationData.cctpVersion}
-                  eventNonce={attestationData.eventNonce}
-                  onBurn={setIsBurning}
-                  onAttestationUpdate={() => {
-                    // Trigger refetch of attestation data
-                    refetch();
-                  }}
-                />
-              </SwitchGuard>
-            </div>
+            ))}
           </div>
+
+          {primaryHash && (
+            <Button
+              variant="outline"
+              className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
+              onClick={() => {
+                if (primaryExplorer) {
+                  window.open(primaryExplorer, "_blank");
+                  return;
+                }
+                navigator.clipboard.writeText(primaryHash);
+              }}
+            >
+              View Transaction
+            </Button>
+          )}
 
           <div className="text-center text-xs text-slate-500">
-            <p>Circle has provided attestation for your transaction</p>
-            <p>You can now claim your USDC on {toChain.label}</p>
+            {bridgeResult.state === "success"
+              ? "Bridge Kit completed burn and mint."
+              : "Bridge Kit is processing your transfer. Keep this window open."}
           </div>
+
+          {(confirmations?.standard || confirmations?.fast || finalityEstimate) && (
+            <div className="text-xs text-slate-400 space-y-1">
+              {confirmations?.standard ? (
+                <div>Source confirmations (standard): {confirmations.standard} blocks</div>
+              ) : null}
+              {confirmations?.fast ? (
+                <div>Source confirmations (fast): {confirmations.fast} blocks</div>
+              ) : null}
+              {finalityEstimate ? <div>Typical attestation time: {finalityEstimate}</div> : null}
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -291,36 +266,43 @@ export function BridgingState({
             </div>
           </div>
 
-          <div className="text-center mb-8">
-            <div className="text-2xl font-bold mb-1">
-              {isAttestationLoading
-                ? "Fetching attestation..."
-                : timeLeft === 0
-                ? "Still waiting..."
-                : formatTime(timeLeft)}
-            </div>
-            <div className="text-sm text-slate-400">
-              {isAttestationLoading
-                ? "Checking Circle's attestation service"
-                : timeLeft === 0
-                ? "Waiting for confirmation"
-                : "Estimated time remaining"}
-            </div>
-            {attestationError && (
-              <div className="text-sm text-red-400 mt-2">
-                Error fetching attestation: {attestationError.message}
+          {estimatedTime ? (
+            <div className="text-center mb-8">
+              <div className="text-2xl font-bold mb-1">
+                {timeLeft === 0 ? "Still waiting..." : formatTime(timeLeft)}
               </div>
-            )}
-          </div>
+              <div className="text-sm text-slate-400">
+                {timeLeft === 0
+                  ? "Waiting for confirmation"
+                  : "Estimated time remaining"}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center mb-8">
+              <div className="text-2xl font-bold mb-1">Bridge in progress</div>
+              <div className="text-sm text-slate-400">
+                Bridge Kit will update steps automatically.
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="text-center text-xs text-slate-500">
-          <p>
-            Your transaction is being processed via CCTP{" "}
-            {version?.toUpperCase()}
-          </p>
-          <p>Once Circle provides an attestation, you can claim your USDC</p>
+          <p>Your transaction is being processed via Bridge Kit.</p>
+          <p>Steps will update automatically once confirmed.</p>
         </div>
+
+        {(confirmations?.standard || confirmations?.fast || finalityEstimate) && (
+          <div className="text-xs text-slate-400 space-y-1 text-center">
+            {confirmations?.standard ? (
+              <div>Source confirmations (standard): {confirmations.standard} blocks</div>
+            ) : null}
+            {confirmations?.fast ? (
+              <div>Source confirmations (fast): {confirmations.fast} blocks</div>
+            ) : null}
+            {finalityEstimate ? <div>Typical attestation time: {finalityEstimate}</div> : null}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

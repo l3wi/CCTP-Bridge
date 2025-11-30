@@ -1,13 +1,6 @@
-import { useCallback } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  useAccount,
-  useBalance as useWagmiBalance,
-  useReadContract,
-} from "wagmi";
-import { formatUnits } from "viem";
-import contracts from "@/constants/contracts";
-import abis from "@/constants/abi";
+import { useCallback, useMemo } from "react";
+import { useAccount, useBalance as useWagmiBalance } from "wagmi";
+import { getUsdcAddressForChain } from "@/lib/bridgeKit";
 
 interface UseBalanceOptions {
   refetchInterval?: number;
@@ -16,10 +9,13 @@ interface UseBalanceOptions {
 
 export const useBalance = (options: UseBalanceOptions = {}) => {
   const { address, chain } = useAccount();
-  const queryClient = useQueryClient();
   const { refetchInterval = 30000, enabled = true } = options;
 
-  // Get USDC balance
+  const usdcAddress = useMemo(
+    () => (chain ? getUsdcAddressForChain(chain.id) : undefined),
+    [chain]
+  );
+
   const {
     data: usdcBalance,
     isLoading: isUsdcLoading,
@@ -27,15 +23,14 @@ export const useBalance = (options: UseBalanceOptions = {}) => {
     refetch: refetchUsdcBalance,
   } = useWagmiBalance({
     address,
-    token: chain ? contracts[chain.id]?.Usdc : undefined,
+    token: usdcAddress,
     query: {
-      enabled: enabled && !!address && !!chain,
+      enabled: enabled && !!address && !!usdcAddress,
       refetchInterval,
       staleTime: 15000, // 15 seconds
     },
   });
 
-  // Get native token balance
   const {
     data: nativeBalance,
     isLoading: isNativeLoading,
@@ -50,83 +45,12 @@ export const useBalance = (options: UseBalanceOptions = {}) => {
     },
   });
 
-  // Get USDC allowance for TokenMessenger
-  const {
-    data: allowance,
-    isLoading: isAllowanceLoading,
-    error: allowanceError,
-    refetch: refetchAllowance,
-  } = useReadContract({
-    address: chain ? contracts[chain.id]?.Usdc : undefined,
-    abi: abis["Usdc"],
-    functionName: "allowance",
-    args: [
-      address || "0x0000000000000000000000000000000000000000",
-      chain
-        ? contracts[chain.id]?.TokenMessenger
-        : "0x0000000000000000000000000000000000000000",
-    ],
-    query: {
-      enabled: enabled && !!address && !!chain,
-      refetchInterval,
-      staleTime: 10000, // 10 seconds
-    },
-  });
-
-  // Optimistically update balance after transactions
-  const updateBalanceOptimistically = useCallback(
-    (amount: bigint, operation: "subtract" | "add") => {
-      if (!usdcBalance || !chain) return;
-
-      const currentBalance = usdcBalance.value;
-      const newBalance =
-        operation === "subtract"
-          ? currentBalance - amount
-          : currentBalance + amount;
-
-      // Update the cache optimistically
-      queryClient.setQueryData(
-        [
-          "balance",
-          { address, chainId: chain.id, token: contracts[chain.id]?.Usdc },
-        ],
-        {
-          ...usdcBalance,
-          value: newBalance,
-          formatted: formatUnits(newBalance, usdcBalance.decimals),
-        }
-      );
-    },
-    [usdcBalance, chain, address, queryClient]
-  );
-
-  // Optimistically update allowance
-  const updateAllowanceOptimistically = useCallback(
-    (newAllowance: bigint) => {
-      if (!chain || !address) return;
-
-      queryClient.setQueryData(
-        [
-          "readContract",
-          {
-            address: contracts[chain.id]?.Usdc,
-            functionName: "allowance",
-            args: [address, contracts[chain.id]?.TokenMessenger],
-          },
-        ],
-        newAllowance
-      );
-    },
-    [chain, address, queryClient]
-  );
-
   const refetchAll = useCallback(async () => {
     await Promise.all([
       refetchUsdcBalance(),
       refetchNativeBalance(),
-      refetchAllowance(),
     ]);
-  }, [refetchUsdcBalance, refetchNativeBalance, refetchAllowance]);
+  }, [refetchUsdcBalance, refetchNativeBalance]);
 
   return {
     // USDC Balance
@@ -143,31 +67,13 @@ export const useBalance = (options: UseBalanceOptions = {}) => {
     isNativeLoading,
     nativeError,
 
-    // Allowance
-    allowance: allowance as bigint | undefined,
-    isAllowanceLoading,
-    allowanceError,
-
     // Utils
-    isLoading: isUsdcLoading || isNativeLoading || isAllowanceLoading,
-    hasError: !!usdcError || !!nativeError || !!allowanceError,
+    isLoading: isUsdcLoading || isNativeLoading,
+    hasError: !!usdcError || !!nativeError,
     refetchAll,
-    updateBalanceOptimistically,
-    updateAllowanceOptimistically,
 
-    // Check if user has sufficient balance
     hasSufficientBalance: (amount: bigint) => {
       return usdcBalance?.value ? usdcBalance.value >= amount : false;
-    },
-
-    // Check if token is approved for amount
-    isApproved: (amount: bigint) => {
-      return allowance ? allowance >= amount : false;
-    },
-
-    // Check if user needs to approve
-    needsApproval: (amount: bigint) => {
-      return !allowance || allowance < amount;
     },
   };
 };

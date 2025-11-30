@@ -1,34 +1,21 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+# CCTP Bridge
+
+Next.js app router bridge UI backed by Wagmi/RainbowKit, Zustand, TanStack Query, and Circle Bridge Kit (EVM-only for now).
 
 ## Getting Started
+- Install deps: `bun install` (or npm/yarn if preferred).
+- Run dev server: `bun run dev`.
+- Lint: `bun run lint`.
+- Build: `bun run build`.
 
-First, run the development server:
+## Bridge Kit Configuration
+- `NEXT_PUBLIC_BRIDGEKIT_ENV` — `testnet` (default) or `mainnet`. Filters supported chains and prevents cross-network routes.
+- `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` — optional comma list of `chainId=url` pairs to force RPCs (e.g. `421614=https://sepolia-rollup.arbitrum.io/rpc,84532=https://sepolia.base.org`).
+- `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` — optional `FAST` or `SLOW`; defaults to `FAST`.
+- `NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE` and `NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT` — optional absolute USDC fee and payout address for integrator monetization.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-```
+Bridge Kit wiring lives in `lib/bridgeKit.ts`; it instantiates a singleton kit, scopes to EVM chains, honors the env-driven RPC overrides, and applies a custom fee policy when configured. See `docs/tasks/bridge-kit-cutover.md` for the migration plan and current status.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
+## Notes
+- Wagmi/RainbowKit chains are generated from Bridge Kit for the selected environment (mainnet or testnet), so no hardcoded contract maps are required.
+- Bridge form uses `BridgeKit.estimate` for fee/receive math and relies on Bridge Kit for approvals; manual attestation/claim UI has been removed in favor of SDK step tracking and history storage.

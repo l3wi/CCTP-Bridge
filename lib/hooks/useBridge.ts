@@ -1,423 +1,156 @@
-import { useCallback, useState } from "react";
-import { useSimulateContract, useWriteContract, useAccount } from "wagmi";
-import { formatUnits, pad } from "viem";
+import { useCallback, useMemo, useState } from "react";
+import { useAccount, useWalletClient } from "wagmi";
+import { formatUnits } from "viem";
+import { TransferSpeed, type BridgeResult } from "@circle-fin/bridge-kit";
 import { track } from "@vercel/analytics/react";
-import abis, { getABI } from "@/constants/abi";
-import contracts, { domains, getContracts } from "@/constants/contracts";
 import { useToast } from "@/components/ui/use-toast";
 import {
-  BridgeParams,
-  DepositForBurnArgs,
-  LocalTransaction,
-  FastTransferParams,
-  V2FastBurnFeesResponse,
-  V2FastBurnAllowanceResponse,
-} from "@/lib/types";
-import { getErrorMessage, TransactionError } from "@/lib/errors";
+  getBridgeKit,
+  createViemAdapter,
+  getChainIdentifier,
+  getProviderFromWalletClient,
+} from "@/lib/bridgeKit";
+import { BridgeParams, LocalTransaction } from "@/lib/types";
+import { getErrorMessage } from "@/lib/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
-import { endpoints } from "@/constants/endpoints";
 
-export interface UseBridgeReturn {
-  burn: (params: BridgeParams) => Promise<`0x${string}` | void>;
-  approve: (
-    token: `0x${string}`,
-    spender: `0x${string}`
-  ) => Promise<`0x${string}` | void>;
-  claim: (
-    message: `0x${string}`,
-    attestation: `0x${string}`,
-    version?: "v1" | "v2"
-  ) => Promise<`0x${string}` | void>;
-  fastBurn: (params: FastTransferParams) => Promise<`0x${string}` | void>;
-  getFastTransferFee: (
-    sourceDomain: number,
-    destDomain: number
-  ) => Promise<V2FastBurnFeesResponse>;
-  getFastTransferAllowance: () => Promise<V2FastBurnAllowanceResponse>;
-  isLoading: boolean;
-  error: string | null;
-}
+const findTxHashes = (result: BridgeResult) => {
+  let burnHash: `0x${string}` | undefined;
+  let mintHash: `0x${string}` | undefined;
 
-export const useBridge = (): UseBridgeReturn => {
-  const { writeContract } = useWriteContract();
+  for (const step of result.steps) {
+    if (!burnHash && step.txHash) {
+      burnHash = step.txHash as `0x${string}`;
+    }
+    if (step.txHash && /mint|receive/i.test(step.name)) {
+      mintHash = step.txHash as `0x${string}`;
+    }
+  }
+
+  return { burnHash, mintHash };
+};
+
+export const useBridge = () => {
   const { chain } = useAccount();
+  const { data: walletClient } = useWalletClient();
   const { toast } = useToast();
-  const { addTransaction, updateTransaction } = useTransactionStore();
+  const { addTransaction } = useTransactionStore();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const burn = useCallback(
-    async (params: BridgeParams): Promise<`0x${string}` | void> => {
-      if (!chain) {
-        throw new Error("No chain connected");
+  const provider = getProviderFromWalletClient(walletClient);
+  const address = walletClient?.account?.address;
+
+  const bridge = useCallback(
+    async (params: BridgeParams): Promise<BridgeResult> => {
+      if (!provider || !walletClient) {
+        throw new Error("Wallet provider not found");
+      }
+
+      const sourceIdentifier = getChainIdentifier(params.sourceChainId);
+      const destinationIdentifier = getChainIdentifier(params.targetChainId);
+
+      if (!sourceIdentifier || !destinationIdentifier) {
+        throw new Error("Unsupported chain selection for Bridge Kit");
       }
 
       setIsLoading(true);
       setError(null);
 
       try {
-        const version = params.version || "v1";
-        const transferType = params.transferType || "standard";
-        const selectedContracts = getContracts(params.sourceChainId, version);
+        const kit = getBridgeKit();
+        const adapter = await createViemAdapter(provider);
+        const transferSpeed: TransferSpeed =
+          params.transferType === "fast"
+            ? TransferSpeed.FAST
+            : TransferSpeed.SLOW;
 
-        if (!selectedContracts) {
-          throw new Error(
-            `Contracts not found for chain ${params.sourceChainId} version ${version}`
-          );
+        const result = await kit.bridge({
+          from: {
+            adapter,
+            chain: sourceIdentifier,
+          },
+          to: {
+            adapter,
+            chain: destinationIdentifier,
+          },
+          amount: formatUnits(params.amount, 6),
+          token: "USDC",
+          config: {
+            transferSpeed,
+          },
+        });
+
+        const { burnHash, mintHash } = findTxHashes(result);
+
+        if (!burnHash) {
+          console.error("Bridge Kit returned no burn hash; result:", result);
+          throw new Error("Transaction was cancelled by user");
         }
 
-        const depositArgs: DepositForBurnArgs = {
-          amount: params.amount,
-          destinationDomain: domains[params.targetChainId],
-          mintRecipient: pad(params.targetAddress),
-          burnToken: selectedContracts.Usdc,
+        const newTransaction: LocalTransaction = {
+          date: new Date(),
+          amount: formatUnits(params.amount, 6),
+          originChain: params.sourceChainId,
+          targetChain: params.targetChainId,
+          targetAddress: undefined,
+          hash: burnHash,
+          claimHash: mintHash,
+          status: result.state === "success" ? "claimed" : "pending",
+          version: "v2",
+          transferType: params.transferType ?? "standard",
+          provider: result.provider,
+          bridgeState: result.state,
+          steps: result.steps,
+          bridgeResult: result,
         };
 
-        const isV2FastTransfer = version === "v2" && transferType === "fast";
+        addTransaction(newTransaction);
+
+        track("bridge", {
+          amount: formatUnits(params.amount, 6),
+          from: params.sourceChainId,
+          to: params.targetChainId,
+          transferType: params.transferType ?? "standard",
+          state: result.state,
+        });
 
         toast({
-          title: `${isV2FastTransfer ? "Fast " : ""}Burning USDC`,
-          description: `Please sign to initiate the ${
-            isV2FastTransfer ? "fast " : ""
-          }bridging process.`,
+          title:
+            result.state === "success"
+              ? "Bridge completed"
+              : "Bridge submitted",
+          description:
+            result.state === "success"
+              ? "USDC mint executed on destination chain."
+              : "Processing bridge steps with Circle Bridge Kit.",
         });
 
-        const txHash = await new Promise<`0x${string}`>((resolve, reject) => {
-          // Use appropriate function and args based on version and transfer type
-          const functionName = "depositForBurn" as const;
-          const contractABI = getABI("TokenMessenger", version);
-
-          if (version === "v2") {
-            // V2 always uses the extended depositForBurn function
-            // For fast transfers, use the calculated fee amount; for standard transfers, use 0
-            let maxFee = BigInt(0);
-            if (isV2FastTransfer && (params as FastTransferParams).fee) {
-              // The fee in params is now the calculated fee amount (not BPS)
-              // This amount was already calculated as (amount * BPS) / 10000 in the UI
-              maxFee = (params as FastTransferParams).fee;
-            }
-            // Circle docs: 1000 = confirmed (fast), 2000 = finalized (standard)
-            const minFinalityThreshold = isV2FastTransfer ? 1000 : 2000;
-
-            const args = [
-              depositArgs.amount,
-              depositArgs.destinationDomain,
-              depositArgs.mintRecipient,
-              depositArgs.burnToken,
-              pad("0x0000000000000000000000000000000000000000"), // destinationCaller
-              maxFee,
-              minFinalityThreshold,
-            ] as const;
-
-            writeContract(
-              {
-                address: selectedContracts.TokenMessenger,
-                abi: contractABI,
-                functionName: functionName,
-                args: args,
-              },
-              {
-                onSuccess(data: `0x${string}`) {
-                  try {
-                    track("bridge", {
-                      amount: formatUnits(params.amount, 6),
-                      from: params.sourceChainId,
-                      to: params.targetChainId,
-                      version,
-                      transferType,
-                    });
-
-                    toast({
-                      title: `${isV2FastTransfer ? "Fast " : ""}Burning USDC`,
-                      description: "Bridging process successfully initiated.",
-                    });
-
-                    console.log("Successful Write: ", data);
-
-                    const newTransaction: LocalTransaction = {
-                      date: new Date(),
-                      amount: formatUnits(params.amount, 6),
-                      originChain: params.sourceChainId,
-                      targetChain: params.targetChainId,
-                      hash: data,
-                      status: "pending",
-                      version,
-                      transferType,
-                    };
-
-                    addTransaction(newTransaction);
-                    resolve(data);
-                  } catch (error) {
-                    console.error("Transaction success handler error:", error);
-                    reject(new TransactionError(getErrorMessage(error)));
-                  }
-                },
-                onError(error: Error) {
-                  reject(new TransactionError(getErrorMessage(error)));
-                },
-              }
-            );
-          } else {
-            // V1 uses the standard depositForBurn function
-            const args = [
-              depositArgs.amount,
-              depositArgs.destinationDomain,
-              depositArgs.mintRecipient,
-              depositArgs.burnToken,
-            ] as const;
-
-            writeContract(
-              {
-                address: selectedContracts.TokenMessenger,
-                abi: contractABI,
-                functionName: functionName,
-                args: args,
-              },
-              {
-                onSuccess(data: `0x${string}`) {
-                  try {
-                    track("bridge", {
-                      amount: formatUnits(params.amount, 6),
-                      from: params.sourceChainId,
-                      to: params.targetChainId,
-                      version,
-                      transferType,
-                    });
-
-                    toast({
-                      title: "Burning USDC",
-                      description: "Bridging process successfully initiated.",
-                    });
-
-                    console.log("Successful Write: ", data);
-
-                    const newTransaction: LocalTransaction = {
-                      date: new Date(),
-                      amount: formatUnits(params.amount, 6),
-                      originChain: params.sourceChainId,
-                      targetChain: params.targetChainId,
-                      hash: data,
-                      status: "pending",
-                      version,
-                      transferType,
-                    };
-
-                    addTransaction(newTransaction);
-                    resolve(data);
-                  } catch (error) {
-                    console.error("Transaction success handler error:", error);
-                    reject(new TransactionError(getErrorMessage(error)));
-                  }
-                },
-                onError(error: Error) {
-                  reject(new TransactionError(getErrorMessage(error)));
-                },
-              }
-            );
-          }
-        });
-
-        return txHash;
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
+        return result;
+      } catch (err) {
+        console.error("Bridge transaction error", err);
+        const errorMessage = getErrorMessage(err);
         setError(errorMessage);
         toast({
-          title: "Transaction Failed",
+          title:
+            errorMessage === "Transaction was cancelled by user"
+              ? "Transaction cancelled"
+              : "Bridge failed",
           description: errorMessage,
           variant: "destructive",
         });
+        throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [chain, writeContract, toast, addTransaction]
+    [provider, walletClient, addTransaction, toast]
   );
-
-  const approve = useCallback(
-    async (
-      token: `0x${string}`,
-      spender: `0x${string}`
-    ): Promise<`0x${string}` | void> => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        toast({
-          title: "Approving Token",
-          description: "Please wait while we approve the token.",
-        });
-
-        const txHash = await new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: token,
-              abi: getABI("Usdc", "v1"), // USDC ABI is the same for both versions
-              functionName: "approve",
-              args: [
-                spender,
-                BigInt(
-                  "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
-                ),
-              ],
-            },
-            {
-              onSuccess(data: `0x${string}`) {
-                toast({
-                  title: "Token Approved",
-                  description: "You've successfully approved the token.",
-                });
-                resolve(data);
-              },
-              onError(error: Error) {
-                reject(new TransactionError(getErrorMessage(error)));
-              },
-            }
-          );
-        });
-
-        return txHash;
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        setError(errorMessage);
-        toast({
-          title: "Approval Failed",
-          description: errorMessage,
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [writeContract, toast]
-  );
-
-  const claim = useCallback(
-    async (
-      message: `0x${string}`,
-      attestation: `0x${string}`,
-      version: "v1" | "v2" = "v1"
-    ): Promise<`0x${string}` | void> => {
-      if (!chain) {
-        throw new Error("No chain connected");
-      }
-
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const selectedContracts = getContracts(chain.id, version);
-
-        if (!selectedContracts) {
-          throw new Error(
-            `Contracts not found for chain ${chain.id} version ${version}`
-          );
-        }
-
-        toast({
-          title: `${version === "v2" ? "Minting" : "Claiming"} USDC`,
-          description: `Please sign to ${
-            version === "v2" ? "mint" : "claim"
-          } your USDC.`,
-        });
-
-        const txHash = await new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: selectedContracts.MessageTransmitter,
-              abi: getABI("MessageTransmitter", version),
-              functionName: "receiveMessage",
-              args: [message, attestation],
-            },
-            {
-              onSuccess(data: `0x${string}`) {
-                toast({
-                  title: `Successfully ${
-                    version === "v2" ? "Minted" : "Claimed"
-                  } USDC`,
-                  description:
-                    "Please check your wallet to ensure the tokens have arrived.",
-                });
-                resolve(data);
-              },
-              onError(error: Error) {
-                reject(new TransactionError(getErrorMessage(error)));
-              },
-            }
-          );
-        });
-
-        return txHash;
-      } catch (error) {
-        const errorMessage = getErrorMessage(error);
-        setError(errorMessage);
-        toast({
-          title: `${version === "v2" ? "Mint" : "Claim"} Failed`,
-          description: errorMessage,
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    },
-    [chain, writeContract, toast]
-  );
-
-  const fastBurn = useCallback(
-    async (params: FastTransferParams): Promise<`0x${string}` | void> => {
-      return burn(params);
-    },
-    [burn]
-  );
-
-  const getFastTransferFee = useCallback(
-    async (
-      sourceDomain: number,
-      destDomain: number
-    ): Promise<V2FastBurnFeesResponse> => {
-      try {
-        const response = await fetch(
-          `${endpoints.mainnet}/v2/burn/USDC/fees/${sourceDomain}/${destDomain}`
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch fast transfer fees");
-        }
-        const data = (await response.json()) as V2FastBurnFeesResponse;
-        if (!Array.isArray(data)) {
-          throw new Error("Unexpected fee response format");
-        }
-        return data;
-      } catch (error) {
-        console.error("Error fetching fast transfer fees:", error);
-        throw error;
-      }
-    },
-    []
-  );
-
-  const getFastTransferAllowance =
-    useCallback(async (): Promise<V2FastBurnAllowanceResponse> => {
-      try {
-        const response = await fetch(
-          `${endpoints.mainnet}/v2/fastBurn/USDC/allowance`
-        );
-        if (!response.ok) {
-          throw new Error("Failed to fetch fast transfer allowance");
-        }
-        return await response.json();
-      } catch (error) {
-        console.error("Error fetching fast transfer allowance:", error);
-        throw error;
-      }
-    }, []);
 
   return {
-    burn,
-    approve,
-    claim,
-    fastBurn,
-    getFastTransferFee,
-    getFastTransferAllowance,
+    bridge,
+    burn: bridge,
     isLoading,
     error,
   };

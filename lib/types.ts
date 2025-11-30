@@ -1,3 +1,4 @@
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { Chain } from "viem";
 
 // Contract-related types
@@ -19,6 +20,9 @@ export interface LocalTransaction {
   originChain: number;
   hash: `0x${string}`;
   status: "pending" | "claimed" | "failed";
+  provider?: string;
+  bridgeState?: BridgeResult["state"];
+  steps?: BridgeResult["steps"];
   amount?: string;
   chain?: number;
   targetChain?: number;
@@ -28,6 +32,8 @@ export interface LocalTransaction {
   transferType?: "standard" | "fast"; // V2 transfer type
   fee?: string; // V2 fast transfer fee
   estimatedTime?: string; // Estimated completion time
+  bridgeResult?: BridgeResult;
+  transferId?: string;
 }
 
 // Legacy transaction interface for backwards compatibility
@@ -48,8 +54,7 @@ export interface BridgeParams {
   amount: bigint;
   sourceChainId: number;
   targetChainId: number;
-  targetAddress: `0x${string}`;
-  sourceTokenAddress: `0x${string}`;
+  sourceTokenAddress?: `0x${string}`;
   version?: "v1" | "v2";
   transferType?: "standard" | "fast";
 }
@@ -82,8 +87,6 @@ export interface AmountState {
 export interface BridgeFormState {
   targetChain: Chain | null;
   amount: AmountState | null;
-  diffWallet: boolean;
-  targetAddress: string | undefined;
   version: "v1" | "v2";
   transferType: "standard" | "fast";
 }
@@ -167,19 +170,10 @@ export interface BridgeError {
 
 // Hook return types
 export interface UseBridgeReturn {
-  burn: (params: BridgeParams) => Promise<`0x${string}`>;
-  claim: (
-    message: `0x${string}`,
-    attestation: `0x${string}`
-  ) => Promise<`0x${string}`>;
-  fastBurn: (params: FastTransferParams) => Promise<`0x${string}`>;
-  getFastTransferFee: (
-    sourceDomain: number,
-    destDomain: number
-  ) => Promise<V2FastBurnFeesResponse>;
-  getFastTransferAllowance: () => Promise<V2FastBurnAllowanceResponse>;
+  bridge: (params: BridgeParams) => Promise<BridgeResult>;
+  burn: (params: BridgeParams) => Promise<BridgeResult>; // alias for backward compatibility
   isLoading: boolean;
-  error: BridgeError | null;
+  error: BridgeError | string | null;
 }
 
 export interface UseTransactionHistoryReturn {

@@ -25,21 +25,61 @@ interface TransactionState {
 const normalizeTransaction = (
   tx: Partial<LocalTransaction>
 ): LocalTransaction => {
+  const extractChainId = (chain: unknown) => {
+    if (chain && typeof chain === "object" && "chainId" in chain) {
+      const value = (chain as { chainId?: unknown }).chainId;
+      return typeof value === "number" ? value : undefined;
+    }
+    return undefined;
+  };
+
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
-    originChain: tx.originChain ?? 1,
+    originChain:
+      tx.originChain ?? extractChainId(tx.bridgeResult?.source.chain) ?? 1,
     hash: tx.hash as `0x${string}`,
     status: tx.status ?? "pending",
-    amount: tx.amount,
+    provider: tx.provider ?? tx.bridgeResult?.provider,
+    bridgeState: tx.bridgeState ?? tx.bridgeResult?.state,
+    steps: tx.steps ?? tx.bridgeResult?.steps,
+    amount: tx.amount ?? tx.bridgeResult?.amount,
     chain: tx.chain,
-    targetChain: tx.targetChain,
-    targetAddress: tx.targetAddress,
+    targetChain:
+      tx.targetChain ?? extractChainId(tx.bridgeResult?.destination.chain),
+    targetAddress:
+      tx.targetAddress ??
+      (tx.bridgeResult?.destination.address as `0x${string}` | undefined),
     claimHash: tx.claimHash,
     version: tx.version ?? "v1",
     transferType: tx.transferType ?? "standard",
     fee: tx.fee,
     estimatedTime: tx.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    bridgeResult: tx.bridgeResult,
+    transferId: tx.transferId,
   };
+};
+
+const sanitizeForStorage = <T>(value: T): T => {
+  const convert = (input: any): any => {
+    if (typeof input === "bigint") {
+      return input.toString();
+    }
+    if (Array.isArray(input)) {
+      return input.map(convert);
+    }
+    if (input && typeof input === "object") {
+      return Object.entries(input).reduce<Record<string, any>>(
+        (acc, [key, val]) => {
+          acc[key] = convert(val);
+          return acc;
+        },
+        {}
+      );
+    }
+    return input;
+  };
+
+  return convert(value);
 };
 
 const migrateLegacyTransaction = (
@@ -94,7 +134,7 @@ export const useTransactionStore = create<TransactionState>()(
           ...transaction,
           date: new Date(),
         } as LocalTransaction;
-        const newTransaction = normalizeTransaction(incoming);
+        const newTransaction = sanitizeForStorage(normalizeTransaction(incoming));
 
         set((state) => ({
           transactions: state.transactions.some(
@@ -109,7 +149,9 @@ export const useTransactionStore = create<TransactionState>()(
       updateTransaction: (hash, updates) => {
         set((state) => ({
           transactions: state.transactions.map((tx) =>
-            tx.hash === hash ? { ...tx, ...updates } : tx
+            tx.hash === hash
+              ? sanitizeForStorage({ ...tx, ...updates })
+              : tx
           ),
         }));
       },
@@ -168,9 +210,6 @@ export const useTransactionStore = create<TransactionState>()(
         // Migrate legacy data on store initialization
         if (state) {
           state.migrateFromLegacy();
-          set((prev) => ({
-            transactions: prev.transactions.map(normalizeTransaction),
-          }));
         }
       },
     }
