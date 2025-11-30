@@ -61,6 +61,9 @@ const normalizeTransaction = (
 
 const sanitizeForStorage = <T>(value: T): T => {
   const convert = (input: any): any => {
+    if (input instanceof Date) {
+      return input.toISOString();
+    }
     if (typeof input === "bigint") {
       return input.toString();
     }

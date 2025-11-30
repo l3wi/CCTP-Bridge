@@ -32,6 +32,7 @@ export interface LocalTransaction {
   transferType?: "standard" | "fast"; // V2 transfer type
   fee?: string; // V2 fast transfer fee
   estimatedTime?: string; // Estimated completion time
+  completedAt?: Date; // When mint/claim completed
   bridgeResult?: BridgeResult;
   transferId?: string;
 }

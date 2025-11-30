@@ -84,6 +84,9 @@ export function BridgeCard({
   );
   const [isLoading, setIsLoading] = useState(false);
   const [isBridging, setIsBridging] = useState(false);
+  const [bridgeSourceChain, setBridgeSourceChain] = useState<Chain | null>(null);
+  const [bridgeTargetChain, setBridgeTargetChain] = useState<Chain | null>(null);
+  const [bridgeStartedAt, setBridgeStartedAt] = useState<Date | null>(null);
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const [loadedTransactionData, setLoadedTransactionData] = useState<{
     fromChain: { value: string; label: string };
@@ -401,6 +404,12 @@ export function BridgeCard({
     [amount]
   );
 
+  const getEtaLabel = useCallback(
+    (speed: TransferSpeed, override?: string | null) =>
+      override || (speed === TransferSpeed.FAST ? "~1 minute" : "13-19 minutes"),
+    []
+  );
+
   const handleSwitchChain = async (chainId: string) => {
     try {
       setIsSwitchingChain(true);
@@ -459,27 +468,41 @@ export function BridgeCard({
 
       setIsLoading(true);
       setActiveTransferSpeed(transferSpeed);
+      setBridgeResult(null);
+      setBridgeStartedAt(new Date());
+      setBridgeSourceChain(chain);
+      setBridgeTargetChain(targetChain);
 
+      let pendingHash: `0x${string}` | null = null;
       try {
         const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
 
-        const result = await bridge({
-          amount: validation.data.amount,
-          sourceChainId: chain.id,
-          targetChainId: validation.data.targetChain,
-          transferType,
-        });
+        const result = await bridge(
+          {
+            amount: validation.data.amount,
+            sourceChainId: chain.id,
+            targetChainId: validation.data.targetChain,
+            transferType,
+          },
+          {
+            onPendingHash: (hash) => {
+              pendingHash = hash;
+              setBridgeTransactionHash(hash);
+              setIsBridging(true);
+            },
+          }
+        );
 
         const primaryHash = result.steps.find((step) => step.txHash)?.txHash;
 
-        if (primaryHash) {
-          setBridgeTransactionHash(primaryHash as `0x${string}`);
-        }
+        setBridgeTransactionHash(
+          (primaryHash as `0x${string}` | undefined) || pendingHash
+        );
 
-        setBridgeResult(result);
+      setBridgeResult(result);
 
-        setIsLoading(false);
-        setIsBridging(true);
+      setIsLoading(false);
+      setIsBridging(true);
 
         if (onBurn) {
           onBurn(true);
@@ -487,7 +510,8 @@ export function BridgeCard({
       } catch (error) {
         console.error("Bridge transaction failed:", error);
         setIsLoading(false);
-        setBridgeTransactionHash(null); // Reset on error
+        setIsBridging(false);
+        setBridgeTransactionHash(pendingHash); // Keep placeholder hash if available
         toast({
           title: "Transaction Failed",
           description: getErrorMessage(error),
@@ -504,6 +528,9 @@ export function BridgeCard({
     setLoadedTransactionData(null);
     setBridgeTransactionHash(null); // Reset bridge transaction hash
     setBridgeResult(null);
+    setBridgeStartedAt(null);
+    setBridgeSourceChain(null);
+    setBridgeTargetChain(null);
     // Call parent callback to reset loaded transaction
     if (onBackToNew) {
       onBackToNew();
@@ -512,8 +539,7 @@ export function BridgeCard({
 
   // Effect to handle loaded transaction from history
   useEffect(() => {
-    if (loadedTransaction && loadedTransaction.status === "pending") {
-      // Find the chains for the transaction
+    if (loadedTransaction) {
       const originChain = chains.find(
         (c) => c.id === loadedTransaction.originChain
       );
@@ -543,6 +569,11 @@ export function BridgeCard({
               ? TransferSpeed.FAST
               : TransferSpeed.SLOW
           );
+        }
+        setBridgeSourceChain(originChain);
+        setBridgeTargetChain(targetChainData);
+        if (loadedTransaction.date) {
+          setBridgeStartedAt(new Date(loadedTransaction.date));
         }
         setIsBridging(true);
       }
@@ -707,25 +738,48 @@ export function BridgeCard({
               steps: loadedTransaction.steps || [],
             };
           })()}
+          transferType={
+            loadedTransaction.transferType === "fast" ? "fast" : "standard"
+          }
+          startedAt={loadedTransaction.date ? new Date(loadedTransaction.date) : undefined}
+          estimatedTimeLabel={getEtaLabel(
+            loadedTransaction.transferType === "fast"
+              ? TransferSpeed.FAST
+              : TransferSpeed.SLOW,
+            loadedTransaction.estimatedTime
+          )}
         />
       );
-    } else if (targetChain && amount && bridgeTransactionHash && chain) {
+    } else if ((bridgeTargetChain || targetChain) && amount && bridgeTransactionHash) {
       const fromChain = {
-        value: chain.id.toString(),
-        label: chain.name,
+        value: (bridgeSourceChain || chain)?.id.toString(),
+        label: (bridgeSourceChain || chain)?.name || "Source",
       };
       const toChain = {
-        value: targetChain.id.toString(),
-        label: targetChain.name,
+        value: (bridgeTargetChain || targetChain)?.id.toString(),
+        label: (bridgeTargetChain || targetChain)?.name || "Destination",
       };
 
       const recipientAddressValue = address as `0x${string}` | undefined;
-      const sourceChain = getBridgeChainById(chain.id);
-      const confirmations = getCctpConfirmations(chain.id) || undefined;
+      const sourceChainId =
+        bridgeSourceChain?.id || chain?.id || fromChain.value
+          ? Number(fromChain.value)
+          : undefined;
+      const targetChainId =
+        bridgeTargetChain?.id || targetChain?.id || toChain.value
+          ? Number(toChain.value)
+          : undefined;
+
+      const sourceChainDef = sourceChainId
+        ? getBridgeChainById(sourceChainId)
+        : null;
+      const confirmations = sourceChainId
+        ? getCctpConfirmations(sourceChainId) || undefined
+        : undefined;
       const finalityEstimate =
-        sourceChain &&
+        sourceChainDef &&
         getFinalityEstimate(
-          sourceChain.name || String(sourceChain.chain),
+          sourceChainDef.name || String(sourceChainDef.chain),
           activeTransferSpeed
         )?.averageTime;
 
@@ -739,16 +793,21 @@ export function BridgeCard({
           onBack={handleBackToNew}
           confirmations={confirmations}
           finalityEstimate={finalityEstimate}
+          transferType={activeTransferSpeed === TransferSpeed.FAST ? "fast" : "standard"}
+          startedAt={bridgeStartedAt ?? undefined}
+          estimatedTimeLabel={getEtaLabel(activeTransferSpeed, finalityEstimate)}
           bridgeResult={(() => {
             if (bridgeResult) return bridgeResult;
-            const destChain = getBridgeChainById(targetChain.id);
-            if (sourceChain && destChain && bridgeTransactionHash) {
+            const destChain = targetChainId
+              ? getBridgeChainById(targetChainId)
+              : null;
+            if (sourceChainDef && destChain && bridgeTransactionHash) {
               return {
                 amount: amount.str,
                 token: "USDC" as const,
                 state: "pending" as const,
                 provider: "CCTPV2BridgingProvider",
-                source: { address: recipientAddressValue || "", chain: sourceChain },
+                source: { address: recipientAddressValue || "", chain: sourceChainDef },
                 destination: { address: recipientAddressValue || "", chain: destChain },
                 steps: [],
               } as BridgeResult;

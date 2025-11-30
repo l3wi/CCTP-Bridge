@@ -46,11 +46,41 @@ export function HistoryModal({
   );
 
   const handleTransactionClick = (transaction: LocalTransaction) => {
-    if (transaction.status === "pending" && onLoadBridging) {
+    if (onLoadBridging) {
       onLoadBridging(transaction);
       handleOpenChange(false);
     }
   };
+
+  const pendingCount = useMemo(
+    () =>
+      transactions.filter(
+        (tx) =>
+          tx.status === "pending" ||
+          tx.bridgeState === "pending" ||
+          tx.bridgeResult?.state === "pending"
+      ).length,
+    [transactions]
+  );
+
+  const claimableCount = useMemo(() => {
+    return transactions.filter((tx) => {
+      const steps = tx.steps || tx.bridgeResult?.steps || [];
+      // Heuristic: look for a step that mentions claim and is pending/ready
+      return steps.some(
+        (step) =>
+          /claim/i.test(step.name) &&
+          (step.state === "pending" || step.state === "ready")
+      );
+    }).length;
+  }, [transactions]);
+
+  const badgeLabel =
+    claimableCount > 0
+      ? `${claimableCount} Claimable`
+      : pendingCount > 0
+      ? `${pendingCount} Pending`
+      : null;
 
   return (
     <>
@@ -58,10 +88,15 @@ export function HistoryModal({
         <DialogTrigger asChild>
           <Button
             variant="outline"
-            size="icon"
-            className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700/50 hover:text-white"
+            size="sm"
+            className="bg-slate-800 border-slate-700 text-white hover:bg-slate-700/50 hover:text-white flex items-center gap-2 px-3"
           >
             <History className="h-4 w-4" />
+            {badgeLabel && (
+              <span className="text-xs font-medium text-slate-100 bg-slate-700/80 px-2 py-1 rounded-full">
+                {badgeLabel}
+              </span>
+            )}
           </Button>
         </DialogTrigger>
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl">
@@ -124,69 +159,6 @@ function TransactionRow({
   const isBridgeKit = !!tx.provider;
 
   const renderStatus = () => {
-    if (isBridgeKit) {
-      const bridgeState = tx.bridgeState || tx.bridgeResult?.state || "pending";
-      const steps = tx.steps || tx.bridgeResult?.steps || [];
-      const primaryStep =
-        steps.find((step) => step.state === "success" && step.txHash) ||
-        steps.find((step) => step.txHash);
-
-      return (
-        <div className="flex flex-col gap-2 w-full">
-          <div className="flex items-center gap-1">
-            <span
-              className={`h-2 w-2 rounded-full ${
-                bridgeState === "success"
-                  ? "bg-green-500"
-                  : bridgeState === "error"
-                  ? "bg-red-500"
-                  : "bg-yellow-500"
-              }`}
-            />
-            <span className="text-sm capitalize">{bridgeState}</span>
-          </div>
-          {steps.length > 0 && (
-            <div className="space-y-1">
-              {steps.map((step) => (
-                <div
-                  key={step.name}
-                  className="flex items-center justify-between rounded-md bg-slate-800/60 px-3 py-1 text-xs"
-                >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        step.state === "success"
-                          ? "bg-green-500"
-                          : step.state === "error"
-                          ? "bg-red-500"
-                          : "bg-yellow-500"
-                      }`}
-                    />
-                    <span>{step.name}</span>
-                  </div>
-                  {step.txHash && (
-                    <span className="text-slate-400">
-                      {`${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          {primaryStep?.explorerUrl && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-blue-400 hover:text-blue-300 justify-start px-0"
-              onClick={() => window.open(primaryStep.explorerUrl, "_blank")}
-            >
-              View transaction
-            </Button>
-          )}
-        </div>
-      );
-    }
-
     if (tx.status === "claimed") {
       return (
         <div className="flex items-center gap-1">

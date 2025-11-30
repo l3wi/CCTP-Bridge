@@ -17,6 +17,7 @@ import { useTransactionStore } from "@/lib/store/transactionStore";
 const findTxHashes = (result: BridgeResult) => {
   let burnHash: `0x${string}` | undefined;
   let mintHash: `0x${string}` | undefined;
+  let completedAt: Date | undefined;
 
   for (const step of result.steps) {
     if (!burnHash && step.txHash) {
@@ -25,16 +26,19 @@ const findTxHashes = (result: BridgeResult) => {
     if (step.txHash && /mint|receive/i.test(step.name)) {
       mintHash = step.txHash as `0x${string}`;
     }
+    if (step.state === "success") {
+      completedAt = new Date();
+    }
   }
 
-  return { burnHash, mintHash };
+  return { burnHash, mintHash, completedAt };
 };
 
 export const useBridge = () => {
   const { chain } = useAccount();
   const { data: walletClient } = useWalletClient();
   const { toast } = useToast();
-  const { addTransaction } = useTransactionStore();
+  const { addTransaction, updateTransaction } = useTransactionStore();
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +47,10 @@ export const useBridge = () => {
   const address = walletClient?.account?.address;
 
   const bridge = useCallback(
-    async (params: BridgeParams): Promise<BridgeResult> => {
+    async (
+      params: BridgeParams,
+      opts?: { onPendingHash?: (hash: `0x${string}`) => void }
+    ): Promise<BridgeResult> => {
       if (!provider || !walletClient) {
         throw new Error("Wallet provider not found");
       }
@@ -58,13 +65,15 @@ export const useBridge = () => {
       setIsLoading(true);
       setError(null);
 
+      const transferType: "fast" | "standard" =
+        params.transferType === "fast" ? "fast" : "standard";
+      const formattedAmount = formatUnits(params.amount, 6);
+
       try {
         const kit = getBridgeKit();
         const adapter = await createViemAdapter(provider);
         const transferSpeed: TransferSpeed =
-          params.transferType === "fast"
-            ? TransferSpeed.FAST
-            : TransferSpeed.SLOW;
+          transferType === "fast" ? TransferSpeed.FAST : TransferSpeed.SLOW;
 
         const result = await kit.bridge({
           from: {
@@ -75,38 +84,38 @@ export const useBridge = () => {
             adapter,
             chain: destinationIdentifier,
           },
-          amount: formatUnits(params.amount, 6),
+          amount: formattedAmount,
           token: "USDC",
           config: {
             transferSpeed,
           },
         });
 
-        const { burnHash, mintHash } = findTxHashes(result);
+        const { burnHash, mintHash, completedAt } = findTxHashes(result);
 
         if (!burnHash) {
           console.error("Bridge Kit returned no burn hash; result:", result);
           throw new Error("Transaction was cancelled by user");
         }
 
-        const newTransaction: LocalTransaction = {
-          date: new Date(),
-          amount: formatUnits(params.amount, 6),
-          originChain: params.sourceChainId,
-          targetChain: params.targetChainId,
-          targetAddress: undefined,
+        opts?.onPendingHash?.(burnHash);
+
+        addTransaction({
           hash: burnHash,
           claimHash: mintHash,
           status: result.state === "success" ? "claimed" : "pending",
           version: "v2",
-          transferType: params.transferType ?? "standard",
+          transferType,
           provider: result.provider,
           bridgeState: result.state,
           steps: result.steps,
           bridgeResult: result,
-        };
-
-        addTransaction(newTransaction);
+          completedAt,
+          amount: formattedAmount,
+          originChain: params.sourceChainId,
+          targetChain: params.targetChainId,
+          targetAddress: address as `0x${string}` | undefined,
+        });
 
         track("bridge", {
           amount: formatUnits(params.amount, 6),

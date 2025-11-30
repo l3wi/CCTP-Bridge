@@ -1,12 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, Loader2, X } from "lucide-react";
+import { ArrowRight, ExternalLink, Loader2, X } from "lucide-react";
 import { formatTime } from "@/lib/utils";
 import Image from "next/image";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
+import { useAccount, useSwitchChain } from "wagmi";
+import { useToast } from "@/components/ui/use-toast";
+import { getExplorerTxUrl } from "@/lib/bridgeKit";
 
 interface ChainInfo {
   value: string;
@@ -23,6 +26,9 @@ interface BridgingStateProps {
   bridgeResult?: BridgeResult;
   confirmations?: { standard?: number; fast?: number };
   finalityEstimate?: string;
+  transferType?: "fast" | "standard";
+  startedAt?: Date;
+  estimatedTimeLabel?: string;
 }
 
 export function BridgingState({
@@ -35,7 +41,13 @@ export function BridgingState({
   bridgeResult,
   confirmations,
   finalityEstimate,
+  transferType,
+  startedAt,
+  estimatedTimeLabel,
 }: BridgingStateProps) {
+  const { chain } = useAccount();
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const { toast } = useToast();
   const [timeLeft, setTimeLeft] = useState(estimatedTime ?? 0);
 
   // Reset countdown when estimate changes
@@ -65,6 +77,86 @@ export function BridgingState({
     ? `${recipientAddress.slice(0, 6)}...${recipientAddress.slice(-4)}`
     : "Pending";
 
+  const typeLabel =
+    transferType === "fast"
+      ? "Fast Bridging"
+      : transferType === "standard"
+      ? "Standard Bridging"
+      : "Bridging";
+
+  const infoTypeLabel = transferType === "fast" ? "Fast" : "Standard";
+  const pendingTitle = `${infoTypeLabel} Bridge Pending`;
+  const sentAtLabel = startedAt
+    ? startedAt.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : new Date().toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+  const etaLabel =
+    estimatedTimeLabel || finalityEstimate || (transferType === "fast" ? "~1 minute" : "13-19 minutes");
+  const completedLabel =
+    bridgeResult?.state === "success" && bridgeResult.completedAt
+      ? new Date(bridgeResult.completedAt).toLocaleString(undefined, {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
+
+  const destinationChainId = useMemo(() => {
+    const bridgeDest =
+      (bridgeResult?.destination?.chain as { chainId?: number } | undefined)
+        ?.chainId;
+    if (bridgeDest) return bridgeDest;
+    return toChain?.value ? Number(toChain.value) : undefined;
+  }, [bridgeResult?.destination?.chain, toChain?.value]);
+
+  const sourceChainId = useMemo(() => {
+    const bridgeSource =
+      (bridgeResult?.source?.chain as { chainId?: number } | undefined)?.chainId;
+    if (bridgeSource) return bridgeSource;
+    return fromChain?.value ? Number(fromChain.value) : undefined;
+  }, [bridgeResult?.source?.chain, fromChain?.value]);
+
+  const displayFrom = useMemo(() => {
+    const chainName =
+      (bridgeResult?.source?.chain as { name?: string } | undefined)?.name ||
+      fromChain.label;
+    const value =
+      (bridgeResult?.source?.chain as { chainId?: number } | undefined)?.chainId ||
+      (fromChain.value ? Number(fromChain.value) : undefined);
+    return {
+      label: chainName,
+      value: value?.toString() || fromChain.value,
+    };
+  }, [bridgeResult?.source?.chain, fromChain.label, fromChain.value]);
+
+  const displayTo = useMemo(() => {
+    const chainName =
+      (bridgeResult?.destination?.chain as { name?: string } | undefined)?.name ||
+      toChain.label;
+    const value =
+      (bridgeResult?.destination?.chain as { chainId?: number } | undefined)
+        ?.chainId ||
+      (toChain.value ? Number(toChain.value) : undefined);
+    return {
+      label: chainName,
+      value: value?.toString() || toChain.value,
+    };
+  }, [bridgeResult?.destination?.chain, toChain.label, toChain.value]);
+
+  const onDestinationChain = chain?.id && destinationChainId
+    ? chain.id === destinationChainId
+    : false;
+
   if (bridgeResult) {
     const primaryStep =
       bridgeResult.steps.find((step) => step.state === "success" && step.txHash) ||
@@ -74,9 +166,7 @@ export function BridgingState({
     const stateLabel =
       bridgeResult.state === "success"
         ? "Bridge Completed"
-        : bridgeResult.state === "error"
-        ? "Bridge Failed"
-        : "Bridge Processing";
+        : pendingTitle;
 
     return (
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
@@ -96,28 +186,28 @@ export function BridgingState({
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Image
-                src={`/${fromChain.value}.svg`}
+                src={`/${displayFrom.value}.svg`}
                 width={24}
                 height={24}
                 className="w-6 h-6"
-                alt={fromChain.label}
+                alt={displayFrom.label}
               />
               <div>
-                <div className="font-medium">{fromChain.label}</div>
+                <div className="font-medium">{displayFrom.label}</div>
                 <div className="text-xs text-slate-400">{amount} USDC</div>
               </div>
             </div>
             <ArrowRight className="text-slate-500" />
             <div className="flex items-center gap-2">
               <Image
-                src={`/${toChain.value}.svg`}
+                src={`/${displayTo.value}.svg`}
                 width={24}
                 height={24}
                 className="w-6 h-6"
-                alt={toChain.label}
+                alt={displayTo.label}
               />
               <div>
-                <div className="font-medium">{toChain.label}</div>
+                <div className="font-medium">{displayTo.label}</div>
                 <div className="text-xs text-slate-400">
                   {bridgeResult.state === "success" ? "Minted" : "Pending"}
                 </div>
@@ -136,55 +226,130 @@ export function BridgingState({
                     className={`h-2 w-2 rounded-full ${
                       step.state === "success"
                         ? "bg-green-400"
-                        : step.state === "pending"
+                        : (step.name.toLowerCase().includes("mint") &&
+                            !step.txHash &&
+                            step.state === "error") ||
+                          step.state === "pending"
                         ? "bg-yellow-400"
                         : "bg-red-400"
                     }`}
                   />
                   <span>{step.name}</span>
                 </div>
-                <div className="text-xs text-slate-400">
-                  {step.txHash
-                    ? `${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`
-                    : step.state}
+                <div className="flex items-center gap-2 text-xs text-slate-400">
+                  {step.txHash ? (
+                    <>
+                      <span>{`${step.txHash.slice(0, 6)}...${step.txHash.slice(-4)}`}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-slate-300 hover:text-white"
+                        onClick={() => {
+                          const explorer =
+                            step.explorerUrl ||
+                            (destinationChainId && step.name.toLowerCase().includes("mint")
+                              ? getExplorerTxUrl(destinationChainId, step.txHash)
+                              : sourceChainId
+                              ? getExplorerTxUrl(sourceChainId, step.txHash)
+                              : null);
+                          if (explorer) {
+                            window.open(explorer, "_blank");
+                          } else {
+                            navigator.clipboard.writeText(step.txHash);
+                            toast({
+                              title: "Hash copied",
+                              description: "No explorer link available",
+                            });
+                          }
+                        }}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </Button>
+                    </>
+                  ) : (
+                    <span>
+                      {(step.name.toLowerCase().includes("mint") &&
+                        step.state === "error") ||
+                      step.state === "pending"
+                        ? "pending"
+                        : step.state}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
           </div>
 
-          {primaryHash && (
-            <Button
-              variant="outline"
-              className="w-full border-blue-700 text-white hover:bg-blue-700/50 hover:text-white bg-blue-800"
-              onClick={() => {
-                if (primaryExplorer) {
-                  window.open(primaryExplorer, "_blank");
-                  return;
-                }
-                navigator.clipboard.writeText(primaryHash);
-              }}
-            >
-              View Transaction
-            </Button>
+          {bridgeResult.state !== "success" && (
+            <div className="flex flex-col gap-2">
+              <Button
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={isSwitchingChain}
+                onClick={() => {
+                  if (!destinationChainId) return;
+                  if (!onDestinationChain) {
+                    switchChain({ chainId: destinationChainId }).catch((err) =>
+                      toast({
+                        title: "Switch failed",
+                        description:
+                          err instanceof Error ? err.message : "Could not switch chain",
+                        variant: "destructive",
+                      })
+                    );
+                    return;
+                  }
+
+                  const claimStep =
+                    bridgeResult?.steps.find((step) => /mint|claim/i.test(step.name)) ||
+                    bridgeResult?.steps.find((step) => step.txHash);
+
+                  if (claimStep?.txHash) {
+                    const explorer =
+                      claimStep.explorerUrl ||
+                      (destinationChainId
+                        ? getExplorerTxUrl(destinationChainId, claimStep.txHash)
+                        : null);
+                    if (explorer) {
+                      window.open(explorer, "_blank");
+                      return;
+                    }
+                  }
+
+                  toast({
+                    title: "Claim pending",
+                    description: "Circle will prompt you to claim once ready.",
+                  });
+                }}
+              >
+                {onDestinationChain
+                  ? `Claim ${amount} USDC`
+                  : `Switch chain to ${displayTo.label}`}
+              </Button>
+            </div>
           )}
+
+          <div className="text-sm text-slate-200 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Type</span>
+              <span>{infoTypeLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Sent at</span>
+              <span>{sentAtLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">
+                {bridgeResult?.state === "success" ? "Completed at" : "Estimated time"}
+              </span>
+              <span>{bridgeResult?.state === "success" ? completedLabel || "—" : etaLabel}</span>
+            </div>
+          </div>
 
           <div className="text-center text-xs text-slate-500">
             {bridgeResult.state === "success"
-              ? "Bridge Kit completed burn and mint."
-              : "Bridge Kit is processing your transfer. Keep this window open."}
+              ? "Your burn & mint has been completed."
+              : "Circle is processing your transfer. It’s safe to close the window."}
           </div>
-
-          {(confirmations?.standard || confirmations?.fast || finalityEstimate) && (
-            <div className="text-xs text-slate-400 space-y-1">
-              {confirmations?.standard ? (
-                <div>Source confirmations (standard): {confirmations.standard} blocks</div>
-              ) : null}
-              {confirmations?.fast ? (
-                <div>Source confirmations (fast): {confirmations.fast} blocks</div>
-              ) : null}
-              {finalityEstimate ? <div>Typical attestation time: {finalityEstimate}</div> : null}
-            </div>
-          )}
         </CardContent>
       </Card>
     );
@@ -194,7 +359,7 @@ export function BridgingState({
     <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
       <CardContent className="p-6 space-y-8">
         <div className="flex items-center justify-between">
-          <h2 className="text-xl font-semibold">Bridging in Progress</h2>
+          <h2 className="text-xl font-semibold">{pendingTitle}</h2>
           <Button
             variant="ghost"
             size="icon"
@@ -210,13 +375,13 @@ export function BridgingState({
             <div className="text-center">
               <div className="flex items-center justify-center mb-2">
                 <Image
-                  src={`/${fromChain.value}.svg`}
+                  src={`/${displayFrom.value}.svg`}
                   width={24}
                   height={24}
                   className="w-6 h-6 mr-2"
-                  alt={fromChain.label}
+                  alt={displayFrom.label}
                 />
-                <div className="font-medium">{fromChain.label}</div>
+                <div className="font-medium">{displayFrom.label}</div>
               </div>
 
               <div className="text-sm text-slate-400">{amount} USDC</div>
@@ -225,84 +390,87 @@ export function BridgingState({
 
           <ArrowRight className="text-slate-500" />
 
+          <div className="flex flex-col items-end">
+            <div className="flex items-center justify-center mb-2">
+              <Image
+                src={`/${displayTo.value}.svg`}
+                width={24}
+                height={24}
+                className="w-6 h-6 mr-2"
+                alt={displayTo.label}
+              />
+              <div className="font-medium">{displayTo.label}</div>
+            </div>
+            <div className="text-sm text-slate-400">{recipientLabel}</div>
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="text-sm text-slate-200 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Type</span>
+              <span>{infoTypeLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Sent at</span>
+              <span>{sentAtLabel}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-slate-400">Estimated time</span>
+              <span>{etaLabel}</span>
+            </div>
+          </div>
+
           <div className="flex flex-col items-center">
-            <div className="text-center">
-              <div className="flex items-center justify-center mb-2">
-                <Image
-                  src={`/${toChain.value}.svg`}
-                  width={24}
-                  height={24}
-                  className="w-6 h-6 mr-2"
-                  alt={toChain.label}
-                />
-                <div className="font-medium">{toChain.label}</div>
+            <div className="relative w-20 h-20 mb-4">
+              <div className="absolute inset-0 rounded-full border-4 border-slate-700"></div>
+              <div
+                className="absolute inset-0 rounded-full border-4 border-blue-500 transition-all duration-1000"
+                style={{
+                  clipPath: `polygon(50% 50%, 50% 0%, ${
+                    progress > 75 ? "100% 0%" : "50% 0%"
+                  }, ${
+                    progress > 50
+                      ? "100% 100%"
+                      : progress > 25
+                      ? "100% 50%"
+                      : "50% 0%"
+                  }, ${progress > 25 ? "0% 100%" : "50% 50%"}, ${
+                    progress > 0 ? "0% 0%" : "50% 0%"
+                  }, 50% 0%)`,
+                  transform: "rotate(90deg)",
+                }}
+              ></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
               </div>
-              <div className="text-sm text-slate-400">{recipientLabel}</div>
             </div>
+
+            {estimatedTime ? (
+              <div className="text-center mb-4">
+                <div className="text-2xl font-bold mb-1">
+                  {timeLeft === 0 ? "Still waiting..." : formatTime(timeLeft)}
+                </div>
+                <div className="text-sm text-slate-400">
+                  {timeLeft === 0
+                    ? "Waiting for confirmation"
+                    : "Estimated time remaining"}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center mb-4">
+                <div className="text-2xl font-bold mb-1">Bridge in progress</div>
+                <div className="text-sm text-slate-400">
+                  Circle will update steps automatically.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="text-center text-xs text-slate-500">
+            Circle is processing your transfer. It’s safe to close the window.
           </div>
         </div>
-
-        <div className="flex flex-col items-center">
-          <div className="relative w-20 h-20 mb-4">
-            <div className="absolute inset-0 rounded-full border-4 border-slate-700"></div>
-            <div
-              className="absolute inset-0 rounded-full border-4 border-blue-500 transition-all duration-1000"
-              style={{
-                clipPath: `polygon(50% 50%, 50% 0%, ${
-                  progress > 75 ? "100% 0%" : "50% 0%"
-                }, ${
-                  progress > 50
-                    ? "100% 100%"
-                    : progress > 25
-                    ? "100% 50%"
-                    : "50% 0%"
-                }, ${progress > 25 ? "0% 100%" : "50% 50%"}, ${
-                  progress > 0 ? "0% 0%" : "50% 0%"
-                }, 50% 0%)`,
-              }}
-            ></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Loader2 className="h-10 w-10 animate-spin text-blue-500" />
-            </div>
-          </div>
-
-          {estimatedTime ? (
-            <div className="text-center mb-8">
-              <div className="text-2xl font-bold mb-1">
-                {timeLeft === 0 ? "Still waiting..." : formatTime(timeLeft)}
-              </div>
-              <div className="text-sm text-slate-400">
-                {timeLeft === 0
-                  ? "Waiting for confirmation"
-                  : "Estimated time remaining"}
-              </div>
-            </div>
-          ) : (
-            <div className="text-center mb-8">
-              <div className="text-2xl font-bold mb-1">Bridge in progress</div>
-              <div className="text-sm text-slate-400">
-                Bridge Kit will update steps automatically.
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="text-center text-xs text-slate-500">
-          <p>Your transaction is being processed via Bridge Kit.</p>
-          <p>Steps will update automatically once confirmed.</p>
-        </div>
-
-        {(confirmations?.standard || confirmations?.fast || finalityEstimate) && (
-          <div className="text-xs text-slate-400 space-y-1 text-center">
-            {confirmations?.standard ? (
-              <div>Source confirmations (standard): {confirmations.standard} blocks</div>
-            ) : null}
-            {confirmations?.fast ? (
-              <div>Source confirmations (fast): {confirmations.fast} blocks</div>
-            ) : null}
-            {finalityEstimate ? <div>Typical attestation time: {finalityEstimate}</div> : null}
-          </div>
-        )}
       </CardContent>
     </Card>
   );
