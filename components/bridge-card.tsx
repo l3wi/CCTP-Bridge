@@ -40,11 +40,11 @@ import ConnectGuard from "@/components/guards/ConnectGuard";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { TransferSpeed } from "@circle-fin/bridge-kit";
 import {
-  createViemAdapter,
+  createReadonlyAdapter,
   getBridgeChainById,
   getCctpConfirmations,
   getBridgeKit,
-  getChainIdentifier,
+  resolveBridgeChain,
   getSupportedEvmChains,
   getProviderFromWalletClient,
 } from "@/lib/bridgeKit";
@@ -77,7 +77,10 @@ export function BridgeCard({
   const provider = getProviderFromWalletClient(walletClient);
 
   // State
-  const [targetChain, setTargetChain] = useState<Chain | null>(null);
+  const [sourceChainId, setSourceChainId] = useState<number | null>(
+    () => chain?.id ?? null
+  );
+  const [targetChainId, setTargetChainId] = useState<number | null>(null);
   const [amount, setAmount] = useState<AmountState | null>(null);
   const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeed>(
     TransferSpeed.FAST
@@ -99,6 +102,13 @@ export function BridgeCard({
   >(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
 
+  type ChainOption = {
+    value: string;
+    label: string;
+    id: number;
+    chain: Chain;
+  };
+
   // Memoized values
   const bridgeKitChains = useMemo(() => getSupportedEvmChains(), []);
   const supportedChainIds = useMemo(
@@ -106,51 +116,134 @@ export function BridgeCard({
     [bridgeKitChains]
   );
 
-  // All supported chains for selectors (only those exposed by Bridge Kit)
-  const supportedChains = useMemo(
-    () => chains.filter((c) => supportedChainIds.has(c.id)),
-    [chains, supportedChainIds]
-  );
+  const [supportedChains, setSupportedChains] = useState<Chain[]>([]);
 
-  const availableChains = useMemo(
-    () => supportedChains.filter((c) => c && c.id !== chain?.id),
-    [supportedChains, chain?.id]
-  );
+  // Stabilize supported chains to avoid re-computation on every render
+  useEffect(() => {
+    const filtered = chains
+      .filter((c) => supportedChainIds.has(c.id))
+      .sort((a, b) => a.id - b.id);
 
-  const chainOptions = useMemo(() => {
-    return availableChains
-      .filter((c): c is Chain => c != null)
-      .map((c) => ({
+    setSupportedChains((prev) => {
+      const prevKey = prev.map((c) => c.id).join(",");
+      const nextKey = filtered.map((c) => c.id).join(",");
+      if (prevKey === nextKey) return prev;
+      return filtered;
+    });
+  }, [chains, supportedChainIds]);
+
+  const chainOptions = useMemo<ChainOption[]>(
+    () =>
+      supportedChains.map((c) => ({
         value: c.id.toString(),
         label: c.name,
         id: c.id,
         chain: c,
-      }));
-  }, [availableChains]);
+      })),
+    [supportedChains]
+  );
 
-  const sourceChainOptions = useMemo(() => {
-    return supportedChains.map((c) => ({
-      value: c.id.toString(),
-      label: c.name,
-      id: c.id,
-      chain: c,
-    }));
-  }, [supportedChains]);
+  const chainOptionById = useMemo(() => {
+    const map = new Map<number, ChainOption>();
+    chainOptions.forEach((option) => map.set(option.id, option));
+    return map;
+  }, [chainOptions]);
+
+  const destinationOptionsBySource = useMemo(() => {
+    const map = new Map<number, ChainOption[]>();
+    chainOptions.forEach((source) => {
+      map.set(
+        source.id,
+        chainOptions.filter((option) => option.id !== source.id)
+      );
+    });
+    return map;
+  }, [chainOptions]);
+
+  const destinationOptions = useMemo(() => {
+    if (sourceChainId != null) {
+      return destinationOptionsBySource.get(sourceChainId) ?? [];
+    }
+    return chainOptions;
+  }, [chainOptions, destinationOptionsBySource, sourceChainId]);
+
+  const destinationOptionsKey = useMemo(
+    () => destinationOptions.map((o) => o.id).join(","),
+    [destinationOptions]
+  );
+
+  const targetChain = useMemo(
+    () =>
+      targetChainId != null
+        ? chainOptionById.get(targetChainId)?.chain ?? null
+        : null,
+    [chainOptionById, targetChainId]
+  );
+
+  const selectedSourceChain = useMemo(
+    () =>
+      sourceChainId != null
+        ? chainOptionById.get(sourceChainId)?.chain ?? null
+        : null,
+    [chainOptionById, sourceChainId]
+  );
+
+  const activeSourceChainId = useMemo(
+    () => sourceChainId ?? chain?.id ?? null,
+    [chain?.id, sourceChainId]
+  );
+
+  const isSourceChainSynced =
+    sourceChainId == null ? !!chain : !!chain && chain.id === sourceChainId;
 
   const fastTransferSupported = useMemo(() => {
-    if (!chain) return false;
-    return Boolean(getCctpConfirmations(chain.id)?.fast);
-  }, [chain]);
+    if (!activeSourceChainId) return false;
+    return Boolean(getCctpConfirmations(activeSourceChainId)?.fast);
+  }, [activeSourceChainId]);
+
+  const walletChainId = chain?.id;
+
+  // Initialize source chain once based on wallet or first supported chain
+  useEffect(() => {
+    if (sourceChainId != null) return;
+
+    if (walletChainId && supportedChainIds.has(walletChainId)) {
+      setSourceChainId(walletChainId);
+      return;
+    }
+
+    if (supportedChains.length > 0) {
+      setSourceChainId(supportedChains[0].id);
+    }
+  }, [sourceChainId, walletChainId, supportedChainIds, supportedChains]);
+
+  // Keep the destination list consistent with the selected source chain without stomping user choice
+  useEffect(() => {
+    if (!destinationOptions.length) {
+      setTargetChainId(null);
+      return;
+    }
+
+    setTargetChainId((current) => {
+      // Preserve current choice if still valid for this source
+      if (current && destinationOptions.some((option) => option.id === current)) {
+        return current;
+      }
+
+      // Otherwise pick the first available
+      return destinationOptions[0]?.id ?? null;
+    });
+  }, [destinationOptionsKey, destinationOptions, sourceChainId]);
 
   useEffect(() => {
     if (
-      chain &&
+      activeSourceChainId &&
       !fastTransferSupported &&
       activeTransferSpeed === TransferSpeed.FAST
     ) {
       setActiveTransferSpeed(TransferSpeed.SLOW);
     }
-  }, [chain, fastTransferSupported, activeTransferSpeed]);
+  }, [activeSourceChainId, fastTransferSupported, activeTransferSpeed]);
 
   // Handle amount change with validation
   const handleAmountChange = useCallback(
@@ -227,15 +320,16 @@ export function BridgeCard({
     () =>
       validateBridgeParams({
         amount,
-        targetChain: targetChain?.id || null,
-        sourceChain: chain?.id,
+        targetChain: targetChain?.id || targetChainId || null,
+        sourceChain: activeSourceChainId ?? undefined,
         balance: usdcBalance,
         userAddress: address,
       }),
     [
       amount,
       targetChain?.id,
-      chain?.id,
+      targetChainId,
+      activeSourceChainId,
       usdcBalance,
       address,
     ]
@@ -248,8 +342,11 @@ export function BridgeCard({
 
   const chainSelectionValid = useMemo(
     () =>
-      validateChainSelection(chain?.id, targetChain?.id || undefined).isValid,
-    [chain?.id, targetChain?.id]
+      validateChainSelection(
+        activeSourceChainId ?? undefined,
+        targetChain?.id || targetChainId || undefined
+      ).isValid,
+    [activeSourceChainId, targetChain?.id, targetChainId]
   );
 
   const handleMaxAmount = () => {
@@ -258,43 +355,41 @@ export function BridgeCard({
     }
   };
 
-  const hasCompleteForm = !!chain && !!targetChain && !!amount;
+  const hasCompleteForm = !!chain && isSourceChainSynced && !!targetChain && !!amount;
   const canEstimate =
-    !!provider &&
-    !!walletClient &&
     amountForEstimate.isValid &&
-    chainSelectionValid;
+    chainSelectionValid &&
+    activeSourceChainId != null &&
+    !!targetChain;
 
   const estimateBridge = useCallback(
     async (transferSpeed: TransferSpeed): Promise<BridgeEstimateResult> => {
-      if (!provider || !walletClient || !chain || !targetChain || !amount) {
+      const sourceId = sourceChainId ?? chain?.id;
+
+      if (!sourceId || !targetChain || !amount) {
         throw new Error("Bridge parameters incomplete");
       }
 
-      const sourceIdentifier = getChainIdentifier(chain.id);
-      const destinationIdentifier = getChainIdentifier(targetChain.id);
+      const sourceChainDef = resolveBridgeChain(sourceId);
+      const destinationChainDef = resolveBridgeChain(targetChain.id);
 
-      if (!sourceIdentifier || !destinationIdentifier) {
-        throw new Error("Unsupported chain selection for Bridge Kit");
-      }
-
-      const adapter = await createViemAdapter(provider);
+      const adapter = await createReadonlyAdapter(sourceId);
 
       return getBridgeKit().estimate({
         from: {
           adapter,
-          chain: sourceIdentifier,
+          chain: sourceChainDef,
         },
         to: {
           adapter,
-          chain: destinationIdentifier,
+          chain: destinationChainDef,
         },
         amount: formatUnits(amount.bigInt, 6),
         token: "USDC",
         config: { transferSpeed },
       });
     },
-    [provider, walletClient, chain, targetChain, amount]
+    [sourceChainId, targetChain, amount, chain?.id]
   );
 
   const {
@@ -305,7 +400,7 @@ export function BridgeCard({
   } = useQuery<BridgeEstimateResult>({
     queryKey: [
       "bridge-estimate",
-      chain?.id,
+      sourceChainId,
       targetChain?.id,
       amount?.str,
       "standard",
@@ -322,7 +417,13 @@ export function BridgeCard({
     error: fastEstimateError,
     isError: isFastEstimateError,
   } = useQuery<BridgeEstimateResult>({
-    queryKey: ["bridge-estimate", chain?.id, targetChain?.id, amount?.str, "fast"],
+    queryKey: [
+      "bridge-estimate",
+      sourceChainId,
+      targetChain?.id,
+      amount?.str,
+      "fast",
+    ],
     queryFn: () => estimateBridge(TransferSpeed.FAST),
     enabled: canEstimate && fastTransferSupported,
     staleTime: 300_000,
@@ -360,24 +461,14 @@ export function BridgeCard({
     []
   );
 
-  const getGasEstimateLabel = useCallback(
-    (estimate?: BridgeEstimateResult | null) => {
-      if (!estimate?.gasFees) return null;
-
-      const parts = estimate.gasFees
-        .filter((fee) => fee.fees?.fee)
-        .map((fee) => `${fee.fees?.fee} ${fee.token}`);
-
-      if (!parts.length) return null;
-      return parts.join(" + ");
-    },
-    []
-  );
-
   const getTransferSpeedLabel = useCallback(
     (speed: TransferSpeed) => {
-      const sourceChain = chain ? getBridgeChainById(chain.id) : undefined;
-      const confirmations = chain ? getCctpConfirmations(chain.id) : null;
+      const sourceChain =
+        activeSourceChainId != null
+          ? getBridgeChainById(activeSourceChainId)
+          : undefined;
+      const confirmations =
+        activeSourceChainId != null ? getCctpConfirmations(activeSourceChainId) : null;
       const blocks =
         speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
       const finality = sourceChain
@@ -390,7 +481,7 @@ export function BridgeCard({
       const detail = finality ?? (blocks ? `${blocks} blocks` : null);
       return detail ?? "Estimate unavailable";
     },
-    [chain]
+    [activeSourceChainId]
   );
 
   const getYouWillReceive = useCallback(
@@ -411,10 +502,13 @@ export function BridgeCard({
   );
 
   const handleSwitchChain = async (chainId: string) => {
+    const parsedChainId = parseInt(chainId, 10);
+    if (Number.isNaN(parsedChainId)) return;
+
     try {
       setIsSwitchingChain(true);
-      const targetChainId = parseInt(chainId);
-      await switchChain({ chainId: targetChainId });
+      setSourceChainId(parsedChainId);
+      await switchChain({ chainId: parsedChainId });
     } catch (error) {
       console.error("Failed to switch chain:", error);
       toast({
@@ -427,42 +521,43 @@ export function BridgeCard({
     }
   };
 
-  // Set default chains when chains are available
-  useEffect(() => {
-    if (chains.length > 0 && !targetChain) {
-      // Default to Arbitrum (chainId 42161)
-      const defaultTarget = chains.find((c) => c.id === 42161);
-      if (defaultTarget) {
-        setTargetChain(defaultTarget);
-      }
-    }
-  }, [chains, targetChain]);
-
-  // Handle wallet connection - use connected chain as source and clear destination
-  useEffect(() => {
-    if (chain && chains.length > 0) {
-      // When connected, find first different chain for destination
-      const firstDifferentChain = availableChains.find(
-        (c) => c && c.id !== chain.id
-      );
-      if (
-        firstDifferentChain &&
-        (!targetChain || targetChain.id === chain.id)
-      ) {
-        setTargetChain(firstDifferentChain);
-      }
-    }
-  }, [chain?.id, chains.length, availableChains, targetChain, chain]);
-
   const handleSend = useCallback(
     async (transferSpeed: TransferSpeed) => {
+      const selectedSourceId = sourceChainId ?? chain?.id ?? null;
+
+      if (
+        !selectedSourceId ||
+        !chain ||
+        !isSourceChainSynced
+      ) {
+        toast({
+          title: "Switch network",
+          description: `Please switch your wallet to ${
+            selectedSourceChain?.name ?? "the selected chain"
+          } to bridge.`,
+          variant: "destructive",
+        });
+        return;
+      }
+
       if (
         !validation.isValid ||
         !validation.data ||
-        !chain ||
         !targetChain ||
         !amount
       ) {
+        return;
+      }
+
+      try {
+        resolveBridgeChain(selectedSourceId);
+        resolveBridgeChain(targetChain.id);
+      } catch (error) {
+        toast({
+          title: "Unsupported chain",
+          description: getErrorMessage(error),
+          variant: "destructive",
+        });
         return;
       }
 
@@ -470,7 +565,9 @@ export function BridgeCard({
       setActiveTransferSpeed(transferSpeed);
       setBridgeResult(null);
       setBridgeStartedAt(new Date());
-      setBridgeSourceChain(chain);
+      const resolvedSourceChain =
+        chainOptionById.get(selectedSourceId)?.chain || chain || null;
+      setBridgeSourceChain(resolvedSourceChain);
       setBridgeTargetChain(targetChain);
 
       let pendingHash: `0x${string}` | null = null;
@@ -480,8 +577,8 @@ export function BridgeCard({
         const result = await bridge(
           {
             amount: validation.data.amount,
-            sourceChainId: chain.id,
-            targetChainId: validation.data.targetChain,
+            sourceChainId: selectedSourceId,
+            targetChainId: targetChain.id,
             transferType,
           },
           {
@@ -499,10 +596,10 @@ export function BridgeCard({
           (primaryHash as `0x${string}` | undefined) || pendingHash
         );
 
-      setBridgeResult(result);
+        setBridgeResult(result);
 
-      setIsLoading(false);
-      setIsBridging(true);
+        setIsLoading(false);
+        setIsBridging(true);
 
         if (onBurn) {
           onBurn(true);
@@ -519,7 +616,19 @@ export function BridgeCard({
         });
       }
     },
-    [validation, chain, targetChain, amount, bridge, onBurn, toast]
+    [
+      validation,
+      chain,
+      targetChain,
+      amount,
+      bridge,
+      onBurn,
+      toast,
+      isSourceChainSynced,
+      selectedSourceChain,
+      chainOptionById,
+      sourceChainId,
+    ]
   );
 
   const handleBackToNew = () => {
@@ -540,10 +649,10 @@ export function BridgeCard({
   // Effect to handle loaded transaction from history
   useEffect(() => {
     if (loadedTransaction) {
-      const originChain = chains.find(
+      const originChain = supportedChains.find(
         (c) => c.id === loadedTransaction.originChain
       );
-      const targetChainData = chains.find(
+      const targetChainData = supportedChains.find(
         (c) => c.id === loadedTransaction.targetChain
       );
 
@@ -578,10 +687,10 @@ export function BridgeCard({
         setIsBridging(true);
       }
     }
-  }, [loadedTransaction, chains]);
+  }, [loadedTransaction, supportedChains]);
 
   // Loading states
-  const showChainLoader = !chains.length; // Only show loader when chains haven't loaded
+  const showChainLoader = !supportedChains.length; // Only show loader when chains haven't loaded
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
   const hasAmountInput = !!amount?.str;
 
@@ -593,6 +702,8 @@ export function BridgeCard({
     const feeTotal = getTotalProtocolFee(estimate);
     const blockedEstimateLabel = !amountForEstimate.isValid
       ? "Complete the form to estimate"
+      : !isSourceChainSynced
+      ? "Switch wallet to selected chain"
       : !chainSelectionValid
       ? "Select different chains"
       : !canEstimate
@@ -608,14 +719,6 @@ export function BridgeCard({
       : estimate
       ? `${feeTotal.toFixed(6)} USDC`
       : "Awaiting estimate";
-
-    const gasLabel = !hasAmountInput
-      ? "Enter amount to calculate gas"
-      : blockedEstimateLabel
-      ? blockedEstimateLabel
-      : isEstimating
-      ? "Fetching..."
-      : getGasEstimateLabel(estimate) || "Awaiting estimate";
 
     const receiveLabel =
       hasAmountInput && estimate && !blockedEstimateLabel
@@ -660,10 +763,6 @@ export function BridgeCard({
             <span className="text-slate-100 text-right">{feeLabel}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-400">Estimated gas</span>
-            <span className="text-slate-100 text-right">{gasLabel}</span>
-          </div>
-          <div className="flex justify-between font-medium">
             <span className="text-slate-200">You will receive</span>
             <span className="text-white">{receiveLabel}</span>
           </div>
@@ -678,7 +777,12 @@ export function BridgeCard({
             }
             onClick={() => handleSend(speed)}
             isLoading={isSpeedSubmitting}
-            disabled={!validation.isValid || isLoading || isBridgeLoading}
+            disabled={
+              !validation.isValid ||
+              isLoading ||
+              isBridgeLoading ||
+              isSwitchingChain
+            }
           >
             {validationMessage ||
               (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard")}
@@ -766,7 +870,7 @@ export function BridgeCard({
         bridgeSourceChain?.id || chain?.id || fromChain.value
           ? Number(fromChain.value)
           : undefined;
-      const targetChainId =
+      const targetChainIdForResult =
         bridgeTargetChain?.id || targetChain?.id || toChain.value
           ? Number(toChain.value)
           : undefined;
@@ -800,8 +904,8 @@ export function BridgeCard({
           estimatedTimeLabel={getEtaLabel(activeTransferSpeed, finalityEstimate)}
           bridgeResult={(() => {
             if (bridgeResult) return bridgeResult;
-            const destChain = targetChainId
-              ? getBridgeChainById(targetChainId)
+            const destChain = targetChainIdForResult
+              ? getBridgeChainById(targetChainIdForResult)
               : null;
             if (sourceChainDef && destChain && bridgeTransactionHash) {
               return {
@@ -833,7 +937,7 @@ export function BridgeCard({
                 <ChainSelectorSkeleton />
               ) : (
                 <Select
-                  value={chain?.id.toString() || "1"}
+                  value={sourceChainId != null ? sourceChainId.toString() : ""}
                   onValueChange={handleSwitchChain}
                   disabled={isLoading || isSwitchingChain || !address}
                 >
@@ -841,7 +945,9 @@ export function BridgeCard({
                     <SelectValue placeholder="Select Chain...">
                       {(() => {
                         const displayChain =
-                          chain || chains.find((c) => c.id === 1);
+                          selectedSourceChain ||
+                          chain ||
+                          chainOptions[0]?.chain;
                         return displayChain ? (
                           <div className="flex items-center gap-2">
                             {isSwitchingChain ? (
@@ -867,7 +973,7 @@ export function BridgeCard({
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    {sourceChainOptions.map((chainOption) => (
+                    {chainOptions.map((chainOption) => (
                       <SelectItem
                         key={chainOption.value}
                         value={chainOption.value}
@@ -911,20 +1017,23 @@ export function BridgeCard({
                 <ChainSelectorSkeleton />
               ) : (
                 <Select
-                  value={targetChain?.id.toString() || "42161"}
+                  value={targetChainId != null ? targetChainId.toString() : ""}
                   onValueChange={(value) => {
-                    const selectedChain = supportedChains.find(
-                      (c) => c?.id.toString() === value
-                    );
-                    setTargetChain(selectedChain || null);
+                    const selectedChain = chainOptionById.get(Number(value));
+                    if (selectedChain) {
+                      setTargetChainId(selectedChain.id);
+                    }
                   }}
-                  disabled={isLoading}
+                  disabled={isLoading || !destinationOptions.length}
                 >
                   <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                     <SelectValue placeholder="Select Chain...">
                       {(() => {
                         const displayChain =
-                          targetChain || chains.find((c) => c.id === 42161);
+                          targetChain ||
+                          (targetChainId != null
+                            ? chainOptionById.get(targetChainId)?.chain
+                            : undefined);
                         return displayChain ? (
                           <div className="flex items-center gap-2">
                             <Image
@@ -943,32 +1052,24 @@ export function BridgeCard({
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    {supportedChains
-                      .filter((c) => c.id !== (chain?.id || 1)) // Exclude current chain or default (Ethereum)
-                      .map((c) => ({
-                        value: c.id.toString(),
-                        label: c.name,
-                        id: c.id,
-                        chain: c,
-                      }))
-                      .map((chainOption) => (
-                        <SelectItem
-                          key={chainOption.value}
-                          value={chainOption.value}
-                          className="text-white hover:bg-slate-700"
-                        >
-                          <div className="flex items-center gap-2">
-                            <Image
-                              src={`/${chainOption.id}.svg`}
-                              width={16}
-                              height={16}
-                              className="w-4 h-4"
-                              alt={chainOption.label}
-                            />
-                            <span>{chainOption.label}</span>
-                          </div>
-                        </SelectItem>
-                      ))}
+                    {destinationOptions.map((chainOption) => (
+                      <SelectItem
+                        key={chainOption.value}
+                        value={chainOption.value}
+                        className="text-white hover:bg-slate-700"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Image
+                            src={`/${chainOption.id}.svg`}
+                            width={16}
+                            height={16}
+                            className="w-4 h-4"
+                            alt={chainOption.label}
+                          />
+                          <span>{chainOption.label}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               )}
@@ -1027,12 +1128,17 @@ export function BridgeCard({
             </div>
           ) : (
             <ConnectGuard>
-              <LoadingButton
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                onClick={() => handleSend(TransferSpeed.FAST)}
-                isLoading={isLoading || isBridgeLoading}
-                disabled={!validation.isValid || isLoading || isBridgeLoading}
-              >
+            <LoadingButton
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
+              onClick={() => handleSend(TransferSpeed.FAST)}
+              isLoading={isLoading || isBridgeLoading}
+              disabled={
+                !validation.isValid ||
+                isLoading ||
+                isBridgeLoading ||
+                isSwitchingChain
+              }
+            >
                 {validation.isValid
                   ? "Bridge USDC"
                   : validation.errors[0] || "Enter an amount to bridge"}

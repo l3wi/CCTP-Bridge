@@ -86,6 +86,17 @@ export const getChainIdentifier = (
   env: BridgeEnvironment = DEFAULT_ENV
 ) => getBridgeChainById(chainId, env)?.chain;
 
+export const resolveBridgeChain = (
+  chainId: number,
+  env: BridgeEnvironment = DEFAULT_ENV
+): ChainDefinition => {
+  const chain = getBridgeChainById(chainId, env);
+  if (!chain) {
+    throw new Error(`Unsupported chain ${chainId} for Bridge Kit`);
+  }
+  return chain;
+};
+
 export const getCctpConfirmations = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
@@ -191,6 +202,57 @@ export const createViemAdapter = async (
   env: BridgeEnvironment = DEFAULT_ENV
 ): Promise<BridgeKitAdapter> => {
   const supportedChains = getSupportedEvmChains(env);
+
+  const adapter = await createAdapterFromProvider({
+    provider,
+    capabilities: { supportedChains },
+    getPublicClient: ({ chain }) => createRpcClient(chain),
+  });
+
+  return adapter as BridgeKitAdapter;
+};
+
+const createReadonlyProvider = (chain: Chain | EvmChainDefinition) => {
+  const rpcUrl = resolveRpcUrl(chain);
+  const viemChain =
+    "id" in chain
+      ? (chain as Chain)
+      : {
+          id: chain.chainId,
+          name: chain.name,
+          nativeCurrency: chain.nativeCurrency,
+          rpcUrls: {
+            default: { http: rpcUrl ? [rpcUrl] : [] },
+            public: { http: rpcUrl ? [rpcUrl] : [] },
+          },
+          blockExplorers: undefined,
+          testnet: chain.isTestnet,
+        };
+
+  const client = createPublicClient({
+    chain: viemChain,
+    transport: rpcUrl ? http(rpcUrl) : http(),
+  });
+
+  const placeholderAccount = "0x0000000000000000000000000000000000000000";
+
+  return {
+    request: async ({ method, params }: { method: string; params?: any[] }) => {
+      if (method === "eth_requestAccounts" || method === "eth_accounts") {
+        return [placeholderAccount];
+      }
+      return client.request({ method, params } as any);
+    },
+  } as EIP1193Provider;
+};
+
+export const createReadonlyAdapter = async (
+  chainId: number,
+  env: BridgeEnvironment = DEFAULT_ENV
+): Promise<BridgeKitAdapter> => {
+  const preferredChain = resolveBridgeChain(chainId, env);
+  const supportedChains = getSupportedEvmChains(env);
+  const provider = createReadonlyProvider(preferredChain);
 
   const adapter = await createAdapterFromProvider({
     provider,

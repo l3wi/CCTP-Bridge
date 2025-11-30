@@ -7,7 +7,7 @@ import { useToast } from "@/components/ui/use-toast";
 import {
   getBridgeKit,
   createViemAdapter,
-  getChainIdentifier,
+  resolveBridgeChain,
   getProviderFromWalletClient,
 } from "@/lib/bridgeKit";
 import { BridgeParams, LocalTransaction } from "@/lib/types";
@@ -55,12 +55,8 @@ export const useBridge = () => {
         throw new Error("Wallet provider not found");
       }
 
-      const sourceIdentifier = getChainIdentifier(params.sourceChainId);
-      const destinationIdentifier = getChainIdentifier(params.targetChainId);
-
-      if (!sourceIdentifier || !destinationIdentifier) {
-        throw new Error("Unsupported chain selection for Bridge Kit");
-      }
+      const sourceChainDef = resolveBridgeChain(params.sourceChainId);
+      const destinationChainDef = resolveBridgeChain(params.targetChainId);
 
       setIsLoading(true);
       setError(null);
@@ -78,11 +74,11 @@ export const useBridge = () => {
         const result = await kit.bridge({
           from: {
             adapter,
-            chain: sourceIdentifier,
+            chain: sourceChainDef,
           },
           to: {
             adapter,
-            chain: destinationIdentifier,
+            chain: destinationChainDef,
           },
           amount: formattedAmount,
           token: "USDC",
@@ -154,7 +150,7 @@ export const useBridge = () => {
         setIsLoading(false);
       }
     },
-    [provider, walletClient, addTransaction, toast]
+    [provider, walletClient, addTransaction, toast, address]
   );
 
   return {
