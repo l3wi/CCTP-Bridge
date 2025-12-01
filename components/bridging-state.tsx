@@ -13,6 +13,24 @@ import { getExplorerTxUrl } from "@/lib/bridgeKit";
 import { useClaim } from "@/lib/hooks/useClaim";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 
+const STEP_ORDER = [
+  { id: "approve" as const, label: "Approve" },
+  { id: "burn" as const, label: "Burn" },
+  { id: "fetchAttestation" as const, label: "Fetch Attestation" },
+  { id: "mint" as const, label: "Mint" },
+];
+
+const getStepId = (name: string) => {
+  const lower = name.toLowerCase();
+  if (lower.includes("approve")) return "approve" as const;
+  if (lower.includes("burn")) return "burn" as const;
+  if (lower.includes("attestation") || lower.includes("attest"))
+    return "fetchAttestation" as const;
+  if (lower.includes("mint") || lower.includes("claim") || lower.includes("receive"))
+    return "mint" as const;
+  return null;
+};
+
 type BridgeResultWithMeta = BridgeResult & { completedAt?: Date };
 
 interface ChainInfo {
@@ -70,24 +88,6 @@ export function BridgingState({
   const baseResult = localBridgeResult ?? bridgeResult;
 
   const CLAIMED_MESSAGE = "USDC claimed. Check your wallet for the USDC";
-
-  const stepOrder = [
-    { id: "approve" as const, label: "Approve" },
-    { id: "burn" as const, label: "Burn" },
-    { id: "fetchAttestation" as const, label: "Fetch Attestation" },
-    { id: "mint" as const, label: "Mint" },
-  ];
-
-  const getStepId = (name: string) => {
-    const lower = name.toLowerCase();
-    if (lower.includes("approve")) return "approve" as const;
-    if (lower.includes("burn")) return "burn" as const;
-    if (lower.includes("attestation") || lower.includes("attest"))
-      return "fetchAttestation" as const;
-    if (lower.includes("mint") || lower.includes("claim") || lower.includes("receive"))
-      return "mint" as const;
-    return null;
-  };
 
   const extractHashes = (res: BridgeResultWithMeta) => {
     let burnHash: `0x${string}` | undefined;
@@ -148,17 +148,17 @@ export function BridgingState({
         {
           ...step,
           id,
-          label: stepOrder.find((entry) => entry.id === id)?.label || step.name,
+          label: STEP_ORDER.find((entry) => entry.id === id)?.label || step.name,
         },
       ];
     });
 
     let previousCompleted = true;
     const filled: Array<
-      (typeof existingSteps)[number] & { id: typeof stepOrder[number]["id"]; label: string }
+      (typeof existingSteps)[number] & { id: (typeof STEP_ORDER)[number]["id"]; label: string }
     > = [];
 
-    for (const entry of stepOrder) {
+    for (const entry of STEP_ORDER) {
       const existing = existingSteps.find((s) => s.id === entry.id);
       if (existing) {
         filled.push(existing as any);
@@ -253,7 +253,7 @@ export function BridgingState({
         completedAt: displayResult.completedAt ?? completedAtDate ?? completedAt ?? new Date(),
       });
     }
-  }, [completedAtDate, displayResult, updateTransaction]);
+  }, [burnCompletedAt, completedAtDate, displayResult, mintCompletedAt, updateTransaction]);
 
   // Reset countdown when estimate changes
   useEffect(() => {

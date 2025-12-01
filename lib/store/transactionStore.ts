@@ -24,6 +24,9 @@ interface TransactionState {
 const normalizeTransaction = (
   tx: Partial<LocalTransaction> | Partial<LegacyLocalTransaction>
 ): LocalTransaction => {
+  const txLocal = tx as Partial<LocalTransaction>;
+  const bridgeResult = (tx as Partial<LocalTransaction>).bridgeResult;
+
   const extractChainId = (chain: unknown) => {
     if (chain && typeof chain === "object" && "chainId" in chain) {
       const value = (chain as { chainId?: unknown }).chainId;
@@ -35,26 +38,26 @@ const normalizeTransaction = (
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
     originChain:
-      tx.originChain ?? extractChainId(tx.bridgeResult?.source.chain) ?? 1,
+      tx.originChain ?? extractChainId(bridgeResult?.source.chain) ?? 1,
     hash: tx.hash as `0x${string}`,
     status: tx.status ?? "pending",
-    provider: tx.provider ?? tx.bridgeResult?.provider,
-    bridgeState: tx.bridgeState ?? tx.bridgeResult?.state,
-    steps: tx.steps ?? tx.bridgeResult?.steps,
-    amount: tx.amount ?? tx.bridgeResult?.amount,
-    chain: tx.chain,
+    provider: txLocal.provider ?? bridgeResult?.provider,
+    bridgeState: txLocal.bridgeState ?? bridgeResult?.state,
+    steps: txLocal.steps ?? bridgeResult?.steps,
+    amount: txLocal.amount ?? bridgeResult?.amount,
+    chain: txLocal.chain,
     targetChain:
-      tx.targetChain ?? extractChainId(tx.bridgeResult?.destination.chain),
+      tx.targetChain ?? extractChainId(bridgeResult?.destination.chain),
     targetAddress:
-      tx.targetAddress ??
-      (tx.bridgeResult?.destination.address as `0x${string}` | undefined),
-    claimHash: tx.claimHash,
+      txLocal.targetAddress ??
+      (bridgeResult?.destination.address as `0x${string}` | undefined),
+    claimHash: txLocal.claimHash,
     version: "v2",
-    transferType: tx.transferType ?? "standard",
-    fee: tx.fee,
-    estimatedTime: tx.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
-    bridgeResult: tx.bridgeResult,
-    transferId: tx.transferId,
+    transferType: txLocal.transferType ?? "standard",
+    fee: txLocal.fee,
+    estimatedTime: txLocal.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    bridgeResult,
+    transferId: txLocal.transferId,
   };
 };
 
