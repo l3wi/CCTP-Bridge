@@ -18,6 +18,7 @@
 ## Progress
 - 2025-02-18: Phase 1 complete (Bridge Kit bootstrap, viem pin, README env notes). Phase 2 in-flight: `useBridge` now routes burns through Bridge Kit EVM adapter; bridge UI submits via SDK with fast/standard transfer speed, removes manual fee/allowance fetches, and auto-tracks tx hashes in store. `BridgingState` and history UI render Bridge Kit step statuses; legacy attestation/claim polling removed.
 - 2025-11-30: Removed legacy `constants/*` contract/endpoint paths and unused approval/manual-claim flows. Wagmi/RainbowKit chains now derive directly from Bridge Kit-supported EVM chains per env. Bridge form uses Bridge Kit `estimate` for fee/receive math instead of hardcoded block estimates, and transaction store persists the full `BridgeResult` alongside steps.
+- 2025-12-01: Team decision check: (1) Manual resume via History → BridgingState claim button is acceptable; no background auto-resume required for cutover. (2) Testnet validation already run by user. (3) Solana support deferred; EVM-only scope is fine for launch. (4) Custom fee/RPC wiring remains available in `lib/bridgeKit.ts`, but defaults will be used unless envs are set. Marking EVM cutover as ready for prod swap.
 
 ## Current Repo State (EVM scope)
 - Bridge Kit singleton + helpers live in `lib/bridgeKit.ts` (env toggle, RPC overrides, custom fee policy, `getWagmiChainsForEnv`, `getDefaultTransferSpeed`), shared by Wagmi config in `components/crypto.tsx`.
@@ -27,10 +28,9 @@
 - Defaults: UI fast/standard toggle is hardcoded to fast; `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` isn’t yet plumbed into initial UI state or estimates.
 
 ## Next Actions
-- Add a status refresh/resume path using stored `BridgeResult` + `kit.retry`, and stream in-flight step updates to the store/UI so pending history items hydrate automatically.
-- Validate approval UX against SDK guidance (surface `kit.on('approve' | 'burn' | 'mint')` events with toasts/status chips; ensure rejection/insufficient-allowance errors are user-friendly).
-- Align fast/standard defaults and estimate config with `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED`, and persist user choice per session.
-- Add a small smoke script to bridge on testnets via SDK for regression checks (Phase 8), plus Solana adapter notes once EVM cutover is validated.
+- (Deferred) Auto-resume/polling for pending history items; manual resume via History is acceptable for launch.
+- (Deferred) Persisting user speed preference; default remains Fast, Standard selectable per transfer.
+- (Deferred) Smoke script for CI/regression and Solana adapter notes once EVM cutover is validated.
 
 ## Short-Term Implementation Checklist (EVM)
 - `useBridge` streaming: attach `kit.on('*')` per invocation, map payloads to `{name,state,txHash,explorerUrl}` and persist into `useTransactionStore` (dedupe by `name` + `txHash`). Unregister listeners on settle.
