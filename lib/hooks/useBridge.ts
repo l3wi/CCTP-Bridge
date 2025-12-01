@@ -87,18 +87,28 @@ const normalizeState = (state?: unknown): BridgeResult["state"] | "pending" => {
   return "pending";
 };
 
+const isNonceAlreadyUsed = (step: BridgeResult["steps"][number]) => {
+  const message = `${step.errorMessage ?? ""} ${step.error ?? ""}`.toLowerCase();
+  return message.includes("nonce already used");
+};
+
 const deriveBridgeState = (steps: BridgeResult["steps"], fallback?: BridgeResult["state"]) => {
   if (!steps.length) return fallback ?? "pending";
-  const hasError = steps.some((step) => step.state === "error");
-  if (hasError) return "error";
+
+  const hasNonceClaimed = steps.some(isNonceAlreadyUsed);
   const hasMintSuccess = steps.some(
     (step) =>
-      step.state === "success" &&
-      (/mint|receive|claim/i.test(step.name) || step.name.toLowerCase().includes("mint"))
+      (/mint|receive|claim/i.test(step.name) || step.name.toLowerCase().includes("mint")) &&
+      (step.state === "success" || isNonceAlreadyUsed(step))
   );
-  if (hasMintSuccess || steps.every((step) => step.state === "success")) {
+
+  if (hasMintSuccess || hasNonceClaimed) {
     return "success" as const;
   }
+
+  const hasError = steps.some((step) => step.state === "error");
+  if (hasError) return "error";
+
   return fallback ?? "pending";
 };
 
@@ -224,12 +234,11 @@ export const useBridge = () => {
         opts?.onStateChange?.(nextResult);
 
         if (burnHash) {
-          const status: LocalTransaction["status"] =
-            bridgeState === "success"
-              ? "claimed"
-              : bridgeState === "error"
-              ? "failed"
-              : "pending";
+          const status: LocalTransaction["status"] = bridgeState === "success"
+            ? "claimed"
+            : bridgeState === "error"
+            ? "failed"
+            : "pending";
 
           const completedTime =
             bridgeState === "success" ? completedAt ?? new Date() : undefined;
@@ -315,12 +324,11 @@ export const useBridge = () => {
 
         opts?.onStateChange?.(finalResult);
 
-        const status: LocalTransaction["status"] =
-          finalState === "success"
-            ? "claimed"
-            : finalState === "error"
-            ? "failed"
-            : "pending";
+        const status: LocalTransaction["status"] = finalState === "success"
+          ? "claimed"
+          : finalState === "error"
+          ? "failed"
+          : "pending";
 
         if (burnHash) {
           const completedTime =

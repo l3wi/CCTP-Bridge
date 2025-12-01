@@ -60,6 +60,8 @@ export function BridgingState({
   const [localBridgeResult, setLocalBridgeResult] = useState<
     BridgeResultWithMeta | undefined
   >(bridgeResult);
+  const [burnCompletedAt, setBurnCompletedAt] = useState<Date | null>(null);
+  const [mintCompletedAt, setMintCompletedAt] = useState<Date | null>(null);
 
   useEffect(() => {
     setLocalBridgeResult(bridgeResult);
@@ -68,6 +70,24 @@ export function BridgingState({
   const baseResult = localBridgeResult ?? bridgeResult;
 
   const CLAIMED_MESSAGE = "USDC claimed. Check your wallet for the USDC";
+
+  const stepOrder = [
+    { id: "approve" as const, label: "Approve" },
+    { id: "burn" as const, label: "Burn" },
+    { id: "fetchAttestation" as const, label: "Fetch Attestation" },
+    { id: "mint" as const, label: "Mint" },
+  ];
+
+  const getStepId = (name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.includes("approve")) return "approve" as const;
+    if (lower.includes("burn")) return "burn" as const;
+    if (lower.includes("attestation") || lower.includes("attest"))
+      return "fetchAttestation" as const;
+    if (lower.includes("mint") || lower.includes("claim") || lower.includes("receive"))
+      return "mint" as const;
+    return null;
+  };
 
   const extractHashes = (res: BridgeResultWithMeta) => {
     let burnHash: `0x${string}` | undefined;
@@ -120,14 +140,52 @@ export function BridgingState({
     };
   }, [baseResult]);
 
+  const derivedSteps = useMemo(() => {
+    const existingSteps = (displayResult?.steps || []).flatMap((step) => {
+      const id = getStepId(step.name);
+      if (!id) return [];
+      return [
+        {
+          ...step,
+          id,
+          label: stepOrder.find((entry) => entry.id === id)?.label || step.name,
+        },
+      ];
+    });
+
+    let previousCompleted = true;
+    const filled: Array<
+      (typeof existingSteps)[number] & { id: typeof stepOrder[number]["id"]; label: string }
+    > = [];
+
+    for (const entry of stepOrder) {
+      const existing = existingSteps.find((s) => s.id === entry.id);
+      if (existing) {
+        filled.push(existing as any);
+        previousCompleted = existing.state === "success" || existing.state === "noop";
+      } else if (previousCompleted) {
+        filled.push({
+          id: entry.id,
+          label: entry.label,
+          name: entry.label,
+          state: "pending" as const,
+        } as any);
+        previousCompleted = false;
+      }
+    }
+
+    return filled;
+  }, [displayResult?.steps]);
+
   const completedAtDate = useMemo(() => {
+    if (mintCompletedAt) return mintCompletedAt;
     if (!displayResult) return null;
     if (displayResult.completedAt) return new Date(displayResult.completedAt);
     const hashes = extractHashes(displayResult);
     if (hashes.completedAt) return hashes.completedAt;
     if (displayResult.state === "success") return new Date();
     return null;
-  }, [displayResult]);
+  }, [displayResult, mintCompletedAt]);
 
   const formatCompletedLabel = (
     completedAt: Date | null,
@@ -168,6 +226,22 @@ export function BridgingState({
     if (!displayResult) return;
     const { burnHash, mintHash, completedAt } = extractHashes(displayResult);
     if (!burnHash) return;
+
+    const burnStep = displayResult.steps.find((step) => /burn/i.test(step.name));
+    const mintStep = displayResult.steps.find((step) => /mint|claim|receive/i.test(step.name));
+
+    if (burnStep?.state === "success" && !burnCompletedAt) {
+      setBurnCompletedAt(new Date());
+    }
+
+    if (
+      (mintStep?.state === "success" ||
+        /nonce already used/i.test(mintStep?.errorMessage || "") ||
+        /nonce already used/i.test(String(mintStep?.error || ""))) &&
+      !mintCompletedAt
+    ) {
+      setMintCompletedAt(new Date());
+    }
 
     if (displayResult.state === "success") {
       updateTransaction(burnHash, {
@@ -214,8 +288,8 @@ export function BridgingState({
 
   const infoTypeLabel = transferType === "fast" ? "Fast" : "Standard";
   const pendingTitle = `${infoTypeLabel} Bridge Pending`;
-  const sentAtLabel = startedAt
-    ? startedAt.toLocaleString(undefined, {
+  const sentAtLabel = (burnCompletedAt ?? startedAt ?? null)
+    ? (burnCompletedAt ?? startedAt ?? new Date()).toLocaleString(undefined, {
         month: "short",
         day: "numeric",
         hour: "2-digit",
@@ -232,8 +306,8 @@ export function BridgingState({
     finalityEstimate ||
     (transferType === "fast" ? "~1 minute" : "13-19 minutes");
   const completedLabel =
-    displayResult?.state === "success"
-      ? formatCompletedLabel(completedAtDate, startedAt ?? null)
+    displayResult?.state === "success" && (mintCompletedAt || completedAtDate)
+      ? formatCompletedLabel(mintCompletedAt ?? completedAtDate, startedAt ?? null)
       : null;
 
   const destinationChainId = useMemo(() => {
@@ -322,6 +396,22 @@ export function BridgingState({
     }
   };
 
+  const hasFetchAttestation = useMemo(
+    () =>
+      derivedSteps.some(
+        (step) => step.id === "fetchAttestation" && step.state === "success"
+      ),
+    [derivedSteps]
+  );
+
+  const hasMintCompleted = useMemo(
+    () =>
+      derivedSteps.some((step) => step.id === "mint" && step.state === "success"),
+    [derivedSteps]
+  );
+
+  const showClaimButton = hasFetchAttestation && !hasMintCompleted;
+
   if (displayResult) {
     const primaryStep =
       displayResult.steps.find(
@@ -380,7 +470,7 @@ export function BridgingState({
           </div>
 
           <div className="space-y-3 text-sm">
-            {displayResult.steps.map((step, idx) => {
+            {derivedSteps.map((step, idx) => {
               const nonceClaimed =
                 /nonce already used/i.test(step.errorMessage || "") ||
                 /nonce already used/i.test(String(step.error || ""));
@@ -402,11 +492,11 @@ export function BridgingState({
                           step.state === "success" || nonceClaimed
                             ? "bg-green-400"
                             : step.state === "pending"
-                            ? "bg-yellow-400"
+                            ? "bg-orange-400"
                             : "bg-red-400"
                         }`}
                       />
-                      <span>{step.name}</span>
+                      <span>{step.label || step.name}</span>
                     </div>
                     <div className="flex items-center gap-2 text-xs text-slate-400">
                       {step.txHash ? (
@@ -474,30 +564,26 @@ export function BridgingState({
             })}
           </div>
 
-          <div className="flex flex-col gap-2">
-            <Button
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              disabled={
-                isSwitchingChain ||
-                isClaiming ||
-                displayResult.state === "success"
-              }
-              onClick={() => handleRetry()}
-            >
-              {displayResult.state === "success" ? (
-                "Claimed"
-              ) : isClaiming ? (
-                <span className="flex items-center justify-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Claiming...
-                </span>
-              ) : onDestinationChain ? (
-                `Claim ${amount} USDC`
-              ) : (
-                `Switch chain to ${displayTo.label}`
-              )}
-            </Button>
-          </div>
+          {showClaimButton && (
+            <div className="flex flex-col gap-2">
+              <Button
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={isSwitchingChain || isClaiming}
+                onClick={() => handleRetry()}
+              >
+                {isClaiming ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Claiming...
+                  </span>
+                ) : onDestinationChain ? (
+                  `Claim ${amount} USDC`
+                ) : (
+                  `Switch chain to ${displayTo.label}`
+                )}
+              </Button>
+            </div>
+          )}
 
           <div className="text-sm text-slate-200 space-y-1">
             <div className="flex items-center justify-between">
