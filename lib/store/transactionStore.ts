@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { LocalTransaction, LegacyLocalTransaction } from "@/lib/types";
+import { LegacyLocalTransaction, LocalTransaction } from "@/lib/types";
 
 const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
 
@@ -21,9 +21,8 @@ interface TransactionState {
   migrateFromLegacy: () => void;
 }
 
-// Migration function to convert legacy transactions
 const normalizeTransaction = (
-  tx: Partial<LocalTransaction>
+  tx: Partial<LocalTransaction> | Partial<LegacyLocalTransaction>
 ): LocalTransaction => {
   const extractChainId = (chain: unknown) => {
     if (chain && typeof chain === "object" && "chainId" in chain) {
@@ -50,7 +49,7 @@ const normalizeTransaction = (
       tx.targetAddress ??
       (tx.bridgeResult?.destination.address as `0x${string}` | undefined),
     claimHash: tx.claimHash,
-    version: tx.version ?? "v1",
+    version: "v2",
     transferType: tx.transferType ?? "standard",
     fee: tx.fee,
     estimatedTime: tx.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
@@ -91,7 +90,7 @@ const migrateLegacyTransaction = (
   return {
     ...legacyTx,
     date: legacyTx.date ? new Date(legacyTx.date) : new Date(),
-    version: "v1" as const,
+    version: "v2" as const,
     transferType: "standard" as const,
     estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,
   };
@@ -210,7 +209,6 @@ export const useTransactionStore = create<TransactionState>()(
       name: "cctp-transactions-v2",
       partialize: (state) => ({ transactions: state.transactions }),
       onRehydrateStorage: () => (state) => {
-        // Migrate legacy data on store initialization
         if (state) {
           state.migrateFromLegacy();
         }

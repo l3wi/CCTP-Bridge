@@ -6,7 +6,6 @@ export interface ContractConfig {
   readonly TokenMessenger: `0x${string}`;
   readonly MessageTransmitter: `0x${string}`;
   readonly TokenMinter: `0x${string}`;
-  readonly Message?: `0x${string}`; // Optional for backward compatibility
   readonly Usdc: `0x${string}`;
 }
 
@@ -28,7 +27,7 @@ export interface LocalTransaction {
   targetChain?: number;
   targetAddress?: `0x${string}`;
   claimHash?: `0x${string}`;
-  version?: "v1" | "v2"; // CCTP version used
+  version: "v2"; // CCTP version used
   transferType?: "standard" | "fast"; // V2 transfer type
   fee?: string; // V2 fast transfer fee
   estimatedTime?: string; // Estimated completion time
@@ -37,7 +36,7 @@ export interface LocalTransaction {
   transferId?: string;
 }
 
-// Legacy transaction interface for backwards compatibility
+// Legacy transaction interface retained for migration from pre-v2 localStorage entries
 export interface LegacyLocalTransaction {
   date: Date;
   originChain: number;
@@ -172,7 +171,6 @@ export interface BridgeError {
 // Hook return types
 export interface UseBridgeReturn {
   bridge: (params: BridgeParams) => Promise<BridgeResult>;
-  burn: (params: BridgeParams) => Promise<BridgeResult>; // alias for backward compatibility
   isLoading: boolean;
   error: BridgeError | string | null;
 }

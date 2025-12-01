@@ -67,11 +67,10 @@ export function HistoryModal({
     return transactions.filter((tx) => {
       const steps = tx.steps || tx.bridgeResult?.steps || [];
       // Heuristic: look for a step that mentions claim and is pending/ready
-      return steps.some(
-        (step) =>
-          /claim/i.test(step.name) &&
-          (step.state === "pending" || step.state === "ready")
-      );
+      return steps.some((step) => {
+        const state = step.state as string;
+        return /claim/i.test(step.name) && (state === "pending" || state === "ready");
+      });
     }).length;
   }, [transactions]);
 

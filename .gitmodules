@@ -1,0 +1,3 @@
+[submodule "reference/circle-bridge-kit-transfer"]
+	path = reference/circle-bridge-kit-transfer
+	url = https://github.com/circlefin/circle-bridge-kit-transfer.git

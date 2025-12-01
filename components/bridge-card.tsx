@@ -122,7 +122,7 @@ export function BridgeCard({
   useEffect(() => {
     const filtered = chains
       .filter((c) => supportedChainIds.has(c.id))
-      .sort((a, b) => a.id - b.id);
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
 
     setSupportedChains((prev) => {
       const prevKey = prev.map((c) => c.id).join(",");
@@ -202,6 +202,14 @@ export function BridgeCard({
   }, [activeSourceChainId]);
 
   const walletChainId = chain?.id;
+
+  const sourceChainOptions = useMemo(() => {
+    if (!walletChainId) return chainOptions;
+    const connectedChain = chainOptions.find((option) => option.id === walletChainId);
+    if (!connectedChain) return chainOptions;
+    const remaining = chainOptions.filter((option) => option.id !== walletChainId);
+    return [connectedChain, ...remaining];
+  }, [chainOptions, walletChainId]);
 
   // Initialize source chain once based on wallet or first supported chain
   useEffect(() => {
@@ -587,6 +595,42 @@ export function BridgeCard({
               setBridgeTransactionHash(hash);
               setIsBridging(true);
             },
+            onStateChange: (next) => {
+              setIsBridging(true);
+              setBridgeResult((prev) => {
+                const mergedSteps = next.steps ?? prev?.steps ?? [];
+                const mergedState = (next.state as BridgeResult["state"]) ?? prev?.state;
+                const provider = next.provider ?? prev?.provider ?? "CCTPV2BridgingProvider";
+                const amountStr = next.amount ?? prev?.amount ?? amount.str;
+                return {
+                  amount: amountStr ?? "0",
+                  token: "USDC",
+                  state: mergedState ?? "pending",
+                  provider,
+                  source:
+                    next.source ??
+                    prev?.source ?? {
+                      address: address ?? "",
+                      chain: resolveBridgeChain(selectedSourceId),
+                    },
+                  destination:
+                    next.destination ??
+                    prev?.destination ?? {
+                      address: address ?? "",
+                      chain: resolveBridgeChain(targetChain.id),
+                    },
+                  steps: mergedSteps,
+                };
+              });
+
+              const txHashFromStep =
+                next.steps?.find((step) => step.txHash)?.txHash ||
+                next.steps?.[0]?.txHash ||
+                null;
+              if (txHashFromStep && !bridgeTransactionHash) {
+                setBridgeTransactionHash(txHashFromStep as `0x${string}`);
+              }
+            },
           }
         );
 
@@ -628,6 +672,8 @@ export function BridgeCard({
       selectedSourceChain,
       chainOptionById,
       sourceChainId,
+      address,
+      bridgeTransactionHash,
     ]
   );
 
@@ -856,37 +902,35 @@ export function BridgeCard({
         />
       );
     } else if ((bridgeTargetChain || targetChain) && amount && bridgeTransactionHash) {
+      const sourceId = bridgeSourceChain?.id ?? chain?.id ?? sourceChainId ?? null;
+      const targetId = bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
+
       const fromChain = {
-        value: (bridgeSourceChain || chain)?.id.toString(),
-        label: (bridgeSourceChain || chain)?.name || "Source",
+        value: sourceId != null ? sourceId.toString() : "",
+        label: bridgeSourceChain?.name || chain?.name || "Source",
       };
       const toChain = {
-        value: (bridgeTargetChain || targetChain)?.id.toString(),
-        label: (bridgeTargetChain || targetChain)?.name || "Destination",
+        value: targetId != null ? targetId.toString() : "",
+        label: bridgeTargetChain?.name || targetChain?.name || "Destination",
       };
 
-      const recipientAddressValue = address as `0x${string}` | undefined;
-      const sourceChainId =
-        bridgeSourceChain?.id || chain?.id || fromChain.value
-          ? Number(fromChain.value)
-          : undefined;
+      const recipientAddressValue = address ?? undefined;
+      const sourceChainIdForResult = sourceId ?? (fromChain.value ? Number(fromChain.value) : undefined);
       const targetChainIdForResult =
-        bridgeTargetChain?.id || targetChain?.id || toChain.value
-          ? Number(toChain.value)
-          : undefined;
+        targetId ?? (toChain.value ? Number(toChain.value) : undefined);
 
-      const sourceChainDef = sourceChainId
-        ? getBridgeChainById(sourceChainId)
+      const sourceChainDef = sourceChainIdForResult
+        ? getBridgeChainById(sourceChainIdForResult)
         : null;
-      const confirmations = sourceChainId
-        ? getCctpConfirmations(sourceChainId) || undefined
+      const confirmations = sourceChainIdForResult
+        ? getCctpConfirmations(sourceChainIdForResult) || undefined
         : undefined;
-      const finalityEstimate =
-        sourceChainDef &&
-        getFinalityEstimate(
-          sourceChainDef.name || String(sourceChainDef.chain),
-          activeTransferSpeed
-        )?.averageTime;
+      const finalityEstimate = sourceChainDef
+        ? getFinalityEstimate(
+            sourceChainDef.name || String(sourceChainDef.chain),
+            activeTransferSpeed
+          )?.averageTime || undefined
+        : undefined;
 
       return (
         <BridgingState
@@ -973,7 +1017,7 @@ export function BridgeCard({
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    {chainOptions.map((chainOption) => (
+                    {sourceChainOptions.map((chainOption) => (
                       <SelectItem
                         key={chainOption.value}
                         value={chainOption.value}

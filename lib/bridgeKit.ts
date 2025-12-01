@@ -250,8 +250,11 @@ export const createReadonlyAdapter = async (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ): Promise<BridgeKitAdapter> => {
-  const preferredChain = resolveBridgeChain(chainId, env);
   const supportedChains = getSupportedEvmChains(env);
+  const preferredChain = supportedChains.find((chain) => chain.chainId === chainId);
+  if (!preferredChain) {
+    throw new Error(`Unsupported EVM chain ${chainId} for Bridge Kit`);
+  }
   const provider = createReadonlyProvider(preferredChain);
 
   const adapter = await createAdapterFromProvider({
