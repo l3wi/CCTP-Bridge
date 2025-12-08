@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { BridgingState } from "@/components/bridging-state";
 import Image from "next/image";
@@ -85,6 +86,8 @@ export function BridgeCard({
   const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeed>(
     TransferSpeed.FAST
   );
+  const [diffWallet, setDiffWallet] = useState(false);
+  const [targetAddress, setTargetAddress] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
   const [isBridging, setIsBridging] = useState(false);
   const [bridgeSourceChain, setBridgeSourceChain] = useState<Chain | null>(null);
@@ -211,19 +214,18 @@ export function BridgeCard({
     return [connectedChain, ...remaining];
   }, [chainOptions, walletChainId]);
 
-  // Initialize source chain once based on wallet or first supported chain
+  // Sync source chain to wallet chain when wallet connects or changes chain
   useEffect(() => {
-    if (sourceChainId != null) return;
-
     if (walletChainId && supportedChainIds.has(walletChainId)) {
       setSourceChainId(walletChainId);
       return;
     }
 
-    if (supportedChains.length > 0) {
+    // Fallback: set first supported chain if no wallet or unsupported chain
+    if (sourceChainId == null && supportedChains.length > 0) {
       setSourceChainId(supportedChains[0].id);
     }
-  }, [sourceChainId, walletChainId, supportedChainIds, supportedChains]);
+  }, [walletChainId, supportedChainIds, supportedChains, sourceChainId]);
 
   // Keep the destination list consistent with the selected source chain without stomping user choice
   useEffect(() => {
@@ -332,6 +334,8 @@ export function BridgeCard({
         sourceChain: activeSourceChainId ?? undefined,
         balance: usdcBalance,
         userAddress: address,
+        isCustomAddress: diffWallet,
+        targetAddress,
       }),
     [
       amount,
@@ -340,6 +344,8 @@ export function BridgeCard({
       activeSourceChainId,
       usdcBalance,
       address,
+      diffWallet,
+      targetAddress,
     ]
   );
 
@@ -486,8 +492,12 @@ export function BridgeCard({
           )?.averageTime
         : undefined;
 
-      const detail = finality ?? (blocks ? `${blocks} blocks` : null);
-      return detail ?? "Estimate unavailable";
+      // Show time estimate with block count, e.g., "~8 Sec (1 Block)"
+      const blockLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : null;
+      if (finality && blockLabel) {
+        return `${finality} (${blockLabel})`;
+      }
+      return finality ?? blockLabel ?? "Estimate unavailable";
     },
     [activeSourceChainId]
   );
@@ -581,12 +591,17 @@ export function BridgeCard({
       let pendingHash: `0x${string}` | null = null;
       try {
         const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
+        // Use custom address if specified, otherwise use connected wallet
+        const finalTargetAddress = diffWallet && validation.data.targetAddress
+          ? validation.data.targetAddress
+          : address;
 
         const result = await bridge(
           {
             amount: validation.data.amount,
             sourceChainId: selectedSourceId,
             targetChainId: targetChain.id,
+            targetAddress: finalTargetAddress,
             transferType,
           },
           {
@@ -674,6 +689,7 @@ export function BridgeCard({
       sourceChainId,
       address,
       bridgeTransactionHash,
+      diffWallet,
     ]
   );
 
@@ -914,7 +930,7 @@ export function BridgeCard({
         label: bridgeTargetChain?.name || targetChain?.name || "Destination",
       };
 
-      const recipientAddressValue = address ?? undefined;
+      const recipientAddressValue = (diffWallet && targetAddress) ? targetAddress : (address ?? undefined);
       const sourceChainIdForResult = sourceId ?? (fromChain.value ? Number(fromChain.value) : undefined);
       const targetChainIdForResult =
         targetId ?? (toChain.value ? Number(toChain.value) : undefined);
@@ -1006,11 +1022,13 @@ export function BridgeCard({
                               />
                             )}
                             <span>{displayChain.name}</span>
-                            {isSwitchingChain && (
+                            {isSwitchingChain ? (
                               <span className="text-xs text-slate-400 ml-auto">
                                 Switching...
                               </span>
-                            )}
+                            ) : address ? (
+                              <span className="text-green-500 ml-auto">●</span>
+                            ) : null}
                           </div>
                         ) : null;
                       })()}
@@ -1032,14 +1050,8 @@ export function BridgeCard({
                             alt={chainOption.label}
                           />
                           <span>{chainOption.label}</span>
-                          {/* Show current chain indicator */}
-                          {chain?.id === chainOption.id && (
-                            <span
-                              className="ml-auto text-green-500"
-                              title="Current chain"
-                            >
-                              ●
-                            </span>
+                          {sourceChainId === chainOption.id && address && (
+                            <span className="ml-auto text-green-500">●</span>
                           )}
                         </div>
                       </SelectItem>
@@ -1154,6 +1166,48 @@ export function BridgeCard({
               <span className="text-lg text-slate-400">USDC</span>
             </div>
           </div>
+
+          {/* Custom Recipient Address */}
+          {address && targetChain && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="custom-address"
+                  checked={diffWallet}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setDiffWallet(true);
+                      setTargetAddress(address);
+                    } else {
+                      setDiffWallet(false);
+                      setTargetAddress(undefined);
+                    }
+                  }}
+                  disabled={isLoading}
+                />
+                <Label
+                  htmlFor="custom-address"
+                  className="text-xs text-slate-300 cursor-pointer"
+                >
+                  Send to a different wallet on {targetChain.name}
+                </Label>
+              </div>
+              {diffWallet && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-slate-300">
+                    Destination Wallet
+                  </Label>
+                  <Input
+                    placeholder="0x..."
+                    value={targetAddress || ""}
+                    onChange={(e) => setTargetAddress(e.target.value)}
+                    className="bg-slate-700/50 border-slate-600 text-white"
+                    disabled={isLoading}
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Transfer Options */}
           {hasAmountInput ? (

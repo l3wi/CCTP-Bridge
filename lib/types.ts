@@ -54,6 +54,7 @@ export interface BridgeParams {
   amount: bigint;
   sourceChainId: number;
   targetChainId: number;
+  targetAddress?: `0x${string}`; // Optional: recipient address if different from sender
   sourceTokenAddress?: `0x${string}`;
   version?: "v1" | "v2";
   transferType?: "standard" | "fast";

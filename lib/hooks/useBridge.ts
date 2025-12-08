@@ -158,6 +158,9 @@ export const useBridge = () => {
       approveToastShownRef.current = false;
       providerNameRef.current = null;
 
+      // Use custom target address if provided, otherwise fall back to sender
+      const recipientAddress = params.targetAddress ?? address;
+
       const buildResult = (
         steps: BridgeResult["steps"],
         stateOverride?: BridgeResult["state"]
@@ -171,7 +174,7 @@ export const useBridge = () => {
           chain: sourceChainDef,
         },
         destination: {
-          address: address ?? "",
+          address: recipientAddress ?? "",
           chain: destinationChainDef,
         },
         steps,
@@ -255,7 +258,7 @@ export const useBridge = () => {
               amount: formattedAmount,
               originChain: params.sourceChainId,
               targetChain: params.targetChainId,
-              targetAddress: address as `0x${string}` | undefined,
+              targetAddress: recipientAddress as `0x${string}` | undefined,
             });
           } else {
             updateTransaction(currentHashRef.current, {
@@ -279,15 +282,25 @@ export const useBridge = () => {
         const transferSpeed: TransferSpeed =
           transferType === "fast" ? TransferSpeed.FAST : TransferSpeed.SLOW;
 
+        // Build destination config - only include address if different from sender
+        const hasCustomRecipient = params.targetAddress && params.targetAddress !== address;
+        const destinationConfig = hasCustomRecipient
+          ? {
+              adapter,
+              chain: destinationChainDef,
+              address: params.targetAddress,
+            }
+          : {
+              adapter,
+              chain: destinationChainDef,
+            };
+
         const result = await kit.bridge({
           from: {
             adapter,
             chain: sourceChainDef,
           },
-          to: {
-            adapter,
-            chain: destinationChainDef,
-          },
+          to: destinationConfig as Parameters<typeof kit.bridge>[0]["to"],
           amount: formattedAmount,
           token: "USDC",
           config: {
@@ -346,7 +359,7 @@ export const useBridge = () => {
               amount: formattedAmount,
               originChain: params.sourceChainId,
               targetChain: params.targetChainId,
-              targetAddress: address as `0x${string}` | undefined,
+              targetAddress: recipientAddress as `0x${string}` | undefined,
             });
           } else {
             updateTransaction(currentHashRef.current, {
