@@ -77,7 +77,7 @@ export async function checkNonceUsed(
     args: [sourceNonceHash],
   });
 
-  return usedNonce > 0n;
+  return usedNonce > BigInt(0);
 }
 
 /**
