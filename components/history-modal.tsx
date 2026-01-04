@@ -144,7 +144,7 @@ export function HistoryModal({
                   <span className="hidden sm:inline">Add Transaction</span>
                 </Button>
               </DialogHeader>
-              <div className="space-y-4 max-h-96 overflow-y-auto" data-scrollable="true">
+              <div className="space-y-4 max-h-96 has-[>*:nth-child(4)]:max-h-[36rem] overflow-y-auto" data-scrollable="true">
                 {sortedTransactions.length > 0 ? (
                   sortedTransactions.map((tx) => (
                     <TransactionRow
