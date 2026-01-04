@@ -411,6 +411,31 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         return;
       }
 
+      // Validate mintRecipient is present
+      if (!attestationData.mintRecipient) {
+        setError("Transaction data incomplete - recipient address not available");
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate and format amount using BigInt for precision
+      let formattedAmount: string | undefined;
+      if (attestationData.amount) {
+        try {
+          const amountBigInt = BigInt(attestationData.amount);
+          if (amountBigInt <= BigInt(0)) {
+            setError("Invalid transaction amount");
+            setIsLoading(false);
+            return;
+          }
+          formattedAmount = (Number(amountBigInt) / 1_000_000).toFixed(2);
+        } catch {
+          setError("Invalid transaction amount format");
+          setIsLoading(false);
+          return;
+        }
+      }
+
       // Check if the transaction has already been claimed by querying usedNonces
       let isAlreadyClaimed = false;
       if (attestationData.status === "complete") {
@@ -420,16 +445,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
           attestationData.nonce,
           BRIDGEKIT_ENV
         );
-        if (nonceUsed === true) {
-          isAlreadyClaimed = true;
+        if (nonceUsed === null) {
+          // Could not verify claim status - log warning but continue
+          console.warn("Could not verify claim status for nonce - assuming pending");
         }
-      }
-
-      // Format amount from raw value (6 decimals for USDC)
-      let formattedAmount: string | undefined;
-      if (attestationData.amount) {
-        const amountNum = Number(attestationData.amount) / 1_000_000;
-        formattedAmount = amountNum.toFixed(2);
+        isAlreadyClaimed = nonceUsed === true;
       }
 
       // Get chain definitions for bridgeResult
@@ -460,17 +480,19 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       const bridgeState = isAlreadyClaimed ? "success" : "pending";
 
       // Construct a minimal bridgeResult for resume capability
+      // Note: mintRecipient is validated above so it's guaranteed to exist here
+      const recipientAddress = attestationData.mintRecipient as `0x${string}`;
       const bridgeResult: BridgeResult = {
         state: bridgeState,
         provider: "CCTPV2BridgingProvider",
         amount: formattedAmount || "0",
         token: "USDC",
         source: {
-          address: (attestationData.mintRecipient || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+          address: recipientAddress,
           chain: sourceChain!,
         },
         destination: {
-          address: (attestationData.mintRecipient || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+          address: recipientAddress,
           chain: destChain!,
         },
         steps,
