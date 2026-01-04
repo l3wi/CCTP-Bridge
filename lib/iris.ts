@@ -16,8 +16,6 @@ export interface IrisAttestationResponse {
     attestation: string;
     message: string;
     eventNonce: string;
-    sourceDomain: string;
-    destinationDomain: string;
     status: "pending" | "complete";
     cctpVersion: number;
     decodedMessage?: {
@@ -102,6 +100,12 @@ export async function fetchAttestation(
     // Get the first (and usually only) message
     const msg = data.messages[0];
 
+    // Domains are inside decodedMessage
+    if (!msg.decodedMessage) {
+      console.error("Missing decodedMessage in Iris response");
+      return null;
+    }
+
     // Ensure message and attestation have 0x prefix
     const message = (
       msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
@@ -114,11 +118,11 @@ export async function fetchAttestation(
       message,
       attestation,
       status: msg.status,
-      sourceDomain: parseInt(msg.sourceDomain, 10),
-      destinationDomain: parseInt(msg.destinationDomain, 10),
+      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
+      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
       nonce: msg.eventNonce,
-      amount: msg.decodedMessage?.decodedMessageBody?.amount,
-      mintRecipient: msg.decodedMessage?.decodedMessageBody?.mintRecipient,
+      amount: msg.decodedMessage.decodedMessageBody?.amount,
+      mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
     };
   } catch (error) {
     console.error("Failed to fetch attestation from Iris:", error);

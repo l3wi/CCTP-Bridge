@@ -9,12 +9,15 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { History, CheckCircle, ExternalLink, Clock } from "lucide-react";
+import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 } from "lucide-react";
 import { useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import Image from "next/image";
-import { getExplorerTxUrl } from "@/lib/bridgeKit";
+import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainById } from "@/lib/bridgeKit";
+import { fetchAttestation } from "@/lib/iris";
+import { getChainIdFromDomain, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
   open?: boolean;
@@ -22,18 +25,32 @@ interface HistoryModalProps {
   onLoadBridging?: (transaction: LocalTransaction) => void;
 }
 
+type ModalView = "history" | "add-transaction";
+
 export function HistoryModal({
   open,
   onOpenChange,
   onLoadBridging,
 }: HistoryModalProps) {
   const [isOpen, setIsOpen] = useState(open || false);
-  const { transactions, updateTransaction } = useTransactionStore();
+  const [view, setView] = useState<ModalView>("history");
+  const { transactions, updateTransaction, addTransaction, removeTransaction } = useTransactionStore();
   const chains = useChains();
 
   const handleOpenChange = (newOpen: boolean) => {
     setIsOpen(newOpen);
     onOpenChange?.(newOpen);
+    if (!newOpen) {
+      setView("history");
+    }
+  };
+
+  const handleDeleteTransaction = (hash: `0x${string}`) => {
+    removeTransaction(hash);
+  };
+
+  const handleAddTransactionSuccess = () => {
+    setView("history");
   };
 
   // Sort transactions by date (newest first)
@@ -74,6 +91,12 @@ export function HistoryModal({
     }).length;
   }, [transactions]);
 
+  // Create a set of existing tx hashes for duplicate detection
+  const existingHashes = useMemo(
+    () => new Set(transactions.map((tx) => tx.hash.toLowerCase())),
+    [transactions]
+  );
+
   const badgeLabel =
     claimableCount > 0
       ? `${claimableCount} Claimable`
@@ -99,29 +122,50 @@ export function HistoryModal({
           </Button>
         </DialogTrigger>
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl">
-          <DialogHeader className="flex flex-row items-center justify-between">
-            <DialogTitle>Transaction History</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 max-h-96 overflow-y-auto">
-            {sortedTransactions.length > 0 ? (
-              sortedTransactions.map((tx) => (
-                <TransactionRow
-                  key={tx.hash}
-                  tx={tx}
-                  chains={chains}
-                  updateTransaction={updateTransaction}
-                  onTransactionClick={handleTransactionClick}
-                />
-              ))
-            ) : (
-              <div className="text-center py-8 text-slate-400">
-                <p>No transactions yet</p>
-                <p className="text-sm mt-1">
-                  Your bridge transactions will appear here
-                </p>
+          {view === "history" ? (
+            <>
+              <DialogHeader className="flex flex-row items-center justify-between pr-8">
+                <DialogTitle>Transaction History</DialogTitle>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-slate-700 border-slate-600 text-white hover:bg-slate-600"
+                  onClick={() => setView("add-transaction")}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Transaction
+                </Button>
+              </DialogHeader>
+              <div className="space-y-4 max-h-96 overflow-y-auto">
+                {sortedTransactions.length > 0 ? (
+                  sortedTransactions.map((tx) => (
+                    <TransactionRow
+                      key={tx.hash}
+                      tx={tx}
+                      chains={chains}
+                      updateTransaction={updateTransaction}
+                      onTransactionClick={handleTransactionClick}
+                      onDelete={handleDeleteTransaction}
+                    />
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-slate-400">
+                    <p>No transactions yet</p>
+                    <p className="text-sm mt-1">
+                      Your bridge transactions will appear here
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </>
+          ) : (
+            <AddTransactionView
+              onBack={() => setView("history")}
+              onSuccess={handleAddTransactionSuccess}
+              addTransaction={addTransaction}
+              existingHashes={existingHashes}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </>
@@ -136,6 +180,7 @@ interface TransactionRowProps {
     updates: Partial<LocalTransaction>
   ) => void;
   onTransactionClick: (transaction: LocalTransaction) => void;
+  onDelete: (hash: `0x${string}`) => void;
 }
 
 function TransactionRow({
@@ -143,6 +188,7 @@ function TransactionRow({
   chains,
   updateTransaction,
   onTransactionClick,
+  onDelete,
 }: TransactionRowProps) {
   // Get chain information
   const origin = useMemo(
@@ -293,8 +339,282 @@ function TransactionRow({
           >
             <ExternalLink className="h-3 w-3" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 hover:bg-slate-700 hover:text-red-400"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(tx.hash);
+            }}
+          >
+            <X className="h-3 w-3" />
+          </Button>
         </div>
       </div>
     </div>
+  );
+}
+
+interface AddTransactionViewProps {
+  onBack: () => void;
+  onSuccess: () => void;
+  addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
+  existingHashes: Set<string>;
+}
+
+function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes }: AddTransactionViewProps) {
+  const [selectedChainId, setSelectedChainId] = useState<number | null>(null);
+  const [txHash, setTxHash] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const supportedChains = useMemo(() => getSupportedEvmChains(BRIDGEKIT_ENV), []);
+
+  const handleSubmit = async () => {
+    if (!selectedChainId || !txHash) {
+      setError("Please select a chain and enter a transaction hash");
+      return;
+    }
+
+    // Validate tx hash format
+    const normalizedHash = txHash.trim().toLowerCase();
+    if (!/^0x[a-f0-9]{64}$/.test(normalizedHash)) {
+      setError("Invalid transaction hash format");
+      return;
+    }
+
+    // Check for duplicate transaction
+    if (existingHashes.has(normalizedHash)) {
+      setError("This transaction has already been added");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const attestationData = await fetchAttestation(selectedChainId, normalizedHash);
+
+      if (!attestationData) {
+        setError("Transaction not found. Make sure the chain and hash are correct.");
+        setIsLoading(false);
+        return;
+      }
+
+      // Get target chain from destination domain
+      const targetChainId = getChainIdFromDomain(attestationData.destinationDomain, BRIDGEKIT_ENV);
+
+      if (!targetChainId) {
+        // Check if the domain exists but is non-EVM or wrong environment
+        const chainInfo = getChainInfoFromDomainAllChains(attestationData.destinationDomain);
+        if (chainInfo) {
+          if (chainInfo.type !== "evm") {
+            setError(`Destination is ${chainInfo.name} (${chainInfo.type}) - only EVM chains are supported`);
+          } else if (chainInfo.isTestnet !== (BRIDGEKIT_ENV === "testnet")) {
+            const expected = BRIDGEKIT_ENV === "testnet" ? "testnet" : "mainnet";
+            setError(`Destination is on ${chainInfo.isTestnet ? "testnet" : "mainnet"}, but app is in ${expected} mode`);
+          } else {
+            setError(`Destination chain ${chainInfo.name} is not supported`);
+          }
+        } else {
+          setError(`Unknown destination domain (${attestationData.destinationDomain})`);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate mintRecipient is present
+      if (!attestationData.mintRecipient) {
+        setError("Transaction data incomplete - recipient address not available");
+        setIsLoading(false);
+        return;
+      }
+
+      // Validate and format amount using BigInt for precision
+      let formattedAmount: string | undefined;
+      if (attestationData.amount) {
+        try {
+          const amountBigInt = BigInt(attestationData.amount);
+          if (amountBigInt <= BigInt(0)) {
+            setError("Invalid transaction amount");
+            setIsLoading(false);
+            return;
+          }
+          formattedAmount = (Number(amountBigInt) / 1_000_000).toFixed(2);
+        } catch {
+          setError("Invalid transaction amount format");
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      // Check if the transaction has already been claimed by querying usedNonces
+      let isAlreadyClaimed = false;
+      if (attestationData.status === "complete") {
+        const nonceUsed = await isNonceUsed(
+          targetChainId,
+          attestationData.sourceDomain,
+          attestationData.nonce,
+          BRIDGEKIT_ENV
+        );
+        if (nonceUsed === null) {
+          // Could not verify claim status - log warning but continue
+          console.warn("Could not verify claim status for nonce - assuming pending");
+        }
+        isAlreadyClaimed = nonceUsed === true;
+      }
+
+      // Get chain definitions for bridgeResult
+      const sourceChain = getBridgeChainById(selectedChainId, BRIDGEKIT_ENV);
+      const destChain = getBridgeChainById(targetChainId, BRIDGEKIT_ENV);
+
+      // Determine step states based on attestation and claim status
+      // Valid states: "error" | "success" | "pending" | "noop"
+      const attestationReady = attestationData.status === "complete";
+      const steps: BridgeResult["steps"] = [
+        {
+          name: "Burn",
+          state: "success",
+          txHash: normalizedHash as `0x${string}`,
+        },
+        {
+          name: "Fetch Attestation",
+          state: attestationReady ? "success" : "pending"
+        },
+        {
+          name: "Mint",
+          state: isAlreadyClaimed ? "success" : "pending"
+        },
+      ];
+
+      // Determine overall status
+      const txStatus = isAlreadyClaimed ? "claimed" : "pending";
+      const bridgeState = isAlreadyClaimed ? "success" : "pending";
+
+      // Construct a minimal bridgeResult for resume capability
+      // Note: mintRecipient is validated above so it's guaranteed to exist here
+      const recipientAddress = attestationData.mintRecipient as `0x${string}`;
+      const bridgeResult: BridgeResult = {
+        state: bridgeState,
+        provider: "CCTPV2BridgingProvider",
+        amount: formattedAmount || "0",
+        token: "USDC",
+        source: {
+          address: recipientAddress,
+          chain: sourceChain!,
+        },
+        destination: {
+          address: recipientAddress,
+          chain: destChain!,
+        },
+        steps,
+      };
+
+      // Create the transaction entry
+      const transaction: Omit<LocalTransaction, "date"> = {
+        hash: normalizedHash as `0x${string}`,
+        originChain: selectedChainId,
+        targetChain: targetChainId,
+        targetAddress: attestationData.mintRecipient as `0x${string}` | undefined,
+        amount: formattedAmount,
+        status: txStatus,
+        version: "v2",
+        transferType: "standard",
+        steps,
+        bridgeState,
+        provider: "CCTPV2BridgingProvider",
+        bridgeResult,
+      };
+
+      addTransaction(transaction);
+      onSuccess();
+    } catch (err) {
+      console.error("Failed to fetch transaction:", err);
+      setError("Failed to fetch transaction details. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <DialogHeader className="flex flex-row items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-8 w-8 hover:bg-slate-700"
+          onClick={onBack}
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <DialogTitle>Add Pending Transaction</DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4 py-4">
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-slate-300">Source Chain</label>
+          <div className="grid grid-cols-3 gap-2">
+            {supportedChains.map((chain) => (
+              <button
+                key={chain.chainId}
+                onClick={() => setSelectedChainId(chain.chainId)}
+                className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
+                  selectedChainId === chain.chainId
+                    ? "border-blue-500 bg-slate-700"
+                    : "border-slate-600 bg-slate-800 hover:bg-slate-700"
+                }`}
+              >
+                <Image
+                  src={`/${chain.chainId}.svg`}
+                  width={24}
+                  height={24}
+                  className="w-6 h-6"
+                  alt={chain.name}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
+                />
+                <span className="text-sm truncate">{chain.name.split(" ")[0]}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-slate-300">Transaction Hash</label>
+          <input
+            type="text"
+            placeholder="0x..."
+            value={txHash}
+            onChange={(e) => setTxHash(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+          />
+          <p className="text-xs text-slate-400">
+            Enter the burn transaction hash from the source chain
+          </p>
+        </div>
+
+        {error && (
+          <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
+
+        <Button
+          onClick={handleSubmit}
+          disabled={!selectedChainId || !txHash || isLoading}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              Looking up transaction...
+            </>
+          ) : (
+            "Add Transaction"
+          )}
+        </Button>
+      </div>
+    </>
   );
 }
