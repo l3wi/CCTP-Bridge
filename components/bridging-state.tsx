@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, ExternalLink, Loader2, X } from "lucide-react";
 import { formatTime } from "@/lib/utils";
-import Image from "next/image";
+import { ChainIcon } from "@/components/chain-icon";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { useAccount, useSwitchChain } from "wagmi";
 import { useToast } from "@/components/ui/use-toast";
@@ -746,13 +746,7 @@ export function BridgingState({
 
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <Image
-                src={`/${displayFrom.value}.svg`}
-                width={24}
-                height={24}
-                className="w-6 h-6"
-                alt={displayFrom.label}
-              />
+              <ChainIcon chainId={Number(displayFrom.value)} size={24} />
               <div>
                 <div className="font-medium">{displayFrom.label}</div>
                 <div className="text-xs text-slate-400">{amount} USDC</div>
@@ -760,13 +754,7 @@ export function BridgingState({
             </div>
             <ArrowRight className="text-slate-500" />
             <div className="flex items-center gap-2">
-              <Image
-                src={`/${displayTo.value}.svg`}
-                width={24}
-                height={24}
-                className="w-6 h-6"
-                alt={displayTo.label}
-              />
+              <ChainIcon chainId={Number(displayTo.value)} size={24} />
               <div>
                 <div className="font-medium">{displayTo.label}</div>
                 <div className="text-xs text-slate-400">
@@ -949,13 +937,7 @@ export function BridgingState({
           <div className="flex flex-col items-center">
             <div className="text-center">
               <div className="flex items-center justify-center mb-2">
-                <Image
-                  src={`/${displayFrom.value}.svg`}
-                  width={24}
-                  height={24}
-                  className="w-6 h-6 mr-2"
-                  alt={displayFrom.label}
-                />
+                <ChainIcon chainId={Number(displayFrom.value)} size={24} className="mr-2" />
                 <div className="font-medium">{displayFrom.label}</div>
               </div>
 
@@ -967,13 +949,7 @@ export function BridgingState({
 
           <div className="flex flex-col items-end">
             <div className="flex items-center justify-center mb-2">
-              <Image
-                src={`/${displayTo.value}.svg`}
-                width={24}
-                height={24}
-                className="w-6 h-6 mr-2"
-                alt={displayTo.label}
-              />
+              <ChainIcon chainId={Number(displayTo.value)} size={24} className="mr-2" />
               <div className="font-medium">{displayTo.label}</div>
             </div>
             <div className="text-sm text-slate-400">{recipientLabel}</div>

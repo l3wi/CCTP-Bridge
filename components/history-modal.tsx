@@ -20,7 +20,7 @@ import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 
 import { useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
-import Image from "next/image";
+import { ChainIcon } from "@/components/chain-icon";
 import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainById } from "@/lib/bridgeKit";
 import { fetchAttestation } from "@/lib/iris";
 import { getChainIdFromDomain, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
@@ -259,13 +259,7 @@ function TransactionRow({
         <div>
           <div className="flex items-center gap-2 mb-1">
             <div className="flex items-center">
-              <Image
-                src={`/${tx.originChain}.svg`}
-                width={24}
-                height={24}
-                className="w-6 h-6 mr-2"
-                alt={originName}
-              />
+              <ChainIcon chainId={tx.originChain} size={24} className="mr-2" />
               {(() => {
                 const url = getExplorerTxUrl(tx.originChain, tx.hash);
                 return url ? (
@@ -288,13 +282,7 @@ function TransactionRow({
             <span className="text-slate-400">→</span>
             {destination && (
               <div className="flex items-center">
-                <Image
-                  src={`/${destination?.id}.svg`}
-                  width={24}
-                  height={24}
-                  className="w-6 h-6 mr-2"
-                  alt={destinationName}
-                />
+                <ChainIcon chainId={destination.id} size={24} className="mr-2" />
                 {tx.claimHash && tx.targetChain ? (
                   (() => {
                     const claimUrl = getExplorerTxUrl(
@@ -570,13 +558,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
                   const selected = supportedChains.find(c => c.chainId === selectedChainId);
                   return selected ? (
                     <div className="flex items-center gap-2">
-                      <Image
-                        src={`/${selected.chainId}.svg`}
-                        width={16}
-                        height={16}
-                        className="w-4 h-4"
-                        alt={selected.name}
-                      />
+                      <ChainIcon chainId={selected.chainId} size={24} />
                       <span>{selected.name}</span>
                     </div>
                   ) : null;
@@ -591,13 +573,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
                   className="text-white hover:bg-slate-700"
                 >
                   <div className="flex items-center gap-2">
-                    <Image
-                      src={`/${chain.chainId}.svg`}
-                      width={16}
-                      height={16}
-                      className="w-4 h-4"
-                      alt={chain.name}
-                    />
+                    <ChainIcon chainId={chain.chainId} size={24} />
                     <span>{chain.name}</span>
                   </div>
                 </SelectItem>

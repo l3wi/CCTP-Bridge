@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { BridgingState } from "@/components/bridging-state";
-import Image from "next/image";
+import { ChainIcon } from "@/components/chain-icon";
 import {
   useAccount,
   useChains,
@@ -1019,13 +1019,7 @@ export function BridgeCard({
                             {isSwitchingChain ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <Image
-                                src={`/${displayChain.id}.svg`}
-                                width={16}
-                                height={16}
-                                className="w-4 h-4"
-                                alt={displayChain.name}
-                              />
+                              <ChainIcon chainId={displayChain.id} size={24} />
                             )}
                             <span>{displayChain.name}</span>
                             {isSwitchingChain ? (
@@ -1048,13 +1042,7 @@ export function BridgeCard({
                         className="text-white hover:bg-slate-700"
                       >
                         <div className="flex items-center gap-2">
-                          <Image
-                            src={`/${chainOption.id}.svg`}
-                            width={16}
-                            height={16}
-                            className="w-4 h-4"
-                            alt={chainOption.label}
-                          />
+                          <ChainIcon chainId={chainOption.id} size={24} />
                           <span>{chainOption.label}</span>
                           {sourceChainId === chainOption.id && address && (
                             <span className="ml-auto text-green-500">●</span>
@@ -1098,13 +1086,7 @@ export function BridgeCard({
                             : undefined);
                         return displayChain ? (
                           <div className="flex items-center gap-2">
-                            <Image
-                              src={`/${displayChain.id}.svg`}
-                              width={16}
-                              height={16}
-                              className="w-4 h-4"
-                              alt={displayChain.name}
-                            />
+                            <ChainIcon chainId={displayChain.id} size={24} />
                             <span className="truncate">
                               {displayChain.name}
                             </span>
@@ -1121,13 +1103,7 @@ export function BridgeCard({
                         className="text-white hover:bg-slate-700"
                       >
                         <div className="flex items-center gap-2">
-                          <Image
-                            src={`/${chainOption.id}.svg`}
-                            width={16}
-                            height={16}
-                            className="w-4 h-4"
-                            alt={chainOption.label}
-                          />
+                          <ChainIcon chainId={chainOption.id} size={24} />
                           <span>{chainOption.label}</span>
                         </div>
                       </SelectItem>
