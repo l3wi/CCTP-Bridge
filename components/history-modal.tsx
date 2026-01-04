@@ -16,7 +16,7 @@ import { useTransactionStore } from "@/lib/store/transactionStore";
 import Image from "next/image";
 import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainById } from "@/lib/bridgeKit";
 import { fetchAttestation } from "@/lib/iris";
-import { getChainIdFromDomain, isNonceUsed } from "@/lib/contracts";
+import { getChainIdFromDomain, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
@@ -124,7 +124,7 @@ export function HistoryModal({
         <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl">
           {view === "history" ? (
             <>
-              <DialogHeader className="flex flex-row items-center justify-between">
+              <DialogHeader className="flex flex-row items-center justify-between pr-8">
                 <DialogTitle>Transaction History</DialogTitle>
                 <Button
                   variant="outline"
@@ -406,7 +406,20 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       const targetChainId = getChainIdFromDomain(attestationData.destinationDomain, BRIDGEKIT_ENV);
 
       if (!targetChainId) {
-        setError("Unsupported destination chain");
+        // Check if the domain exists but is non-EVM or wrong environment
+        const chainInfo = getChainInfoFromDomainAllChains(attestationData.destinationDomain);
+        if (chainInfo) {
+          if (chainInfo.type !== "evm") {
+            setError(`Destination is ${chainInfo.name} (${chainInfo.type}) - only EVM chains are supported`);
+          } else if (chainInfo.isTestnet !== (BRIDGEKIT_ENV === "testnet")) {
+            const expected = BRIDGEKIT_ENV === "testnet" ? "testnet" : "mainnet";
+            setError(`Destination is on ${chainInfo.isTestnet ? "testnet" : "mainnet"}, but app is in ${expected} mode`);
+          } else {
+            setError(`Destination chain ${chainInfo.name} is not supported`);
+          }
+        } else {
+          setError(`Unknown destination domain (${attestationData.destinationDomain})`);
+        }
         setIsLoading(false);
         return;
       }

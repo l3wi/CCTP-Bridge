@@ -83,6 +83,27 @@ export function getChainIdFromDomain(
 }
 
 /**
+ * Get chain info from domain across ALL chains (including non-EVM and both environments).
+ * Useful for providing better error messages when a domain is valid but not supported.
+ */
+export function getChainInfoFromDomainAllChains(
+  domain: number
+): { name: string; type: string; isTestnet: boolean; chainId?: number } | null {
+  const kit = getBridgeKit();
+  const allChains = kit.getSupportedChains();
+
+  const chain = allChains.find((c) => c.cctp?.domain === domain);
+  if (!chain) return null;
+
+  return {
+    name: chain.name,
+    type: chain.type,
+    isTestnet: chain.isTestnet,
+    chainId: chain.type === "evm" ? (chain as { chainId?: number }).chainId : undefined,
+  };
+}
+
+/**
  * Check if a chain is a testnet based on Bridge Kit data.
  */
 export function isTestnetChain(
