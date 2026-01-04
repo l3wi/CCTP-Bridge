@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
 import { formatUnits } from "viem";
 import { TransferSpeed, type BridgeResult } from "@circle-fin/bridge-kit";
-import { track } from "@vercel/analytics/react";
 import { useToast } from "@/components/ui/use-toast";
 import {
   getBridgeKit,
@@ -227,6 +226,18 @@ export const useBridge = () => {
         if (burnHash && !pendingHashRef.current) {
           pendingHashRef.current = burnHash;
           opts?.onPendingHash?.(burnHash);
+
+          // Server-side analytics (avoids adblockers)
+          const roundedAmount = Math.round(Number(formattedAmount));
+          const txType = transferType === "fast" ? 1 : 0;
+          fetch("/api/meta", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount: roundedAmount,
+              meta: `${roundedAmount},${params.sourceChainId},${params.targetChainId},${txType}`,
+            }),
+          }).catch(() => {});
         }
 
         const nextResult = buildResult(mergedSteps, bridgeState);
@@ -373,14 +384,6 @@ export const useBridge = () => {
             });
           }
         }
-
-        track("bridge", {
-          amount: formattedAmount,
-          from: params.sourceChainId,
-          to: params.targetChainId,
-          transferType: params.transferType ?? "standard",
-          state: finalResult.state,
-        });
 
         toast({
           title:
