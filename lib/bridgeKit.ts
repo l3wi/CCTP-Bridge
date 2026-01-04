@@ -291,6 +291,15 @@ const createRpcClient = (chain: Chain | EvmChainDefinition) => {
   });
 };
 
+function isValidUrl(urlString: string): boolean {
+  try {
+    const url = new URL(urlString);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function parseRpcOverrides(raw: string | undefined): RpcOverrideMap | null {
   if (!raw) return null;
 
@@ -299,7 +308,11 @@ function parseRpcOverrides(raw: string | undefined): RpcOverrideMap | null {
     const parsedId = Number(rawId);
 
     if (!Number.isNaN(parsedId) && url) {
-      acc[parsedId] = url;
+      if (isValidUrl(url)) {
+        acc[parsedId] = url;
+      } else {
+        console.warn(`Invalid RPC URL for chain ${parsedId}: ${url}`);
+      }
     }
 
     return acc;

@@ -6,6 +6,8 @@ import { WalletConnect } from "@/components/wallet-connect";
 import { HistoryModal } from "@/components/history-modal";
 import { LocalTransaction } from "@/lib/types";
 import AnimatedBackground from "@/components/animated-bg";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { BridgeErrorFallback } from "@/components/bridge/BridgeErrorFallback";
 
 export default function Home() {
   const [loadedTransaction, setLoadedTransaction] =
@@ -41,10 +43,16 @@ export default function Home() {
             {`A native USDC bridge powered by Circle's CCTP infrastructure.`}
           </div>
         </div>
-        <BridgeCard
-          loadedTransaction={loadedTransaction}
-          onBackToNew={handleBackToNew}
-        />
+        <ErrorBoundary
+          fallback={({ error, retry }) => (
+            <BridgeErrorFallback error={error} resetErrorBoundary={retry} />
+          )}
+        >
+          <BridgeCard
+            loadedTransaction={loadedTransaction}
+            onBackToNew={handleBackToNew}
+          />
+        </ErrorBoundary>
       </div>
     </AnimatedBackground>
   );

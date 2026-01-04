@@ -9,7 +9,7 @@ import {
   getProviderFromWalletClient,
   resolveBridgeChain,
 } from "@/lib/bridgeKit";
-import { BridgeParams, LocalTransaction } from "@/lib/types";
+import { BridgeParams, LocalTransaction, asTxHash } from "@/lib/types";
 import { getErrorMessage } from "@/lib/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 
@@ -19,11 +19,12 @@ const findTxHashes = (steps: BridgeResult["steps"]) => {
   let completedAt: Date | undefined;
 
   for (const step of steps) {
-    if (!burnHash && step.txHash) {
-      burnHash = step.txHash as `0x${string}`;
+    const validatedHash = asTxHash(step.txHash);
+    if (!burnHash && validatedHash) {
+      burnHash = validatedHash;
     }
-    if (step.txHash && /mint|receive/i.test(step.name)) {
-      mintHash = step.txHash as `0x${string}`;
+    if (validatedHash && /mint|receive/i.test(step.name)) {
+      mintHash = validatedHash;
     }
     if (step.state === "success") {
       completedAt = new Date();
@@ -122,6 +123,8 @@ export const useBridge = () => {
   const pendingHashRef = useRef<`0x${string}` | null>(null);
   const approveToastShownRef = useRef(false);
   const providerNameRef = useRef<string | null>(null);
+  // Track added hashes to prevent race conditions with duplicate addTransaction calls
+  const addedHashesRef = useRef<Set<string>>(new Set());
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +159,7 @@ export const useBridge = () => {
       pendingHashRef.current = null;
       approveToastShownRef.current = false;
       providerNameRef.current = null;
+      addedHashesRef.current.clear();
 
       // Use custom target address if provided, otherwise fall back to sender
       const recipientAddress = params.targetAddress ?? address;
@@ -191,10 +195,7 @@ export const useBridge = () => {
         if (!name) return;
 
         const state = normalizeState(values?.state ?? raw?.state);
-        const txHash =
-          ((values?.txHash as `0x${string}` | undefined) ||
-            (typeof raw?.txHash === "string" ? (raw.txHash as `0x${string}`) : undefined)) ??
-          undefined;
+        const txHash = asTxHash(values?.txHash) ?? asTxHash(raw?.txHash);
         const explorerUrl = values?.explorerUrl as string | undefined;
         const errorMessage = values?.errorMessage as string | undefined;
         const error = values?.error;
@@ -253,7 +254,9 @@ export const useBridge = () => {
           const completedTime =
             bridgeState === "success" ? completedAt ?? new Date() : undefined;
 
-          if (!currentHashRef.current) {
+          // Use Set to prevent race conditions with duplicate addTransaction calls
+          if (!addedHashesRef.current.has(burnHash)) {
+            addedHashesRef.current.add(burnHash);
             currentHashRef.current = burnHash;
             addTransaction({
               hash: burnHash,
@@ -272,7 +275,7 @@ export const useBridge = () => {
               targetAddress: recipientAddress as `0x${string}` | undefined,
             });
           } else {
-            updateTransaction(currentHashRef.current, {
+            updateTransaction(burnHash, {
               steps: mergedSteps,
               bridgeState,
               status,
@@ -354,7 +357,9 @@ export const useBridge = () => {
           const completedTime =
             finalState === "success" ? completedAt ?? new Date() : undefined;
 
-          if (!currentHashRef.current) {
+          // Use Set to prevent race conditions with duplicate addTransaction calls
+          if (!addedHashesRef.current.has(burnHash)) {
+            addedHashesRef.current.add(burnHash);
             currentHashRef.current = burnHash;
             addTransaction({
               hash: burnHash,
@@ -373,7 +378,7 @@ export const useBridge = () => {
               targetAddress: recipientAddress as `0x${string}` | undefined,
             });
           } else {
-            updateTransaction(currentHashRef.current, {
+            updateTransaction(burnHash, {
               steps: mergedSteps,
               bridgeState: finalState,
               status,

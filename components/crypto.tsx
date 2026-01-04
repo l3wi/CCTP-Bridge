@@ -15,9 +15,16 @@ import {
 const wagmiChains = getWagmiChainsForEnv(BRIDGEKIT_ENV);
 const wagmiTransports = getWagmiTransportsForEnv(BRIDGEKIT_ENV);
 
+const walletConnectProjectId = process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID;
+if (!walletConnectProjectId) {
+  throw new Error(
+    "NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID environment variable is required"
+  );
+}
+
 const config = getDefaultConfig({
   appName: "Vanilla CCTP",
-  projectId: "0986356cfc85b6c59c45557e11c24451",
+  projectId: walletConnectProjectId,
   chains: wagmiChains,
   transports: wagmiTransports,
   batch: {
@@ -27,7 +34,7 @@ const config = getDefaultConfig({
 });
 const queryClient = new QueryClient();
 
-export default function CryptoProivders({
+export default function CryptoProviders({
   children,
 }: {
   children: React.ReactNode;

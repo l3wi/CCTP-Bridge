@@ -61,8 +61,20 @@ const normalizeTransaction = (
   };
 };
 
+// Type for values that can be serialized to JSON storage
+type SerializableValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Date
+  | bigint
+  | SerializableValue[]
+  | { [key: string]: SerializableValue };
+
 const sanitizeForStorage = <T>(value: T): T => {
-  const convert = (input: any): any => {
+  const convert = (input: unknown): unknown => {
     if (input instanceof Date) {
       return input.toISOString();
     }
@@ -72,8 +84,8 @@ const sanitizeForStorage = <T>(value: T): T => {
     if (Array.isArray(input)) {
       return input.map(convert);
     }
-    if (input && typeof input === "object") {
-      return Object.entries(input).reduce<Record<string, any>>(
+    if (input !== null && typeof input === "object") {
+      return Object.entries(input).reduce<Record<string, unknown>>(
         (acc, [key, val]) => {
           acc[key] = convert(val);
           return acc;
@@ -84,7 +96,7 @@ const sanitizeForStorage = <T>(value: T): T => {
     return input;
   };
 
-  return convert(value);
+  return convert(value) as T;
 };
 
 const migrateLegacyTransaction = (

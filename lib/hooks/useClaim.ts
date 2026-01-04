@@ -9,6 +9,7 @@ import {
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { getErrorMessage } from "@/lib/errors";
 import { useToast } from "@/components/ui/use-toast";
+import { asTxHash } from "@/lib/types";
 
 type BridgeStep = BridgeResult["steps"][number];
 
@@ -41,11 +42,12 @@ const extractHashes = (result: BridgeResult) => {
   let completedAt: Date | undefined;
 
   for (const step of result.steps) {
-    if (!burnHash && step.txHash) {
-      burnHash = step.txHash as `0x${string}`;
+    const validatedHash = asTxHash(step.txHash);
+    if (!burnHash && validatedHash) {
+      burnHash = validatedHash;
     }
-    if (step.txHash && /mint|claim|receive/i.test(step.name)) {
-      mintHash = step.txHash as `0x${string}`;
+    if (validatedHash && /mint|claim|receive/i.test(step.name)) {
+      mintHash = validatedHash;
     }
     if (step.state === "success") {
       completedAt = new Date();
@@ -76,9 +78,7 @@ export const useClaim = () => {
       const initialHashes = extractHashes(result);
       const baseHash =
         initialHashes.burnHash ||
-        (result.steps.find((step) => step.txHash)?.txHash as
-          | `0x${string}`
-          | undefined);
+        asTxHash(result.steps.find((step) => step.txHash)?.txHash);
 
       if (!baseHash) {
         throw new Error("No source transaction hash found for this transfer.");

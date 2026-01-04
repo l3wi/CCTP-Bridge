@@ -1,4 +1,4 @@
-import CryptoProivders from "@/components/crypto";
+import CryptoProviders from "@/components/crypto";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import "./globals.css";
 import { Analytics } from "@vercel/analytics/react";
@@ -55,7 +55,7 @@ export default function RootLayout({
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         <Analytics />
         <ErrorBoundary>
-          <CryptoProivders>{children}</CryptoProivders>
+          <CryptoProviders>{children}</CryptoProviders>
         </ErrorBoundary>
       </body>
     </html>

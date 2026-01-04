@@ -14,6 +14,7 @@ import { useClaim } from "@/lib/hooks/useClaim";
 import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { checkMintReadiness } from "@/lib/simulation";
+import { asTxHash } from "@/lib/types";
 
 // Polling configuration constants
 const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
@@ -105,6 +106,15 @@ export function BridgingState({
     lastChecked: null,
   });
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  // Track component mounted state to prevent setState after unmount
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     setLocalBridgeResult(bridgeResult);
@@ -120,11 +130,12 @@ export function BridgingState({
     let completedAt: Date | undefined;
 
     for (const step of res.steps) {
-      if (!burnHash && step.txHash) {
-        burnHash = step.txHash as `0x${string}`;
+      const validatedHash = asTxHash(step.txHash);
+      if (!burnHash && validatedHash) {
+        burnHash = validatedHash;
       }
-      if (step.txHash && /mint|claim|receive/i.test(step.name)) {
-        mintHash = step.txHash as `0x${string}`;
+      if (validatedHash && /mint|claim|receive/i.test(step.name)) {
+        mintHash = validatedHash;
       }
       if (step.state === "success") {
         completedAt = new Date();
@@ -356,10 +367,11 @@ export function BridgingState({
     if (!displayResult?.steps) return null;
     // Find the burn step or first step with a tx hash
     const burnStep = displayResult.steps.find((s) => /burn/i.test(s.name));
-    if (burnStep?.txHash) return burnStep.txHash as `0x${string}`;
+    const burnHash = asTxHash(burnStep?.txHash);
+    if (burnHash) return burnHash;
     // Fallback to first tx hash
     const firstWithHash = displayResult.steps.find((s) => s.txHash);
-    return firstWithHash?.txHash as `0x${string}` | null;
+    return asTxHash(firstWithHash?.txHash) ?? null;
   }, [displayResult?.steps]);
 
   // Check if we should poll for mint readiness (>5 min old, not completed, within time limit)
@@ -411,6 +423,7 @@ export function BridgingState({
 
     const checkMint = async () => {
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
+      if (!isMountedRef.current) return;
 
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
@@ -420,6 +433,9 @@ export function BridgingState({
           destinationChainId,
           burnTxHash
         );
+
+        // Check if still mounted after async operation
+        if (!isMountedRef.current) return;
 
         setMintSimulation({
           canMint: result.canMint,
@@ -453,12 +469,15 @@ export function BridgingState({
             steps: updatedSteps,
           });
 
-          setLocalBridgeResult((prev) =>
-            prev ? { ...prev, state: "success", steps: updatedSteps } : prev
-          );
+          if (isMountedRef.current) {
+            setLocalBridgeResult((prev) =>
+              prev ? { ...prev, state: "success", steps: updatedSteps } : prev
+            );
+          }
         }
       } catch (error) {
         console.error("Mint readiness check failed:", error);
+        if (!isMountedRef.current) return;
         setMintSimulation((prev) => ({
           ...prev,
           checking: false,

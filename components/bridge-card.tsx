@@ -31,6 +31,7 @@ import { getErrorMessage } from "@/lib/errors";
 import { AmountState, LocalTransaction } from "@/lib/types";
 import { useBridge } from "@/lib/hooks/useBridge";
 import { useBalance } from "@/lib/hooks/useBalance";
+import { useDebouncedAddressValidation } from "@/lib/hooks/useDebouncedAddressValidation";
 import { useToast } from "@/components/ui/use-toast";
 import {
   LoadingButton,
@@ -104,6 +105,11 @@ export function BridgeCard({
     `0x${string}` | null
   >(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
+
+  // Debounced address validation for custom recipient
+  const addressValidation = useDebouncedAddressValidation(
+    diffWallet ? targetAddress : undefined
+  );
 
   type ChainOption = {
     value: string;
@@ -1194,14 +1200,26 @@ export function BridgeCard({
               </div>
               {diffWallet && (
                 <div className="space-y-2">
-                  <Label className="text-sm text-slate-300">
-                    Destination Wallet
-                  </Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm text-slate-300">
+                      Destination Wallet
+                    </Label>
+                    {addressValidation.isValidating && (
+                      <span className="text-xs text-slate-400">Validating...</span>
+                    )}
+                    {addressValidation.error && !addressValidation.isValidating && (
+                      <span className="text-xs text-red-400">{addressValidation.error}</span>
+                    )}
+                  </div>
                   <Input
                     placeholder="0x..."
                     value={targetAddress || ""}
                     onChange={(e) => setTargetAddress(e.target.value)}
-                    className="bg-slate-700/50 border-slate-600 text-white"
+                    className={`bg-slate-700/50 border-slate-600 text-white ${
+                      addressValidation.error && !addressValidation.isValidating
+                        ? "border-red-500 focus:border-red-500"
+                        : ""
+                    }`}
                     disabled={isLoading}
                   />
                 </div>

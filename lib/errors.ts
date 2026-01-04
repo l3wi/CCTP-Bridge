@@ -1,3 +1,5 @@
+import { BaseError as ViemBaseError } from "viem";
+
 export class BridgeError extends Error {
   constructor(message: string, public code: string, public details?: any) {
     super(message);
@@ -48,18 +50,42 @@ export const getErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
+  // Handle viem errors - extract shortMessage if available
+  if (error instanceof ViemBaseError) {
+    return error.shortMessage || error.message;
+  }
+
   if (error instanceof Error) {
+    const message = error.message.toLowerCase();
+
     // Handle common blockchain errors
-    if (error.message.includes("User rejected")) {
+    if (message.includes("user rejected") || message.includes("user denied")) {
       return "Transaction was cancelled by user";
     }
-    if (error.message.includes("insufficient funds")) {
+    if (message.includes("insufficient funds")) {
       return "Insufficient funds for transaction";
     }
-    if (error.message.includes("gas")) {
-      return "Transaction failed due to gas issues";
+    if (message.includes("gas required exceeds") || message.includes("out of gas")) {
+      return "Transaction failed due to insufficient gas";
     }
+    if (message.includes("nonce too low") || message.includes("nonce has already been used")) {
+      return "Transaction nonce conflict - please try again";
+    }
+    if (message.includes("replacement transaction underpriced")) {
+      return "Gas price too low - increase gas and retry";
+    }
+    if (message.includes("execution reverted")) {
+      return "Transaction reverted by contract";
+    }
+    if (message.includes("timeout") || message.includes("timed out")) {
+      return "Request timed out - please try again";
+    }
+
     return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
   }
 
   return "An unexpected error occurred";

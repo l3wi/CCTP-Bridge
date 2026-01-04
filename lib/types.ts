@@ -185,3 +185,17 @@ export interface UseTransactionHistoryReturn {
   ) => void;
   clearTransactions: () => void;
 }
+
+// Transaction hash validation utilities
+// Validates that a value is a properly formatted Ethereum transaction hash (0x + 64 hex chars)
+export const isValidTxHash = (value: unknown): value is `0x${string}` => {
+  return (
+    typeof value === "string" &&
+    /^0x[a-fA-F0-9]{64}$/.test(value)
+  );
+};
+
+// Safely converts unknown value to tx hash, returning undefined if invalid
+export const asTxHash = (value: unknown): `0x${string}` | undefined => {
+  return isValidTxHash(value) ? value : undefined;
+};
