@@ -90,6 +90,12 @@ export function HistoryModal({
     }).length;
   }, [transactions]);
 
+  // Create a set of existing tx hashes for duplicate detection
+  const existingHashes = useMemo(
+    () => new Set(transactions.map((tx) => tx.hash.toLowerCase())),
+    [transactions]
+  );
+
   const badgeLabel =
     claimableCount > 0
       ? `${claimableCount} Claimable`
@@ -156,6 +162,7 @@ export function HistoryModal({
               onBack={() => setView("history")}
               onSuccess={handleAddTransactionSuccess}
               addTransaction={addTransaction}
+              existingHashes={existingHashes}
             />
           )}
         </DialogContent>
@@ -352,9 +359,10 @@ interface AddTransactionViewProps {
   onBack: () => void;
   onSuccess: () => void;
   addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
+  existingHashes: Set<string>;
 }
 
-function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactionViewProps) {
+function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes }: AddTransactionViewProps) {
   const [selectedChainId, setSelectedChainId] = useState<number | null>(null);
   const [txHash, setTxHash] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -375,6 +383,12 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
       return;
     }
 
+    // Check for duplicate transaction
+    if (existingHashes.has(normalizedHash)) {
+      setError("This transaction has already been added");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
@@ -390,6 +404,12 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
       // Get target chain from destination domain
       const targetChainId = getChainIdFromDomain(attestationData.destinationDomain, BRIDGEKIT_ENV);
 
+      if (!targetChainId) {
+        setError("Unsupported destination chain");
+        setIsLoading(false);
+        return;
+      }
+
       // Format amount from raw value (6 decimals for USDC)
       let formattedAmount: string | undefined;
       if (attestationData.amount) {
@@ -398,6 +418,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
       }
 
       // Create steps based on attestation status
+      // Valid states: "error" | "success" | "pending" | "noop"
       const steps = [
         { name: "Burn", state: "success" as const },
         {
@@ -406,7 +427,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
         },
         {
           name: "Mint",
-          state: attestationData.status === "complete" ? "ready" as const : "pending" as const
+          state: "pending" as const
         },
       ];
 
@@ -414,10 +435,10 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
       const transaction: Omit<LocalTransaction, "date"> = {
         hash: normalizedHash as `0x${string}`,
         originChain: selectedChainId,
-        targetChain: targetChainId ?? undefined,
+        targetChain: targetChainId,
         targetAddress: attestationData.mintRecipient as `0x${string}` | undefined,
         amount: formattedAmount,
-        status: attestationData.status === "complete" ? "pending" : "pending",
+        status: "pending" as const,
         version: "v2",
         transferType: "standard",
         steps,
@@ -467,6 +488,9 @@ function AddTransactionView({ onBack, onSuccess, addTransaction }: AddTransactio
                   height={24}
                   className="w-6 h-6"
                   alt={chain.name}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                  }}
                 />
                 <span className="text-sm truncate">{chain.name.split(" ")[0]}</span>
               </button>
