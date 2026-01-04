@@ -13,7 +13,12 @@ import { getExplorerTxUrl } from "@/lib/bridgeKit";
 import { useClaim } from "@/lib/hooks/useClaim";
 import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useTransactionStore } from "@/lib/store/transactionStore";
-import { checkMintReadiness, type SimulationResult } from "@/lib/simulation";
+import { checkMintReadiness } from "@/lib/simulation";
+
+// Polling configuration constants
+const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
+const POLL_INTERVAL_MS = 10_000; // Poll every 10 seconds
+const MAX_POLL_ATTEMPTS = 360; // Stop after 1 hour (360 * 10s = 3600s)
 
 const STEP_ORDER = [
   { id: "approve" as const, label: "Approve" },
@@ -99,6 +104,7 @@ export function BridgingState({
     attestationReady: false,
     lastChecked: null,
   });
+  const [pollAttempts, setPollAttempts] = useState(0);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -357,25 +363,28 @@ export function BridgingState({
     return firstWithHash?.txHash as `0x${string}` | null;
   }, [displayResult?.steps]);
 
-  // Check if we should poll for mint readiness (>5 min old, not completed)
+  // Check if we should poll for mint readiness (>5 min old, not completed, within attempt limit)
   const shouldPoll = useMemo(() => {
     // Don't poll if already successful
     if (displayResult?.state === "success") return false;
     if (mintSimulation.alreadyMinted) return false;
 
+    // Don't poll if max attempts reached (1 hour)
+    if (pollAttempts >= MAX_POLL_ATTEMPTS) return false;
+
     // Don't poll if we don't have required data
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
 
-    // Check if bridge is >5 minutes old
+    // Check if bridge is old enough to start polling
     const referenceTime = burnCompletedAt ?? startedAt;
     if (!referenceTime) return false;
 
     const ageMs = Date.now() - referenceTime.getTime();
-    const fiveMinutesMs = 5 * 60 * 1000;
-    return ageMs >= fiveMinutesMs;
+    return ageMs >= POLL_START_DELAY_MS;
   }, [
     displayResult?.state,
     mintSimulation.alreadyMinted,
+    pollAttempts,
     burnTxHash,
     sourceChainId,
     destinationChainId,
@@ -383,7 +392,7 @@ export function BridgingState({
     startedAt,
   ]);
 
-  // Poll for mint readiness every 10 seconds
+  // Poll for mint readiness at configured interval
   useEffect(() => {
     if (!shouldPoll) {
       // Clear any existing polling
@@ -397,6 +406,8 @@ export function BridgingState({
     const checkMint = async () => {
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
 
+      // Increment attempt counter
+      setPollAttempts((prev) => prev + 1);
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
       try {
@@ -455,8 +466,8 @@ export function BridgingState({
     // Check immediately
     checkMint();
 
-    // Then poll every 10 seconds
-    pollingRef.current = setInterval(checkMint, 10_000);
+    // Then poll at configured interval
+    pollingRef.current = setInterval(checkMint, POLL_INTERVAL_MS);
 
     return () => {
       if (pollingRef.current) {

@@ -13,7 +13,6 @@ import { simulateMint } from "@/lib/simulation";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
-  getChainIdFromDomain,
 } from "@/lib/contracts";
 import { getExplorerTxUrl } from "@/lib/bridgeKit";
 import type { BridgeResult } from "@circle-fin/bridge-kit";

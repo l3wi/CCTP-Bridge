@@ -1,57 +1,11 @@
 /**
- * CCTP contract addresses and ABI definitions for direct contract interactions.
- * Used for manual mint execution bypassing Bridge Kit SDK.
+ * CCTP contract utilities - pulls data from Bridge Kit SDK (single source of truth).
+ * Used for direct contract interactions bypassing Bridge Kit's bridge flow.
  */
 
-// MessageTransmitter contract addresses by chainId
-export const MESSAGE_TRANSMITTER_ADDRESSES: Record<number, `0x${string}`> = {
-  // Mainnet
-  1: "0x0a992d191deec32afe36203ad87d7d289a738f81", // Ethereum
-  43114: "0x8186359af5f57fbb40c6b14a588d2a59c0c29880", // Avalanche
-  10: "0x4d41f22c5a0e5c74090899e5a8fb597a8842b3e8", // Optimism
-  42161: "0xC30362313FBBA5cf9163F0bb16a0e01f01A896ca", // Arbitrum
-  8453: "0xAD09780d193884d503182aD4588450C416D6F9D4", // Base
-  137: "0xF3be9355363857F3e001be68856A2f96b4C39Ba9", // Polygon
+import { getBridgeKit, getSupportedEvmChains, type BridgeEnvironment } from "./bridgeKit";
 
-  // Testnet
-  11155111: "0x7865fAfC2db2093669d92c0F33AeEF291086BEFD", // Ethereum Sepolia
-  43113: "0xa9fb1b3009dcb79e2fe346c16a604b8fa8ae0a79", // Avalanche Fuji
-  11155420: "0x7865fAfC2db2093669d92c0F33AeEF291086BEFD", // Optimism Sepolia
-  421614: "0xaCF1ceeF35caAc005e15888dDb8A3515C41B4872", // Arbitrum Sepolia
-  84532: "0x7865fAfC2db2093669d92c0F33AeEF291086BEFD", // Base Sepolia
-  80002: "0x7865fAfC2db2093669d92c0F33AeEF291086BEFD", // Polygon Amoy
-};
-
-// CCTP Domain IDs - used for Iris API queries
-export const CCTP_DOMAIN_IDS: Record<number, number> = {
-  // Mainnet
-  1: 0, // Ethereum
-  43114: 1, // Avalanche
-  10: 2, // Optimism
-  42161: 3, // Arbitrum
-  8453: 6, // Base
-  137: 7, // Polygon
-
-  // Testnet
-  11155111: 0, // Ethereum Sepolia
-  43113: 1, // Avalanche Fuji
-  11155420: 2, // Optimism Sepolia
-  421614: 3, // Arbitrum Sepolia
-  84532: 6, // Base Sepolia
-  80002: 7, // Polygon Amoy
-};
-
-// Reverse mapping: domain -> chainId (mainnet only for now)
-export const DOMAIN_TO_CHAIN_ID: Record<number, number> = {
-  0: 1, // Ethereum
-  1: 43114, // Avalanche
-  2: 10, // Optimism
-  3: 42161, // Arbitrum
-  6: 8453, // Base
-  7: 137, // Polygon
-};
-
-// MessageTransmitter ABI - only the functions we need
+// ABI for MessageTransmitter - only functions we need for direct mint
 export const MESSAGE_TRANSMITTER_ABI = [
   {
     inputs: [
@@ -73,32 +27,68 @@ export const MESSAGE_TRANSMITTER_ABI = [
 ] as const;
 
 /**
- * Get MessageTransmitter address for a given chain
+ * Get MessageTransmitter address for a chain from Bridge Kit.
+ * Prefers v2 contracts, falls back to v1.
  */
 export function getMessageTransmitterAddress(
-  chainId: number
+  chainId: number,
+  env?: BridgeEnvironment
 ): `0x${string}` | null {
-  return MESSAGE_TRANSMITTER_ADDRESSES[chainId] ?? null;
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.chainId === chainId);
+
+  if (!chain?.cctp?.contracts) return null;
+
+  const contracts = chain.cctp.contracts;
+
+  // Try v2 first (CCTPv2 uses split config with messageTransmitter)
+  const v2 = contracts.v2 as { messageTransmitter?: string } | undefined;
+  if (v2?.messageTransmitter) {
+    return v2.messageTransmitter as `0x${string}`;
+  }
+
+  // Fall back to v1
+  const v1 = contracts.v1 as { messageTransmitter?: string } | undefined;
+  if (v1?.messageTransmitter) {
+    return v1.messageTransmitter as `0x${string}`;
+  }
+
+  return null;
 }
 
 /**
- * Get CCTP domain ID for a given chain
+ * Get CCTP domain ID for a chain from Bridge Kit.
  */
-export function getCctpDomainId(chainId: number): number | null {
-  return CCTP_DOMAIN_IDS[chainId] ?? null;
+export function getCctpDomainId(
+  chainId: number,
+  env?: BridgeEnvironment
+): number | null {
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.chainId === chainId);
+  return chain?.cctp?.domain ?? null;
 }
 
 /**
- * Get chain ID from CCTP domain (mainnet)
+ * Get chain ID from CCTP domain.
+ * Searches all supported chains for matching domain.
  */
-export function getChainIdFromDomain(domain: number): number | null {
-  return DOMAIN_TO_CHAIN_ID[domain] ?? null;
+export function getChainIdFromDomain(
+  domain: number,
+  env?: BridgeEnvironment
+): number | null {
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.cctp?.domain === domain);
+  return chain?.chainId ?? null;
 }
 
 /**
- * Check if a chain is a testnet based on chainId
+ * Check if a chain is a testnet based on Bridge Kit data.
  */
-export function isTestnetChain(chainId: number): boolean {
-  const testnetChainIds = [11155111, 43113, 11155420, 421614, 84532, 80002];
-  return testnetChainIds.includes(chainId);
+export function isTestnetChain(
+  chainId: number,
+  env?: BridgeEnvironment
+): boolean {
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.chainId === chainId);
+  return chain?.isTestnet ?? false;
 }

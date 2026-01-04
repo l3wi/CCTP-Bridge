@@ -3,29 +3,22 @@
  * Simulates the receiveMessage call to check if a mint can be executed.
  */
 
-import { createPublicClient, http, keccak256, encodePacked } from "viem";
-import { mainnet, sepolia, avalanche, avalancheFuji, optimism, optimismSepolia, arbitrum, arbitrumSepolia, base, baseSepolia, polygon, polygonAmoy } from "viem/chains";
+import { createPublicClient, keccak256, encodePacked } from "viem";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
-  getCctpDomainId,
 } from "./contracts";
+import {
+  getWagmiChainsForEnv,
+  getWagmiTransportsForEnv,
+} from "./bridgeKit";
 
-// Chain configs for viem
-const CHAIN_CONFIGS: Record<number, typeof mainnet> = {
-  1: mainnet,
-  11155111: sepolia,
-  43114: avalanche,
-  43113: avalancheFuji,
-  10: optimism,
-  11155420: optimismSepolia,
-  42161: arbitrum,
-  421614: arbitrumSepolia,
-  8453: base,
-  84532: baseSepolia,
-  137: polygon,
-  80002: polygonAmoy,
-};
+// CCTP message format constants
+const CCTP_MESSAGE_HEADER_BYTES = 148; // Minimum header size
+const CCTP_NONCE_OFFSET = 12; // Nonce starts at byte 12
+const CCTP_NONCE_LENGTH = 32; // Nonce is 32 bytes
+const CCTP_SOURCE_DOMAIN_OFFSET = 4; // Source domain at byte 4
+const CCTP_SOURCE_DOMAIN_LENGTH = 4; // Domain is 4 bytes
 
 export interface SimulationResult {
   success: boolean;
@@ -35,17 +28,25 @@ export interface SimulationResult {
 }
 
 /**
- * Create a public client for a given chain ID
+ * Create a public client for a given chain ID using app's RPC config.
  */
 function getPublicClient(chainId: number) {
-  const chain = CHAIN_CONFIGS[chainId];
+  const chains = getWagmiChainsForEnv();
+  const transports = getWagmiTransportsForEnv();
+
+  const chain = chains.find((c) => c.id === chainId);
   if (!chain) {
     throw new Error(`Unsupported chain: ${chainId}`);
   }
 
+  const transport = transports[chainId];
+  if (!transport) {
+    throw new Error(`No RPC transport configured for chain ${chainId}`);
+  }
+
   return createPublicClient({
     chain,
-    transport: http(),
+    transport,
   });
 }
 
@@ -80,22 +81,60 @@ export async function checkNonceUsed(
 }
 
 /**
+ * Validate CCTP message format before extracting data.
+ * Returns true if message has valid structure.
+ */
+function validateMessageFormat(message: `0x${string}`): boolean {
+  if (!message || !message.startsWith("0x")) {
+    return false;
+  }
+
+  // Calculate byte length (subtract 0x prefix, divide by 2 for hex chars)
+  const byteLength = (message.length - 2) / 2;
+
+  // Message must be at least header size
+  if (byteLength < CCTP_MESSAGE_HEADER_BYTES) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
  * Extract nonce from CCTP message bytes.
  * Message format: version (4) + sourceDomain (4) + destinationDomain (4) + nonce (32) + ...
- * Nonce is at bytes 12-44 (0-indexed)
+ * Nonce is at bytes 12-44 (0-indexed, exclusive end)
  */
 export function extractNonceFromMessage(message: `0x${string}`): `0x${string}` {
-  // Remove 0x prefix, nonce starts at byte 12 (char 24) and is 32 bytes (64 chars)
-  const nonceHex = message.slice(2 + 24, 2 + 24 + 64);
+  if (!validateMessageFormat(message)) {
+    throw new Error(
+      `Invalid CCTP message format: expected at least ${CCTP_MESSAGE_HEADER_BYTES} bytes`
+    );
+  }
+
+  // Convert byte offsets to hex char positions (multiply by 2, add 2 for 0x prefix)
+  const startChar = 2 + CCTP_NONCE_OFFSET * 2;
+  const endChar = startChar + CCTP_NONCE_LENGTH * 2;
+  const nonceHex = message.slice(startChar, endChar);
+
   return `0x${nonceHex}` as `0x${string}`;
 }
 
 /**
  * Extract source domain from CCTP message bytes.
- * Source domain is at bytes 4-8
+ * Source domain is at bytes 4-8 (0-indexed, exclusive end)
  */
 export function extractSourceDomainFromMessage(message: `0x${string}`): number {
-  const domainHex = message.slice(2 + 8, 2 + 16);
+  if (!validateMessageFormat(message)) {
+    throw new Error(
+      `Invalid CCTP message format: expected at least ${CCTP_MESSAGE_HEADER_BYTES} bytes`
+    );
+  }
+
+  const startChar = 2 + CCTP_SOURCE_DOMAIN_OFFSET * 2;
+  const endChar = startChar + CCTP_SOURCE_DOMAIN_LENGTH * 2;
+  const domainHex = message.slice(startChar, endChar);
+
   return parseInt(domainHex, 16);
 }
 
@@ -122,9 +161,19 @@ export async function simulateMint(
     };
   }
 
+  // Validate message format before processing
+  if (!validateMessageFormat(message)) {
+    return {
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
+      error: `Invalid CCTP message format`,
+    };
+  }
+
   const client = getPublicClient(destinationChainId);
 
-  // First, check if nonce is already used
+  // Extract nonce and source domain for nonce check
   const nonce = extractNonceFromMessage(message);
   const sourceDomain = extractSourceDomainFromMessage(message);
 
@@ -157,8 +206,12 @@ export async function simulateMint(
       canMint: true,
       alreadyMinted: false,
     };
-  } catch (error: any) {
-    const errorMessage = error?.message || String(error);
+  } catch (error: unknown) {
+    // Log full error for debugging before truncating
+    console.error("Mint simulation failed:", error);
+
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
 
     // Check for nonce already used error
     if (/nonce already used/i.test(errorMessage)) {
@@ -184,7 +237,7 @@ export async function simulateMint(
       success: false,
       canMint: false,
       alreadyMinted: false,
-      error: errorMessage.slice(0, 200), // Truncate long errors
+      error: errorMessage.slice(0, 200), // Truncate for UI display
     };
   }
 }

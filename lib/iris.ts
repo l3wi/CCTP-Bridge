@@ -84,11 +84,13 @@ export async function fetchAttestation(
     });
 
     if (!response.ok) {
-      if (response.status === 404) {
-        // Transaction not found or attestation not ready
-        return null;
+      // Log non-404 errors for debugging, but always return null
+      if (response.status !== 404) {
+        console.error(
+          `Iris API error: ${response.status} ${response.statusText}`
+        );
       }
-      throw new Error(`Iris API error: ${response.status} ${response.statusText}`);
+      return null;
     }
 
     const data: IrisAttestationResponse = await response.json();
