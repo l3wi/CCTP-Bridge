@@ -18,7 +18,7 @@ import { checkMintReadiness } from "@/lib/simulation";
 // Polling configuration constants
 const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
 const POLL_INTERVAL_MS = 10_000; // Poll every 10 seconds
-const MAX_POLL_ATTEMPTS = 360; // Stop after 1 hour (360 * 10s = 3600s)
+const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour of total poll time
 
 const STEP_ORDER = [
   { id: "approve" as const, label: "Approve" },
@@ -104,7 +104,6 @@ export function BridgingState({
     attestationReady: false,
     lastChecked: null,
   });
-  const [pollAttempts, setPollAttempts] = useState(0);
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -363,14 +362,11 @@ export function BridgingState({
     return firstWithHash?.txHash as `0x${string}` | null;
   }, [displayResult?.steps]);
 
-  // Check if we should poll for mint readiness (>5 min old, not completed, within attempt limit)
+  // Check if we should poll for mint readiness (>5 min old, not completed, within time limit)
   const shouldPoll = useMemo(() => {
     // Don't poll if already successful
     if (displayResult?.state === "success") return false;
     if (mintSimulation.alreadyMinted) return false;
-
-    // Don't poll if max attempts reached (1 hour)
-    if (pollAttempts >= MAX_POLL_ATTEMPTS) return false;
 
     // Don't poll if we don't have required data
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
@@ -380,11 +376,18 @@ export function BridgingState({
     if (!referenceTime) return false;
 
     const ageMs = Date.now() - referenceTime.getTime();
-    return ageMs >= POLL_START_DELAY_MS;
+
+    // Don't poll if not yet old enough
+    if (ageMs < POLL_START_DELAY_MS) return false;
+
+    // Stop polling after max duration (1 hour after poll start time)
+    const pollDurationMs = ageMs - POLL_START_DELAY_MS;
+    if (pollDurationMs >= MAX_POLL_DURATION_MS) return false;
+
+    return true;
   }, [
     displayResult?.state,
     mintSimulation.alreadyMinted,
-    pollAttempts,
     burnTxHash,
     sourceChainId,
     destinationChainId,
@@ -403,11 +406,12 @@ export function BridgingState({
       return;
     }
 
+    // Capture steps at effect start to avoid stale closure
+    const currentSteps = displayResult?.steps || [];
+
     const checkMint = async () => {
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
 
-      // Increment attempt counter
-      setPollAttempts((prev) => prev + 1);
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
       try {
@@ -428,7 +432,7 @@ export function BridgingState({
 
         // If already minted, update the transaction
         if (result.alreadyMinted && burnTxHash) {
-          const updatedSteps = (displayResult?.steps || []).map((step) => {
+          const updatedSteps = currentSteps.map((step) => {
             if (/attestation|attest/i.test(step.name)) {
               return { ...step, state: "success" as const };
             }
@@ -548,8 +552,8 @@ export function BridgingState({
       displayResult?.steps
     );
 
-    if (result.success) {
-      // Update local state
+    if (result.success || result.alreadyMinted) {
+      // Update local state - handle both successful mint and already minted cases
       const updatedSteps = (displayResult?.steps || []).map((step) => {
         if (/attestation|attest/i.test(step.name)) {
           return { ...step, state: "success" as const };
@@ -559,6 +563,9 @@ export function BridgingState({
             ...step,
             state: "success" as const,
             txHash: result.mintTxHash,
+            errorMessage: result.alreadyMinted
+              ? "USDC claimed. Check your wallet for the USDC"
+              : undefined,
           };
         }
         return step;
@@ -570,12 +577,24 @@ export function BridgingState({
           name: "Mint",
           state: "success",
           txHash: result.mintTxHash,
+          errorMessage: result.alreadyMinted
+            ? "USDC claimed. Check your wallet for the USDC"
+            : undefined,
         });
       }
 
       setLocalBridgeResult((prev) =>
         prev ? { ...prev, state: "success", steps: updatedSteps } : prev
       );
+
+      // Sync mintSimulation state to stop polling
+      if (result.alreadyMinted) {
+        setMintSimulation((prev) => ({
+          ...prev,
+          alreadyMinted: true,
+          canMint: false,
+        }));
+      }
 
       if (displayResult) {
         onBridgeResultUpdate?.({
@@ -584,7 +603,7 @@ export function BridgingState({
           steps: updatedSteps,
         });
       }
-    } else if (!result.alreadyMinted) {
+    } else {
       toast({
         title: "Claim failed",
         description: result.error || "Unable to complete mint",
