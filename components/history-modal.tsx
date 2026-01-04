@@ -14,9 +14,10 @@ import { useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import Image from "next/image";
-import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
+import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainById } from "@/lib/bridgeKit";
 import { fetchAttestation } from "@/lib/iris";
-import { getChainIdFromDomain } from "@/lib/contracts";
+import { getChainIdFromDomain, isNonceUsed } from "@/lib/contracts";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
   open?: boolean;
@@ -410,6 +411,20 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         return;
       }
 
+      // Check if the transaction has already been claimed by querying usedNonces
+      let isAlreadyClaimed = false;
+      if (attestationData.status === "complete") {
+        const nonceUsed = await isNonceUsed(
+          targetChainId,
+          attestationData.sourceDomain,
+          attestationData.nonce,
+          BRIDGEKIT_ENV
+        );
+        if (nonceUsed === true) {
+          isAlreadyClaimed = true;
+        }
+      }
+
       // Format amount from raw value (6 decimals for USDC)
       let formattedAmount: string | undefined;
       if (attestationData.amount) {
@@ -417,19 +432,49 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         formattedAmount = amountNum.toFixed(2);
       }
 
-      // Create steps based on attestation status
+      // Get chain definitions for bridgeResult
+      const sourceChain = getBridgeChainById(selectedChainId, BRIDGEKIT_ENV);
+      const destChain = getBridgeChainById(targetChainId, BRIDGEKIT_ENV);
+
+      // Determine step states based on attestation and claim status
       // Valid states: "error" | "success" | "pending" | "noop"
-      const steps = [
-        { name: "Burn", state: "success" as const },
+      const attestationReady = attestationData.status === "complete";
+      const steps: BridgeResult["steps"] = [
+        {
+          name: "Burn",
+          state: "success",
+          txHash: normalizedHash as `0x${string}`,
+        },
         {
           name: "Fetch Attestation",
-          state: attestationData.status === "complete" ? "success" as const : "pending" as const
+          state: attestationReady ? "success" : "pending"
         },
         {
           name: "Mint",
-          state: "pending" as const
+          state: isAlreadyClaimed ? "success" : "pending"
         },
       ];
+
+      // Determine overall status
+      const txStatus = isAlreadyClaimed ? "claimed" : "pending";
+      const bridgeState = isAlreadyClaimed ? "success" : "pending";
+
+      // Construct a minimal bridgeResult for resume capability
+      const bridgeResult: BridgeResult = {
+        state: bridgeState,
+        provider: "CCTPV2BridgingProvider",
+        amount: formattedAmount || "0",
+        token: "USDC",
+        source: {
+          address: (attestationData.mintRecipient || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+          chain: sourceChain!,
+        },
+        destination: {
+          address: (attestationData.mintRecipient || "0x0000000000000000000000000000000000000000") as `0x${string}`,
+          chain: destChain!,
+        },
+        steps,
+      };
 
       // Create the transaction entry
       const transaction: Omit<LocalTransaction, "date"> = {
@@ -438,11 +483,13 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         targetChain: targetChainId,
         targetAddress: attestationData.mintRecipient as `0x${string}` | undefined,
         amount: formattedAmount,
-        status: "pending" as const,
+        status: txStatus,
         version: "v2",
         transferType: "standard",
         steps,
-        bridgeState: "pending",
+        bridgeState,
+        provider: "CCTPV2BridgingProvider",
+        bridgeResult,
       };
 
       addTransaction(transaction);

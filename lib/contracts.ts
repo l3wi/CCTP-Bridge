@@ -3,6 +3,7 @@
  * Used for direct contract interactions bypassing Bridge Kit's bridge flow.
  */
 
+import { createPublicClient, http, encodePacked, keccak256 } from "viem";
 import { getBridgeKit, getSupportedEvmChains, type BridgeEnvironment } from "./bridgeKit";
 
 // ABI for MessageTransmitter - only functions we need for direct mint
@@ -91,4 +92,81 @@ export function isTestnetChain(
   const chains = getSupportedEvmChains(env);
   const chain = chains.find((c) => c.chainId === chainId);
   return chain?.isTestnet ?? false;
+}
+
+/**
+ * Compute the sourceAndNonce hash used by CCTP's usedNonces mapping.
+ * This matches the CCTP contract's _hashSourceAndNonce implementation.
+ */
+export function hashSourceAndNonce(sourceDomain: number, nonce: string): `0x${string}` {
+  // CCTP uses keccak256(abi.encodePacked(uint32 sourceDomain, uint64 nonce))
+  return keccak256(
+    encodePacked(
+      ["uint32", "uint64"],
+      [sourceDomain, BigInt(nonce)]
+    )
+  );
+}
+
+/**
+ * Check if a CCTP message nonce has been used (transaction already claimed).
+ * Queries the usedNonces mapping on the destination chain's MessageTransmitter.
+ *
+ * @param destinationChainId - The destination chain ID
+ * @param sourceDomain - The source CCTP domain
+ * @param nonce - The message nonce
+ * @param env - Bridge environment (mainnet/testnet)
+ * @returns true if nonce is used (already claimed), false if not, null on error
+ */
+export async function isNonceUsed(
+  destinationChainId: number,
+  sourceDomain: number,
+  nonce: string,
+  env?: BridgeEnvironment
+): Promise<boolean | null> {
+  const messageTransmitter = getMessageTransmitterAddress(destinationChainId, env);
+  if (!messageTransmitter) {
+    console.error(`No MessageTransmitter found for chain ${destinationChainId}`);
+    return null;
+  }
+
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.chainId === destinationChainId);
+  if (!chain) {
+    console.error(`Chain ${destinationChainId} not found`);
+    return null;
+  }
+
+  // Get RPC URL for destination chain
+  const rpcUrl = chain.rpcEndpoints?.[0];
+
+  try {
+    const client = createPublicClient({
+      chain: {
+        id: chain.chainId,
+        name: chain.name,
+        nativeCurrency: chain.nativeCurrency,
+        rpcUrls: {
+          default: { http: rpcUrl ? [rpcUrl] : [] },
+          public: { http: rpcUrl ? [rpcUrl] : [] },
+        },
+      },
+      transport: rpcUrl ? http(rpcUrl) : http(),
+    });
+
+    const sourceAndNonce = hashSourceAndNonce(sourceDomain, nonce);
+
+    const result = await client.readContract({
+      address: messageTransmitter,
+      abi: MESSAGE_TRANSMITTER_ABI,
+      functionName: "usedNonces",
+      args: [sourceAndNonce],
+    });
+
+    // usedNonces returns 1 if used, 0 if not
+    return result === BigInt(1);
+  } catch (error) {
+    console.error("Failed to check nonce status:", error);
+    return null;
+  }
 }
