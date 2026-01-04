@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, ExternalLink, Loader2, X } from "lucide-react";
@@ -11,7 +11,9 @@ import { useAccount, useSwitchChain } from "wagmi";
 import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrl } from "@/lib/bridgeKit";
 import { useClaim } from "@/lib/hooks/useClaim";
+import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { checkMintReadiness, type SimulationResult } from "@/lib/simulation";
 
 const STEP_ORDER = [
   { id: "approve" as const, label: "Approve" },
@@ -73,6 +75,7 @@ export function BridgingState({
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
   const { toast } = useToast();
   const { retryClaim, isClaiming } = useClaim();
+  const { executeMint, isMinting } = useDirectMint();
   const { updateTransaction } = useTransactionStore();
   const [timeLeft, setTimeLeft] = useState(estimatedTime ?? 0);
   const [localBridgeResult, setLocalBridgeResult] = useState<
@@ -80,6 +83,23 @@ export function BridgingState({
   >(bridgeResult);
   const [burnCompletedAt, setBurnCompletedAt] = useState<Date | null>(null);
   const [mintCompletedAt, setMintCompletedAt] = useState<Date | null>(null);
+
+  // Mint simulation state for polling
+  const [mintSimulation, setMintSimulation] = useState<{
+    canMint: boolean;
+    alreadyMinted: boolean;
+    checking: boolean;
+    attestationReady: boolean;
+    lastChecked: Date | null;
+    error?: string;
+  }>({
+    canMint: false,
+    alreadyMinted: false,
+    checking: false,
+    attestationReady: false,
+    lastChecked: null,
+  });
+  const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     setLocalBridgeResult(bridgeResult);
@@ -326,6 +346,133 @@ export function BridgingState({
     return fromChain?.value ? Number(fromChain.value) : undefined;
   }, [displayResult?.source?.chain, fromChain?.value]);
 
+  // Extract burn transaction hash for polling
+  const burnTxHash = useMemo(() => {
+    if (!displayResult?.steps) return null;
+    // Find the burn step or first step with a tx hash
+    const burnStep = displayResult.steps.find((s) => /burn/i.test(s.name));
+    if (burnStep?.txHash) return burnStep.txHash as `0x${string}`;
+    // Fallback to first tx hash
+    const firstWithHash = displayResult.steps.find((s) => s.txHash);
+    return firstWithHash?.txHash as `0x${string}` | null;
+  }, [displayResult?.steps]);
+
+  // Check if we should poll for mint readiness (>5 min old, not completed)
+  const shouldPoll = useMemo(() => {
+    // Don't poll if already successful
+    if (displayResult?.state === "success") return false;
+    if (mintSimulation.alreadyMinted) return false;
+
+    // Don't poll if we don't have required data
+    if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
+
+    // Check if bridge is >5 minutes old
+    const referenceTime = burnCompletedAt ?? startedAt;
+    if (!referenceTime) return false;
+
+    const ageMs = Date.now() - referenceTime.getTime();
+    const fiveMinutesMs = 5 * 60 * 1000;
+    return ageMs >= fiveMinutesMs;
+  }, [
+    displayResult?.state,
+    mintSimulation.alreadyMinted,
+    burnTxHash,
+    sourceChainId,
+    destinationChainId,
+    burnCompletedAt,
+    startedAt,
+  ]);
+
+  // Poll for mint readiness every 10 seconds
+  useEffect(() => {
+    if (!shouldPoll) {
+      // Clear any existing polling
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+      return;
+    }
+
+    const checkMint = async () => {
+      if (!burnTxHash || !sourceChainId || !destinationChainId) return;
+
+      setMintSimulation((prev) => ({ ...prev, checking: true }));
+
+      try {
+        const result = await checkMintReadiness(
+          sourceChainId,
+          destinationChainId,
+          burnTxHash
+        );
+
+        setMintSimulation({
+          canMint: result.canMint,
+          alreadyMinted: result.alreadyMinted,
+          checking: false,
+          attestationReady: result.attestationReady,
+          lastChecked: new Date(),
+          error: result.error,
+        });
+
+        // If already minted, update the transaction
+        if (result.alreadyMinted && burnTxHash) {
+          const updatedSteps = (displayResult?.steps || []).map((step) => {
+            if (/attestation|attest/i.test(step.name)) {
+              return { ...step, state: "success" as const };
+            }
+            if (/mint|claim|receive/i.test(step.name)) {
+              return {
+                ...step,
+                state: "success" as const,
+                errorMessage: "USDC claimed. Check your wallet for the USDC",
+              };
+            }
+            return step;
+          });
+
+          updateTransaction(burnTxHash, {
+            status: "claimed",
+            bridgeState: "success",
+            completedAt: new Date(),
+            steps: updatedSteps,
+          });
+
+          setLocalBridgeResult((prev) =>
+            prev ? { ...prev, state: "success", steps: updatedSteps } : prev
+          );
+        }
+      } catch (error) {
+        console.error("Mint readiness check failed:", error);
+        setMintSimulation((prev) => ({
+          ...prev,
+          checking: false,
+          error: "Failed to check mint status",
+        }));
+      }
+    };
+
+    // Check immediately
+    checkMint();
+
+    // Then poll every 10 seconds
+    pollingRef.current = setInterval(checkMint, 10_000);
+
+    return () => {
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    };
+  }, [
+    shouldPoll,
+    burnTxHash,
+    sourceChainId,
+    destinationChainId,
+    displayResult?.steps,
+    updateTransaction,
+  ]);
+
   const displayFrom = useMemo(() => {
     const chainName =
       (displayResult?.source?.chain as { name?: string } | undefined)?.name ||
@@ -355,6 +502,97 @@ export function BridgingState({
   const onDestinationChain =
     chain?.id && destinationChainId ? chain.id === destinationChainId : false;
 
+  // Direct mint handler - bypasses Bridge Kit SDK to avoid duplicate transactions
+  const handleClaim = useCallback(async () => {
+    if (!destinationChainId || !sourceChainId || !burnTxHash) {
+      toast({
+        title: "Cannot claim",
+        description: "Missing transaction details",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Switch chain if needed
+    if (!onDestinationChain) {
+      try {
+        await switchChain({ chainId: destinationChainId });
+        // Wait a moment for chain switch to complete
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      } catch (err) {
+        toast({
+          title: "Chain switch required",
+          description: `Please switch to the destination chain to claim`,
+          variant: "destructive",
+        });
+        return;
+      }
+    }
+
+    // Execute direct mint
+    const result = await executeMint(
+      burnTxHash,
+      sourceChainId,
+      destinationChainId,
+      displayResult?.steps
+    );
+
+    if (result.success) {
+      // Update local state
+      const updatedSteps = (displayResult?.steps || []).map((step) => {
+        if (/attestation|attest/i.test(step.name)) {
+          return { ...step, state: "success" as const };
+        }
+        if (/mint|claim|receive/i.test(step.name)) {
+          return {
+            ...step,
+            state: "success" as const,
+            txHash: result.mintTxHash,
+          };
+        }
+        return step;
+      });
+
+      // Add mint step if it doesn't exist
+      if (!updatedSteps.some((s) => /mint|claim|receive/i.test(s.name))) {
+        updatedSteps.push({
+          name: "Mint",
+          state: "success",
+          txHash: result.mintTxHash,
+        });
+      }
+
+      setLocalBridgeResult((prev) =>
+        prev ? { ...prev, state: "success", steps: updatedSteps } : prev
+      );
+
+      if (displayResult) {
+        onBridgeResultUpdate?.({
+          ...displayResult,
+          state: "success",
+          steps: updatedSteps,
+        });
+      }
+    } else if (!result.alreadyMinted) {
+      toast({
+        title: "Claim failed",
+        description: result.error || "Unable to complete mint",
+        variant: "destructive",
+      });
+    }
+  }, [
+    destinationChainId,
+    sourceChainId,
+    burnTxHash,
+    onDestinationChain,
+    switchChain,
+    executeMint,
+    displayResult,
+    onBridgeResultUpdate,
+    toast,
+  ]);
+
+  // Legacy retry handler (fallback)
   const handleRetry = async (options?: { forceRetry?: boolean }) => {
     if (!destinationChainId || !displayResult) return;
     try {
@@ -410,7 +648,27 @@ export function BridgingState({
     [derivedSteps]
   );
 
-  const showClaimButton = hasFetchAttestation && !hasMintCompleted;
+  // Show claim button based on simulation results OR attestation step success
+  const showClaimButton = useMemo(() => {
+    // Already minted - don't show
+    if (mintSimulation.alreadyMinted) return false;
+    if (hasMintCompleted) return false;
+
+    // If simulation says we can mint, show button
+    if (mintSimulation.canMint) return true;
+
+    // If attestation is ready (from simulation check), show button
+    if (mintSimulation.attestationReady) return true;
+
+    // Fallback: show if attestation step is success (original behavior)
+    return hasFetchAttestation;
+  }, [
+    mintSimulation.alreadyMinted,
+    mintSimulation.canMint,
+    mintSimulation.attestationReady,
+    hasMintCompleted,
+    hasFetchAttestation,
+  ]);
 
   if (displayResult) {
     const primaryStep =
@@ -568,10 +826,10 @@ export function BridgingState({
             <div className="flex flex-col gap-2">
               <Button
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={isSwitchingChain || isClaiming}
-                onClick={() => handleRetry()}
+                disabled={isSwitchingChain || isClaiming || isMinting}
+                onClick={handleClaim}
               >
-                {isClaiming ? (
+                {isClaiming || isMinting ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Claiming...
@@ -582,6 +840,11 @@ export function BridgingState({
                   `Switch chain to ${displayTo.label}`
                 )}
               </Button>
+              {mintSimulation.checking && (
+                <p className="text-xs text-slate-500 text-center">
+                  Checking mint status...
+                </p>
+              )}
             </div>
           )}
 
