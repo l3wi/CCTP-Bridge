@@ -128,7 +128,7 @@ export function HistoryModal({
             )}
           </Button>
         </DialogTrigger>
-        <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl">
+        <DialogContent className="bg-slate-800 border-slate-700 text-white max-w-2xl p-3 sm:p-6">
           {view === "history" ? (
             <>
               <DialogHeader className="flex flex-row items-center justify-between pr-8">
@@ -140,7 +140,8 @@ export function HistoryModal({
                   onClick={() => setView("add-transaction")}
                 >
                   <Plus className="h-4 w-4 mr-1" />
-                  Add Transaction
+                  <span className="sm:hidden">Add</span>
+                  <span className="hidden sm:inline">Add Transaction</span>
                 </Button>
               </DialogHeader>
               <div className="space-y-4 max-h-96 overflow-y-auto">
@@ -215,7 +216,7 @@ function TransactionRow({
       return (
         <div className="flex items-center gap-1">
           <CheckCircle className="h-4 w-4 text-green-500" />
-          <span className="text-sm text-green-400">Completed</span>
+          <span className="hidden sm:inline text-sm text-green-400">Completed</span>
         </div>
       );
     }
@@ -224,7 +225,7 @@ function TransactionRow({
       return (
         <div className="flex items-center gap-1">
           <Clock className="h-4 w-4 text-red-500" />
-          <span className="text-sm text-red-400">Failed</span>
+          <span className="hidden sm:inline text-sm text-red-400">Failed</span>
         </div>
       );
     }
@@ -233,7 +234,7 @@ function TransactionRow({
       return (
         <div className="flex items-center gap-1">
           <Clock className="h-4 w-4 text-yellow-500" />
-          <span className="text-sm text-yellow-400">Pending</span>
+          <span className="hidden sm:inline text-sm text-yellow-400">Pending</span>
         </div>
       );
     }
