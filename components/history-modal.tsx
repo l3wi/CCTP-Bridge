@@ -9,6 +9,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 } from "lucide-react";
 import { useChains } from "wagmi";
 import { LocalTransaction } from "@/lib/types";
@@ -553,31 +560,50 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       <div className="space-y-4 py-4">
         <div className="space-y-2">
           <label className="text-sm font-medium text-slate-300">Source Chain</label>
-          <div className="grid grid-cols-3 gap-2">
-            {supportedChains.map((chain) => (
-              <button
-                key={chain.chainId}
-                onClick={() => setSelectedChainId(chain.chainId)}
-                className={`flex items-center gap-2 p-3 rounded-lg border transition-colors ${
-                  selectedChainId === chain.chainId
-                    ? "border-blue-500 bg-slate-700"
-                    : "border-slate-600 bg-slate-800 hover:bg-slate-700"
-                }`}
-              >
-                <Image
-                  src={`/${chain.chainId}.svg`}
-                  width={24}
-                  height={24}
-                  className="w-6 h-6"
-                  alt={chain.name}
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
-                  }}
-                />
-                <span className="text-sm truncate">{chain.name.split(" ")[0]}</span>
-              </button>
-            ))}
-          </div>
+          <Select
+            value={selectedChainId?.toString() ?? ""}
+            onValueChange={(value) => setSelectedChainId(Number(value))}
+          >
+            <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
+              <SelectValue placeholder="Select Chain...">
+                {selectedChainId && (() => {
+                  const selected = supportedChains.find(c => c.chainId === selectedChainId);
+                  return selected ? (
+                    <div className="flex items-center gap-2">
+                      <Image
+                        src={`/${selected.chainId}.svg`}
+                        width={16}
+                        height={16}
+                        className="w-4 h-4"
+                        alt={selected.name}
+                      />
+                      <span>{selected.name}</span>
+                    </div>
+                  ) : null;
+                })()}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="bg-slate-800 border-slate-700">
+              {supportedChains.map((chain) => (
+                <SelectItem
+                  key={chain.chainId}
+                  value={chain.chainId.toString()}
+                  className="text-white hover:bg-slate-700"
+                >
+                  <div className="flex items-center gap-2">
+                    <Image
+                      src={`/${chain.chainId}.svg`}
+                      width={16}
+                      height={16}
+                      className="w-4 h-4"
+                      alt={chain.name}
+                    />
+                    <span>{chain.name}</span>
+                  </div>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
         <div className="space-y-2">
