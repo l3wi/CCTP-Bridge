@@ -4,7 +4,7 @@ import {
   type ChainDefinition,
   type BridgeParams,
 } from "@circle-fin/bridge-kit";
-import { createAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
+import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 import { createPublicClient, http } from "viem";
 import type { Chain, EIP1193Provider, Transport, WalletClient } from "viem";
 
@@ -44,7 +44,7 @@ export const getBridgeKit = (
 
     if (customFeeConfig) {
       kit.setCustomFeePolicy({
-        calculateFee: () => customFeeConfig.value,
+        computeFee: () => customFeeConfig.value,
         resolveFeeRecipientAddress: () => customFeeConfig.recipient,
       });
     }
@@ -203,7 +203,7 @@ export const createViemAdapter = async (
 ): Promise<BridgeKitAdapter> => {
   const supportedChains = getSupportedEvmChains(env);
 
-  const adapter = await createAdapterFromProvider({
+  const adapter = await createViemAdapterFromProvider({
     provider,
     capabilities: { supportedChains },
     getPublicClient: ({ chain }) => createRpcClient(chain),
@@ -257,7 +257,7 @@ export const createReadonlyAdapter = async (
   }
   const provider = createReadonlyProvider(preferredChain);
 
-  const adapter = await createAdapterFromProvider({
+  const adapter = await createViemAdapterFromProvider({
     provider,
     capabilities: { supportedChains },
     getPublicClient: ({ chain }) => createRpcClient(chain),
