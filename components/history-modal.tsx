@@ -215,7 +215,8 @@ function TransactionRow({
     [tx.targetChain]
   );
 
-  const isBridgeKit = !!tx.provider;
+  // All v3 transactions use Bridge Kit (CCTP v2)
+  const isBridgeKit = tx.version === "v3";
 
   const renderStatus = () => {
     if (tx.status === "claimed") {
@@ -544,17 +545,14 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       const transaction: Omit<LocalTransaction, "date"> = {
         hash: normalizedHash as UniversalTxHash,
         originChain: selectedChainId,
-        originChainType: getChainType(selectedChainId),
         targetChain: targetChainId,
-        targetChainType: getChainType(targetChainId),
         targetAddress: attestationData.mintRecipient as UniversalTxHash | undefined,
         amount: formattedAmount,
         status: txStatus,
-        version: "v2",
+        version: "v3",
         transferType: "standard",
         steps,
         bridgeState,
-        provider: "CCTPV2BridgingProvider",
         bridgeResult,
       };
 

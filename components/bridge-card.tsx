@@ -27,7 +27,7 @@ import {
   validateAmount,
   validateChainSelection,
 } from "@/lib/validation";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/cctp/errors";
 import {
   AmountState,
   LocalTransaction,
@@ -107,6 +107,8 @@ export function BridgeCard({
   const [isBridging, setIsBridging] = useState(false);
   const [bridgeSourceChain, setBridgeSourceChain] = useState<Chain | null>(null);
   const [bridgeTargetChain, setBridgeTargetChain] = useState<Chain | null>(null);
+  // Track target chain ID directly (works for both EVM and Solana destinations)
+  const [bridgeTargetChainId, setBridgeTargetChainId] = useState<ChainId | null>(null);
   const [bridgeStartedAt, setBridgeStartedAt] = useState<Date | null>(null);
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const [loadedTransactionData, setLoadedTransactionData] = useState<{
@@ -725,6 +727,8 @@ export function BridgeCard({
       const resolvedSourceChain =
         chainOptionById.get(selectedSourceId)?.chain || chain || null;
       setBridgeSourceChain(resolvedSourceChain);
+      // Track target chain ID for both EVM and Solana destinations
+      setBridgeTargetChainId(targetChainId);
       // Only set bridgeTargetChain if it's an EVM chain (has chain property)
       const targetOption = chainOptionById.get(targetChainId);
       if (targetOption?.chain) {
@@ -849,6 +853,7 @@ export function BridgeCard({
     setBridgeStartedAt(null);
     setBridgeSourceChain(null);
     setBridgeTargetChain(null);
+    setBridgeTargetChainId(null);
     // Call parent callback to reset loaded transaction
     if (onBackToNew) {
       onBackToNew();
@@ -1027,58 +1032,58 @@ export function BridgeCard({
     );
 
     return (
-      <div className="border-t border-slate-700/50 pt-4">
+      <div className="border-t border-slate-700/50 pt-2">
         {/* Desktop: Table view */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="text-left py-2 pr-3 text-slate-400 font-normal text-sm"></th>
+                <th className="text-left py-1.5 pr-3 text-slate-400 font-normal text-sm"></th>
                 {fastTransferSupported && (
-                  <th className="text-center py-2 px-3">
-                    <span className="text-white text-base font-semibold">Fast Bridge</span>
+                  <th className="text-center py-1.5 px-3">
+                    <span className="text-white text-sm font-semibold">Fast Bridge</span>
                   </th>
                 )}
-                <th className="text-center py-2 px-3">
-                  <span className="text-white text-base font-semibold">Standard Bridge</span>
+                <th className="text-center py-1.5 px-3">
+                  <span className="text-white text-sm font-semibold">Standard Bridge</span>
                 </th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-slate-800">
-                <td className="py-2.5 pr-3 text-slate-400 text-sm">Estimate speed</td>
+                <td className="py-1.5 pr-3 text-slate-400 text-sm">Estimate speed</td>
                 {fastTransferSupported && (
-                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
+                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
                 )}
-                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
+                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-2.5 pr-3 text-slate-400 text-sm">Confirmation</td>
+                <td className="py-1.5 pr-3 text-slate-400 text-sm">Confirmation</td>
                 {fastTransferSupported && (
-                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
+                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
                 )}
-                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
+                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-2.5 pr-3 text-slate-400 text-sm">Fee amount</td>
+                <td className="py-1.5 pr-3 text-slate-400 text-sm">Fee amount</td>
                 {fastTransferSupported && (
-                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
+                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
                 )}
-                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
+                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-2.5 pr-3 text-slate-400 text-sm">You will receive</td>
+                <td className="py-1.5 pr-3 text-slate-400 text-sm">You will receive</td>
                 {fastTransferSupported && (
-                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
+                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
                 )}
-                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
+                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
               </tr>
               <tr>
-                <td className="pt-4 pr-3"></td>
+                <td className="pt-3 pr-3"></td>
                 {fastTransferSupported && (
-                  <td className="pt-4 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
+                  <td className="pt-3 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
                 )}
-                <td className="pt-4 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
+                <td className="pt-3 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
               </tr>
             </tbody>
           </table>
@@ -1132,7 +1137,7 @@ export function BridgeCard({
               amount: loadedTransaction.amount ?? "0",
               token: "USDC",
               state: loadedTransaction.bridgeState ?? "pending",
-              provider: loadedTransaction.provider ?? "CCTPV2BridgingProvider",
+              provider: "CCTPV2BridgingProvider",
               source: {
                 address: loadedTransaction.targetAddress || "",
                 chain: sourceChainDef as unknown as ChainDefinition,
@@ -1156,9 +1161,13 @@ export function BridgeCard({
           )}
         />
       );
-    } else if ((bridgeTargetChain || targetChain) && amount && bridgeTransactionHash) {
+    } else if ((bridgeTargetChain || bridgeTargetChainId || targetChain) && amount && bridgeTransactionHash) {
       const sourceId = bridgeSourceChain?.id ?? chain?.id ?? sourceChainId ?? null;
-      const targetId = bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
+      // Use bridgeTargetChainId for Solana destinations (where bridgeTargetChain is null)
+      const targetId = bridgeTargetChainId ?? bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
+
+      // Get target chain label from chainOptionById (works for both EVM and Solana)
+      const targetChainOption = targetId != null ? chainOptionById.get(targetId) : null;
 
       const fromChain = {
         value: sourceId != null ? sourceId.toString() : "",
@@ -1166,13 +1175,13 @@ export function BridgeCard({
       };
       const toChain = {
         value: targetId != null ? targetId.toString() : "",
-        label: bridgeTargetChain?.name || targetChain?.name || "Destination",
+        label: targetChainOption?.label || bridgeTargetChain?.name || targetChain?.name || "Destination",
       };
 
       const recipientAddressValue = (diffWallet && targetAddress) ? targetAddress : (address ?? undefined);
       const sourceChainIdForResult = sourceId ?? (fromChain.value ? Number(fromChain.value) : undefined);
-      const targetChainIdForResult =
-        targetId ?? (toChain.value ? Number(toChain.value) : undefined);
+      // Use targetId directly - it's already the correct ChainId type (number for EVM, string for Solana)
+      const targetChainIdForResult = targetId ?? undefined;
 
       const sourceChainDef = sourceChainIdForResult
         ? getBridgeChainByIdUniversal(sourceChainIdForResult)

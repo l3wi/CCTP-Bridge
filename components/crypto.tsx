@@ -1,4 +1,13 @@
 "use client";
+
+// Polyfill BigInt serialization for JSON.stringify
+// Required for Solana/Bridge Kit SDK which uses BigInt internally
+if (typeof BigInt !== "undefined" && !(BigInt.prototype as unknown as { toJSON?: unknown }).toJSON) {
+  (BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
+    return this.toString();
+  };
+}
+
 import "@rainbow-me/rainbowkit/styles.css";
 
 import { getDefaultConfig, RainbowKitProvider } from "@rainbow-me/rainbowkit";

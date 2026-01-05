@@ -1,5 +1,4 @@
 import { isAddress, parseUnits } from "viem";
-import { ValidationError } from "./errors";
 import { isValidSolanaAddress } from "./solanaAdapter";
 import type { ChainType, ChainId } from "./types";
 import { getChainType } from "./types";

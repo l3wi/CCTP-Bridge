@@ -104,7 +104,7 @@ export async function fetchAttestation(
 
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
-      console.error("Missing decodedMessage in Iris response");
+      // Attestation still in progress - expected during attestation window
       return null;
     }
 
@@ -202,7 +202,7 @@ export async function fetchAttestationUniversal(
     const msg = data.messages[0];
 
     if (!msg.decodedMessage) {
-      console.error("Missing decodedMessage in Iris response");
+      // Attestation still in progress - expected during attestation window
       return null;
     }
 

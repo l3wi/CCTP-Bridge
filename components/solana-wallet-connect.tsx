@@ -3,7 +3,7 @@
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useWalletModal } from "@solana/wallet-adapter-react-ui";
 import { Button } from "@/components/ui/button";
-import { Wallet } from "lucide-react";
+import { TokenIcon } from "@web3icons/react/dynamic";
 
 /**
  * Solana wallet connection button component.
@@ -21,8 +21,8 @@ export function SolanaWalletConnect() {
         className="bg-purple-800/50 border-purple-600/50 text-white hover:bg-purple-700/50 hover:border-purple-500/50"
         disabled={connecting}
       >
-        <Wallet className="h-4 w-4 mr-2" />
-        {connecting ? "Connecting..." : "Connect Solana"}
+        <TokenIcon symbol="SOL" variant="mono" className="h-5 w-5 mr-2" />
+        {connecting ? "Connecting..." : "Connect"}
       </Button>
     );
   }
@@ -39,7 +39,7 @@ export function SolanaWalletConnect() {
       className="bg-purple-800/50 border-purple-600/50 text-white hover:bg-purple-700/50 hover:border-purple-500/50"
       title={publicKey?.toBase58()}
     >
-      <Wallet className="h-4 w-4 mr-2" />
+      <TokenIcon symbol="SOL" variant="mono" className="h-5 w-5 mr-2" />
       {displayAddress}
     </Button>
   );

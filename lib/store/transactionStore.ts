@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import {
   LegacyLocalTransaction,
+  LegacyV2Transaction,
   LocalTransaction,
   type ChainId,
   type UniversalTxHash,
@@ -14,7 +15,7 @@ interface TransactionState {
   transactions: LocalTransaction[];
   isLoading: boolean;
   error: string | null;
-  addTransaction: (transaction: Omit<LocalTransaction, "date" | "originChainType">) => void;
+  addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
   updateTransaction: (
     hash: UniversalTxHash,
     updates: Partial<LocalTransaction>
@@ -27,10 +28,13 @@ interface TransactionState {
   migrateFromLegacy: () => void;
 }
 
+/**
+ * Normalize a transaction to v3 format.
+ * Handles both new transactions and migrations from v2.
+ */
 const normalizeTransaction = (
-  tx: Partial<LocalTransaction> | Partial<LegacyLocalTransaction>
+  tx: Partial<LocalTransaction> | Partial<LegacyV2Transaction> | Partial<LegacyLocalTransaction>
 ): LocalTransaction => {
-  const txLocal = tx as Partial<LocalTransaction>;
   const bridgeResult = (tx as Partial<LocalTransaction>).bridgeResult;
 
   // Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
@@ -57,29 +61,46 @@ const normalizeTransaction = (
   const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain) ?? 1;
   const targetChain = tx.targetChain ?? extractChainId(bridgeResult?.destination?.chain);
 
+  // Normalize hash based on chain type
+  const normalizeHash = (hash: string, chainId: ChainId): UniversalTxHash => {
+    if (getChainType(chainId) === "solana") {
+      return hash.trim();
+    }
+    // EVM: ensure lowercase with 0x prefix
+    const cleaned = hash.toLowerCase().trim();
+    return cleaned.startsWith("0x") ? cleaned : `0x${cleaned}`;
+  };
+
+  const hash = tx.hash
+    ? normalizeHash(tx.hash as string, originChain)
+    : ("" as UniversalTxHash);
+
+  const claimHash = tx.claimHash && targetChain
+    ? normalizeHash(tx.claimHash as string, targetChain)
+    : undefined;
+
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
     originChain,
-    originChainType: txLocal.originChainType ?? getChainType(originChain),
-    hash: tx.hash as UniversalTxHash,
+    hash,
     status: tx.status ?? "pending",
-    provider: txLocal.provider ?? bridgeResult?.provider,
-    bridgeState: txLocal.bridgeState ?? bridgeResult?.state,
-    steps: txLocal.steps ?? bridgeResult?.steps,
-    amount: txLocal.amount ?? bridgeResult?.amount,
-    chain: txLocal.chain,
+    bridgeState: (tx as Partial<LocalTransaction>).bridgeState ?? bridgeResult?.state,
+    steps: (tx as Partial<LocalTransaction>).steps ?? bridgeResult?.steps,
+    amount: (tx as Partial<LocalTransaction>).amount ?? bridgeResult?.amount,
     targetChain,
-    targetChainType: txLocal.targetChainType ?? (targetChain ? getChainType(targetChain) : undefined),
     targetAddress:
-      txLocal.targetAddress ??
+      (tx as Partial<LocalTransaction>).targetAddress ??
       (bridgeResult?.destination?.address as string | undefined),
-    claimHash: txLocal.claimHash,
-    version: "v2",
-    transferType: txLocal.transferType ?? "standard",
-    fee: txLocal.fee,
-    estimatedTime: txLocal.estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    claimHash,
+    version: "v3",
+    transferType: (tx as Partial<LocalTransaction>).transferType ?? "standard",
+    fee: (tx as Partial<LocalTransaction>).fee,
+    estimatedTime: (tx as Partial<LocalTransaction>).estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    completedAt: (tx as Partial<LocalTransaction>).completedAt
+      ? new Date((tx as Partial<LocalTransaction>).completedAt!)
+      : undefined,
     bridgeResult,
-    transferId: txLocal.transferId,
+    transferId: (tx as Partial<LocalTransaction>).transferId,
   };
 };
 
@@ -121,47 +142,100 @@ const sanitizeForStorage = <T>(value: T): T => {
   return convert(value) as T;
 };
 
-const migrateLegacyTransaction = (
+/**
+ * Migrate a legacy v1 transaction (EVM-only) to v3 format.
+ */
+const migrateLegacyV1Transaction = (
   legacyTx: LegacyLocalTransaction
 ): LocalTransaction => {
-  // Legacy transactions are always EVM
   return {
-    ...legacyTx,
     date: legacyTx.date ? new Date(legacyTx.date) : new Date(),
-    originChainType: "evm" as const, // Legacy transactions were EVM-only
-    targetChainType: legacyTx.targetChain ? "evm" as const : undefined,
-    version: "v2" as const,
-    transferType: "standard" as const,
+    originChain: legacyTx.originChain,
+    hash: legacyTx.hash,
+    status: legacyTx.status ?? "pending",
+    amount: legacyTx.amount,
+    targetChain: legacyTx.targetChain,
+    targetAddress: legacyTx.targetAddress,
+    claimHash: legacyTx.claimHash,
+    version: "v3",
+    transferType: "standard",
     estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,
   };
 };
 
-// Check for legacy data and migrate
+/**
+ * Migrate a v2 transaction to v3 format.
+ * Drops redundant fields: originChainType, targetChainType, provider, chain
+ */
+const migrateV2Transaction = (
+  v2Tx: LegacyV2Transaction
+): LocalTransaction => {
+  // Destructure to drop the redundant fields
+  const {
+    originChainType: _originChainType, // Drop - derivable from originChain
+    targetChainType: _targetChainType, // Drop - derivable from targetChain
+    provider: _provider,               // Drop - always CCTPV2BridgingProvider
+    chain: _chain,                     // Drop - unused legacy field
+    ...rest
+  } = v2Tx;
+
+  return {
+    ...rest,
+    date: v2Tx.date ? new Date(v2Tx.date) : new Date(),
+    completedAt: v2Tx.completedAt ? new Date(v2Tx.completedAt) : undefined,
+    version: "v3",
+  };
+};
+
+/**
+ * Check for legacy data (v1 and v2) and migrate to v3.
+ */
 const migrateLegacyData = (): LocalTransaction[] => {
   if (typeof window === "undefined") {
     return [];
   }
 
+  const migrated: LocalTransaction[] = [];
+
   try {
-    const legacyData = localStorage.getItem("cctp-transactions");
-    if (legacyData) {
-      const parsed = JSON.parse(legacyData);
+    // Migrate from v1 storage key ("cctp-transactions")
+    const v1Data = localStorage.getItem("cctp-transactions");
+    if (v1Data) {
+      const parsed = JSON.parse(v1Data);
       if (parsed?.state?.transactions) {
-        const legacyTransactions =
-          parsed.state.transactions as LegacyLocalTransaction[];
-        const migratedTransactions =
-          legacyTransactions.map(migrateLegacyTransaction);
-
-        // Remove legacy data after migration
+        const v1Transactions = parsed.state.transactions as LegacyLocalTransaction[];
+        v1Transactions.forEach((tx) => {
+          migrated.push(migrateLegacyV1Transaction(tx));
+        });
+        // Remove v1 data after migration
         localStorage.removeItem("cctp-transactions");
-
-        return migratedTransactions;
+        console.log(`Migrated ${v1Transactions.length} v1 transactions to v3`);
       }
     }
   } catch (error) {
-    console.warn("Failed to migrate legacy transaction data:", error);
+    console.warn("Failed to migrate v1 transaction data:", error);
   }
-  return [];
+
+  try {
+    // Migrate from v2 storage key ("cctp-transactions-v2")
+    const v2Data = localStorage.getItem("cctp-transactions-v2");
+    if (v2Data) {
+      const parsed = JSON.parse(v2Data);
+      if (parsed?.state?.transactions) {
+        const v2Transactions = parsed.state.transactions as LegacyV2Transaction[];
+        v2Transactions.forEach((tx) => {
+          migrated.push(migrateV2Transaction(tx));
+        });
+        // Remove v2 data after migration
+        localStorage.removeItem("cctp-transactions-v2");
+        console.log(`Migrated ${v2Transactions.length} v2 transactions to v3`);
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to migrate v2 transaction data:", error);
+  }
+
+  return migrated;
 };
 
 export const useTransactionStore = create<TransactionState>()(
@@ -192,7 +266,7 @@ export const useTransactionStore = create<TransactionState>()(
         set((state) => ({
           transactions: state.transactions.map((tx) =>
             tx.hash === hash
-              ? sanitizeForStorage({ ...tx, ...updates })
+              ? sanitizeForStorage({ ...tx, ...updates, version: "v3" })
               : tx
           ),
         }));
@@ -226,27 +300,35 @@ export const useTransactionStore = create<TransactionState>()(
 
       migrateFromLegacy: () => {
         const migratedTransactions = migrateLegacyData();
+        if (migratedTransactions.length === 0) return;
+
         set((state) => {
           const deduped = new Map<string, LocalTransaction>();
 
+          // Add existing v3 transactions first
           state.transactions
             .map(normalizeTransaction)
             .forEach((tx) => deduped.set(tx.hash, tx));
 
+          // Add migrated transactions (won't overwrite existing)
           migratedTransactions
             .map(normalizeTransaction)
-            .forEach((tx) => deduped.set(tx.hash, tx));
+            .forEach((tx) => {
+              if (!deduped.has(tx.hash)) {
+                deduped.set(tx.hash, tx);
+              }
+            });
 
           return {
             transactions: Array.from(deduped.values()).sort(
-              (a, b) => b.date.getTime() - a.date.getTime()
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
             ),
           };
         });
       },
     }),
     {
-      name: "cctp-transactions-v2",
+      name: "cctp-transactions-v3",
       partialize: (state) => ({ transactions: state.transactions }),
       onRehydrateStorage: () => (state) => {
         if (state) {

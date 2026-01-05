@@ -9,7 +9,7 @@ import {
 } from "@/lib/bridgeKit";
 import { createSolanaAdapter } from "@/lib/solanaAdapter";
 import { useTransactionStore } from "@/lib/store/transactionStore";
-import { getErrorMessage } from "@/lib/errors";
+import { getErrorMessage } from "@/lib/cctp/errors";
 import { useToast } from "@/components/ui/use-toast";
 import { asTxHash, getChainType, type ChainId, type SolanaChainId, type UniversalTxHash } from "@/lib/types";
 

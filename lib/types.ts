@@ -60,32 +60,53 @@ export type ContractsMap = {
   readonly [chainId: number]: ContractConfig;
 };
 
-// Transaction types - supports both EVM and Solana chains
+// Transaction types - supports both EVM and Solana chains (v3 schema)
 export interface LocalTransaction {
   date: Date;
   originChain: ChainId; // EVM chainId (number) or Solana chain identifier (string)
-  originChainType?: ChainType; // "evm" or "solana" - inferred from originChain if not provided
   hash: UniversalTxHash; // EVM tx hash (0x...) or Solana signature (Base58)
   status: "pending" | "claimed" | "failed";
-  provider?: string;
   bridgeState?: BridgeResult["state"];
   steps?: BridgeResult["steps"];
   amount?: string;
-  chain?: ChainId; // Deprecated: use originChain
   targetChain?: ChainId;
-  targetChainType?: ChainType; // "evm" or "solana" - inferred from targetChain if not provided
   targetAddress?: UniversalAddress; // EVM address or Solana pubkey
   claimHash?: UniversalTxHash;
-  version: "v2"; // CCTP version used
-  transferType?: "standard" | "fast"; // V2 transfer type
-  fee?: string; // V2 fast transfer fee
+  version: "v3"; // Schema version
+  transferType?: "standard" | "fast"; // Transfer speed
+  fee?: string; // Fast transfer fee
   estimatedTime?: string; // Estimated completion time
   completedAt?: Date; // When mint/claim completed
   bridgeResult?: BridgeResult;
   transferId?: string;
 }
 
-// Legacy transaction interface retained for migration from pre-v2 localStorage entries
+// Legacy v2 transaction interface for migration
+export interface LegacyV2Transaction {
+  date: Date;
+  originChain: ChainId;
+  originChainType?: ChainType; // Removed in v3 (derivable)
+  hash: UniversalTxHash;
+  status: "pending" | "claimed" | "failed";
+  provider?: string; // Removed in v3 (redundant)
+  bridgeState?: BridgeResult["state"];
+  steps?: BridgeResult["steps"];
+  amount?: string;
+  chain?: ChainId; // Removed in v3 (unused)
+  targetChain?: ChainId;
+  targetChainType?: ChainType; // Removed in v3 (derivable)
+  targetAddress?: UniversalAddress;
+  claimHash?: UniversalTxHash;
+  version: "v2";
+  transferType?: "standard" | "fast";
+  fee?: string;
+  estimatedTime?: string;
+  completedAt?: Date;
+  bridgeResult?: BridgeResult;
+  transferId?: string;
+}
+
+// Legacy v1 transaction interface for migration from pre-v2 localStorage
 export interface LegacyLocalTransaction {
   date: Date;
   originChain: number;
