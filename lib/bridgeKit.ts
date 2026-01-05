@@ -48,7 +48,8 @@ export interface SolanaChainDefinition {
   };
 }
 
-type RpcOverrideMap = Record<number, string>;
+// Supports both EVM (numeric) and Solana (string) chain IDs
+type RpcOverrideMap = Record<number | string, string>;
 
 type CustomFeeConfig = {
   value: string;
@@ -338,13 +339,22 @@ function parseRpcOverrides(raw: string | undefined): RpcOverrideMap | null {
 
   return raw.split(",").reduce<RpcOverrideMap>((acc, entry) => {
     const [rawId, url] = entry.split("=").map((value) => value.trim());
-    const parsedId = Number(rawId);
 
-    if (!Number.isNaN(parsedId) && url) {
-      if (isValidUrl(url)) {
+    if (!rawId || !url) return acc;
+
+    if (!isValidUrl(url)) {
+      console.warn(`Invalid RPC URL for chain ${rawId}: ${url}`);
+      return acc;
+    }
+
+    // Check if it's a Solana chain ID (string like "Solana" or "Solana_Devnet")
+    if (rawId.startsWith("Solana")) {
+      acc[rawId] = url;
+    } else {
+      // EVM chain ID (numeric)
+      const parsedId = Number(rawId);
+      if (!Number.isNaN(parsedId)) {
         acc[parsedId] = url;
-      } else {
-        console.warn(`Invalid RPC URL for chain ${parsedId}: ${url}`);
       }
     }
 
@@ -433,20 +443,39 @@ export const getSolanaChainById = (
   return getSupportedSolanaChains(env).find((chain) => chain.chain === chainId);
 };
 
+// Default Solana RPC endpoints (PublicNode - reliable public RPCs)
+const DEFAULT_SOLANA_RPC: Record<SolanaChainId, string> = {
+  Solana: "https://solana-rpc.publicnode.com",
+  Solana_Devnet: "https://api.devnet.solana.com",
+};
+
 /**
- * Get default RPC endpoint for a Solana chain
+ * Get RPC endpoint for a Solana chain.
+ * Priority: 1) RPC override from env, 2) Our defaults, 3) Bridge Kit chain definition
+ *
+ * Configure via NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES:
+ *   e.g., Solana=https://my-rpc.example.com,Solana_Devnet=https://my-devnet-rpc.example.com
  */
 export const getSolanaRpcEndpoint = (
   chainId: SolanaChainId,
   env: BridgeEnvironment = DEFAULT_ENV
 ): string => {
+  // 1. Check for RPC override from environment
+  if (rpcOverrides?.[chainId]) {
+    return rpcOverrides[chainId];
+  }
+
+  // 2. Use our default endpoints (official Solana public RPCs)
+  if (DEFAULT_SOLANA_RPC[chainId]) {
+    return DEFAULT_SOLANA_RPC[chainId];
+  }
+
+  // 3. Fallback to Bridge Kit chain definition (last resort)
   const chain = getSolanaChainById(chainId, env);
   if (chain?.rpcEndpoints?.[0]) return chain.rpcEndpoints[0];
 
-  // Fallback to public endpoints
-  return chainId === "Solana_Devnet"
-    ? "https://api.devnet.solana.com"
-    : "https://api.mainnet-beta.solana.com";
+  // Should never reach here, but provide ultimate fallback
+  return "https://api.mainnet.solana.com";
 };
 
 /**

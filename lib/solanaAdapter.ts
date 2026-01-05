@@ -61,12 +61,14 @@ const getRawWalletProvider = (walletName: string): SolanaWalletProvider | undefi
 /**
  * Create a Bridge Kit adapter from a Solana wallet adapter
  * @param walletAdapter - The connected Solana wallet adapter (e.g., from useWallet().wallet?.adapter)
+ * @param chainId - Optional chain ID for RPC endpoint selection (defaults based on BRIDGEKIT_ENV)
  *
  * Note: Circle's SDK expects the raw browser wallet provider (window.solana, etc.),
  * not the @solana/wallet-adapter-react adapter. This function finds the correct provider.
  */
 export const createSolanaAdapter = async (
-  walletAdapter: Adapter
+  walletAdapter: Adapter,
+  chainId?: SolanaChainId
 ): Promise<BridgeKitAdapter> => {
   // Get the raw wallet provider from window based on wallet name
   const provider = getRawWalletProvider(walletAdapter.name);
@@ -84,8 +86,13 @@ export const createSolanaAdapter = async (
     );
   }
 
+  // Create connection with our configured RPC endpoint to override SDK defaults
+  const resolvedChainId = chainId ?? (BRIDGEKIT_ENV === "mainnet" ? "Solana" : "Solana_Devnet");
+  const connection = createSolanaConnection(resolvedChainId);
+
   const bridgeAdapter = await createAdapterFromProvider({
     provider: provider as Parameters<typeof createAdapterFromProvider>[0]["provider"],
+    connection,
   });
 
   return bridgeAdapter as BridgeKitAdapter;

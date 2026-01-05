@@ -1,15 +1,17 @@
 import { useCallback, useRef, useState } from "react";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { useWalletClient } from "wagmi";
+import { useWallet } from "@solana/wallet-adapter-react";
 import {
   createViemAdapter,
   getBridgeKit,
   getProviderFromWalletClient,
 } from "@/lib/bridgeKit";
+import { createSolanaAdapter } from "@/lib/solanaAdapter";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { getErrorMessage } from "@/lib/errors";
 import { useToast } from "@/components/ui/use-toast";
-import { asTxHash } from "@/lib/types";
+import { asTxHash, getChainType, type ChainId, type SolanaChainId, type UniversalTxHash } from "@/lib/types";
 
 type BridgeStep = BridgeResult["steps"][number];
 
@@ -37,17 +39,17 @@ const mergeSteps = (
 };
 
 const extractHashes = (result: BridgeResult) => {
-  let burnHash: `0x${string}` | undefined;
-  let mintHash: `0x${string}` | undefined;
+  let burnHash: UniversalTxHash | undefined;
+  let mintHash: UniversalTxHash | undefined;
   let completedAt: Date | undefined;
 
   for (const step of result.steps) {
     const validatedHash = asTxHash(step.txHash);
     if (!burnHash && validatedHash) {
-      burnHash = validatedHash;
+      burnHash = validatedHash as UniversalTxHash;
     }
     if (validatedHash && /mint|claim|receive/i.test(step.name)) {
-      mintHash = validatedHash;
+      mintHash = validatedHash as UniversalTxHash;
     }
     if (step.state === "success") {
       completedAt = new Date();
@@ -64,6 +66,7 @@ interface RetryClaimOptions {
 export const useClaim = () => {
   const { data: walletClient } = useWalletClient();
   const provider = getProviderFromWalletClient(walletClient);
+  const solanaWallet = useWallet();
   const { updateTransaction } = useTransactionStore();
   const { toast } = useToast();
   const [isClaiming, setIsClaiming] = useState(false);
@@ -71,21 +74,54 @@ export const useClaim = () => {
 
   const retryClaim = useCallback(
     async (result: BridgeResult, options?: RetryClaimOptions) => {
-      if (!provider || !walletClient) {
-        throw new Error("Connect your wallet to claim.");
+      // Extract chain IDs from result to determine ecosystem types
+      const sourceChainDef = result.source?.chain as { chainId?: number; chain?: string } | undefined;
+      const destChainDef = result.destination?.chain as { chainId?: number; chain?: string } | undefined;
+
+      const sourceChainId: ChainId | undefined = sourceChainDef?.chainId ?? (sourceChainDef?.chain as ChainId);
+      const destChainId: ChainId | undefined = destChainDef?.chainId ?? (destChainDef?.chain as ChainId);
+
+      const sourceType = sourceChainId ? getChainType(sourceChainId) : "evm";
+      const destType = destChainId ? getChainType(destChainId) : "evm";
+
+      // Create SOURCE adapter based on chain type
+      let sourceAdapter;
+      if (sourceType === "solana") {
+        if (!solanaWallet.connected || !solanaWallet.wallet?.adapter) {
+          throw new Error("Connect your Solana wallet to claim.");
+        }
+        sourceAdapter = await createSolanaAdapter(solanaWallet.wallet.adapter);
+      } else {
+        if (!provider || !walletClient) {
+          throw new Error("Connect your EVM wallet to claim.");
+        }
+        sourceAdapter = await createViemAdapter(provider);
+      }
+
+      // Create DESTINATION adapter based on chain type
+      let destAdapter;
+      if (destType === "solana") {
+        if (!solanaWallet.connected || !solanaWallet.wallet?.adapter) {
+          throw new Error("Connect your Solana wallet to claim on Solana.");
+        }
+        destAdapter = await createSolanaAdapter(solanaWallet.wallet.adapter);
+      } else {
+        if (!provider || !walletClient) {
+          throw new Error("Connect your EVM wallet to claim.");
+        }
+        destAdapter = await createViemAdapter(provider);
       }
 
       const initialHashes = extractHashes(result);
       const baseHash =
         initialHashes.burnHash ||
-        asTxHash(result.steps.find((step) => step.txHash)?.txHash);
+        (asTxHash(result.steps.find((step) => step.txHash)?.txHash) as UniversalTxHash);
 
       if (!baseHash) {
         throw new Error("No source transaction hash found for this transfer.");
       }
 
       const kit = getBridgeKit();
-      const adapter = await createViemAdapter(provider);
       currentStepsRef.current = result.steps || [];
       setIsClaiming(true);
 
@@ -113,7 +149,7 @@ export const useClaim = () => {
       kit.on("*", handleEvent);
 
       try {
-        const retryResult = await kit.retry(result, { from: adapter, to: adapter });
+        const retryResult = await kit.retry(result, { from: sourceAdapter, to: destAdapter });
         const { burnHash, mintHash, completedAt } = extractHashes(retryResult);
 
         currentStepsRef.current = retryResult.steps || [];
@@ -194,11 +230,12 @@ export const useClaim = () => {
         setIsClaiming(false);
       }
     },
-    [provider, walletClient, updateTransaction, toast]
+    [provider, walletClient, solanaWallet.connected, solanaWallet.wallet, updateTransaction, toast]
   );
 
   return {
     retryClaim,
     isClaiming,
+    isSolanaConnected: solanaWallet.connected,
   };
 };

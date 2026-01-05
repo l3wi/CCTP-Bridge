@@ -11,7 +11,12 @@ import {
 import {
   getWagmiChainsForEnv,
   getWagmiTransportsForEnv,
+  getBridgeChainByIdUniversal,
+  BRIDGEKIT_ENV,
 } from "./bridgeKit";
+import { createSolanaAdapter } from "./solanaAdapter";
+import type { SolanaChainId } from "./types";
+import type { Adapter } from "@solana/wallet-adapter-base";
 
 // CCTP message format constants
 const CCTP_MESSAGE_HEADER_BYTES = 148; // Minimum header size
@@ -286,4 +291,99 @@ export async function checkMintReadiness(
     ...simResult,
     attestationReady: true,
   };
+}
+
+/**
+ * Check if a Solana CCTP mint has already been executed.
+ * Uses transaction simulation to detect "account already in use" error,
+ * which indicates the nonce account was already allocated (mint happened).
+ *
+ * @param sourceChainId - The source EVM chain ID
+ * @param destinationChainId - The destination Solana chain ID
+ * @param attestationData - The attestation data from Iris
+ * @param walletAdapter - The Solana wallet adapter
+ * @returns Simulation result with alreadyMinted status
+ */
+export async function checkSolanaMintStatus(
+  sourceChainId: number,
+  destinationChainId: SolanaChainId,
+  attestationData: {
+    nonce: string;
+    attestation: string;
+    message: string;
+    mintRecipient?: string;
+  },
+  walletAdapter: Adapter
+): Promise<SimulationResult> {
+  try {
+    const sourceChain = getBridgeChainByIdUniversal(sourceChainId, BRIDGEKIT_ENV);
+    const destChain = getBridgeChainByIdUniversal(destinationChainId, BRIDGEKIT_ENV);
+
+    if (!sourceChain || !destChain) {
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        error: "Could not resolve chain definitions",
+      };
+    }
+
+    const adapter = await createSolanaAdapter(walletAdapter);
+
+    // Cast adapter to access prepareAction method
+    const adapterWithActions = adapter as unknown as {
+      prepareAction: (
+        action: string,
+        params: Record<string, unknown>,
+        ctx: { chain: string }
+      ) => Promise<{ estimate: () => Promise<unknown> }>;
+    };
+
+    const preparedRequest = await adapterWithActions.prepareAction(
+      "cctp.v2.receiveMessage",
+      {
+        eventNonce: attestationData.nonce,
+        attestation: attestationData.attestation,
+        message: attestationData.message,
+        fromChain: sourceChain,
+        toChain: destChain,
+        mintRecipient: attestationData.mintRecipient,
+      },
+      { chain: destinationChainId }
+    );
+
+    // Try to simulate (estimate) the transaction
+    await preparedRequest.estimate();
+
+    // Simulation succeeded - mint can be executed
+    return {
+      success: true,
+      canMint: true,
+      alreadyMinted: false,
+    };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Check for "already in use" - means nonce account exists, mint happened
+    // This error occurs when the CCTP program tries to allocate an account
+    // that was already created by a previous receiveMessage call
+    if (
+      /already in use/i.test(errorMessage) ||
+      /account.*already.*use/i.test(errorMessage)
+    ) {
+      return {
+        success: true,
+        canMint: false,
+        alreadyMinted: true,
+        error: "Nonce already used - mint was already executed",
+      };
+    }
+
+    return {
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
+      error: errorMessage.slice(0, 200),
+    };
+  }
 }

@@ -4,7 +4,8 @@
  */
 
 import { createPublicClient, http, encodePacked, keccak256 } from "viem";
-import { getBridgeKit, getSupportedEvmChains, type BridgeEnvironment } from "./bridgeKit";
+import { getBridgeKit, getSupportedEvmChains, getAllSupportedChains, type BridgeEnvironment } from "./bridgeKit";
+import type { ChainId, SolanaChainId } from "./types";
 
 // ABI for MessageTransmitter - only functions we need for direct mint
 export const MESSAGE_TRANSMITTER_ABI = [
@@ -80,6 +81,37 @@ export function getChainIdFromDomain(
   const chains = getSupportedEvmChains(env);
   const chain = chains.find((c) => c.cctp?.domain === domain);
   return chain?.chainId ?? null;
+}
+
+/**
+ * Get chain ID from CCTP domain (universal - supports both EVM and Solana).
+ * Returns numeric chainId for EVM chains, string chainId for Solana chains.
+ */
+export function getChainIdFromDomainUniversal(
+  domain: number,
+  env?: BridgeEnvironment
+): ChainId | null {
+  const chains = getAllSupportedChains(env);
+
+  // Find chain by CCTP domain - need to cast through unknown due to union type variance
+  const chain = chains.find((c) => {
+    const cctp = c.cctp as { domain?: number } | undefined;
+    return cctp?.domain === domain;
+  });
+
+  if (!chain) return null;
+
+  // EVM chains have numeric chainId
+  if (chain.type === "evm") {
+    return (chain as { chainId: number }).chainId;
+  }
+
+  // Solana chains use string identifier (chain property)
+  if (chain.type === "solana") {
+    return (chain as { chain: SolanaChainId }).chain;
+  }
+
+  return null;
 }
 
 /**

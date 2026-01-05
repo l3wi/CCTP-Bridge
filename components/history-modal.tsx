@@ -23,7 +23,8 @@ import { useTransactionStore } from "@/lib/store/transactionStore";
 import { ChainIcon } from "@/components/chain-icon";
 import { getExplorerTxUrlUniversal, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal } from "@/lib/bridgeKit";
 import { fetchAttestation } from "@/lib/iris";
-import { getChainIdFromDomain, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
+import { getChainIdFromDomainUniversal, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
+import { isSolanaChain } from "@/lib/types";
 import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
@@ -398,16 +399,14 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         return;
       }
 
-      // Get target chain from destination domain
-      const targetChainId = getChainIdFromDomain(attestationData.destinationDomain, BRIDGEKIT_ENV);
+      // Get target chain from destination domain (supports both EVM and Solana)
+      const targetChainId = getChainIdFromDomainUniversal(attestationData.destinationDomain, BRIDGEKIT_ENV);
 
       if (!targetChainId) {
-        // Check if the domain exists but is non-EVM or wrong environment
+        // Check if the domain exists but is wrong environment
         const chainInfo = getChainInfoFromDomainAllChains(attestationData.destinationDomain);
         if (chainInfo) {
-          if (chainInfo.type !== "evm") {
-            setError(`Destination is ${chainInfo.name} (${chainInfo.type}) - only EVM chains are supported`);
-          } else if (chainInfo.isTestnet !== (BRIDGEKIT_ENV === "testnet")) {
+          if (chainInfo.isTestnet !== (BRIDGEKIT_ENV === "testnet")) {
             const expected = BRIDGEKIT_ENV === "testnet" ? "testnet" : "mainnet";
             setError(`Destination is on ${chainInfo.isTestnet ? "testnet" : "mainnet"}, but app is in ${expected} mode`);
           } else {
@@ -446,10 +445,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       }
 
       // Check if the transaction has already been claimed by querying usedNonces
+      // Note: This only works for EVM destinations - skip for Solana
       let isAlreadyClaimed = false;
-      if (attestationData.status === "complete") {
+      if (attestationData.status === "complete" && !isSolanaChain(targetChainId)) {
         const nonceUsed = await isNonceUsed(
-          targetChainId,
+          targetChainId as number,
           attestationData.sourceDomain,
           attestationData.nonce,
           BRIDGEKIT_ENV

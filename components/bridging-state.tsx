@@ -8,10 +8,12 @@ import { formatTime } from "@/lib/utils";
 import { ChainIcon } from "@/components/chain-icon";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { useAccount, useSwitchChain } from "wagmi";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useToast } from "@/components/ui/use-toast";
-import { getExplorerTxUrl } from "@/lib/bridgeKit";
+import { getExplorerTxUrlUniversal } from "@/lib/bridgeKit";
 import { useClaim } from "@/lib/hooks/useClaim";
 import { useDirectMint } from "@/lib/hooks/useDirectMint";
+import { useDirectMintSolana } from "@/lib/hooks/useDirectMintSolana";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { checkMintReadiness } from "@/lib/simulation";
 import { asTxHash, ChainId, isSolanaChain } from "@/lib/types";
@@ -79,9 +81,11 @@ export function BridgingState({
 }: BridgingStateProps) {
   const { chain } = useAccount();
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain();
+  const solanaWallet = useWallet();
   const { toast } = useToast();
   const { retryClaim, isClaiming } = useClaim();
   const { executeMint, isMinting } = useDirectMint();
+  const { executeMintSolana, isMinting: isMintingSolana } = useDirectMintSolana();
   const { updateTransaction } = useTransactionStore();
   const [timeLeft, setTimeLeft] = useState(estimatedTime ?? 0);
   const [localBridgeResult, setLocalBridgeResult] = useState<
@@ -189,6 +193,10 @@ export function BridgingState({
       ];
     });
 
+    // Check if burn step exists and is successful (implies approval succeeded)
+    const burnStep = existingSteps.find((s) => s.id === "burn");
+    const burnSucceeded = burnStep?.state === "success" || burnStep?.state === "noop";
+
     let previousCompleted = true;
     const filled: Array<
       (typeof existingSteps)[number] & { id: (typeof STEP_ORDER)[number]["id"]; label: string }
@@ -200,13 +208,24 @@ export function BridgingState({
         filled.push(existing as any);
         previousCompleted = existing.state === "success" || existing.state === "noop";
       } else if (previousCompleted) {
-        filled.push({
-          id: entry.id,
-          label: entry.label,
-          name: entry.label,
-          state: "pending" as const,
-        } as any);
-        previousCompleted = false;
+        // If approve step is missing but burn succeeded, infer approve succeeded
+        if (entry.id === "approve" && burnSucceeded) {
+          filled.push({
+            id: entry.id,
+            label: entry.label,
+            name: entry.label,
+            state: "success" as const,
+          } as any);
+          previousCompleted = true;
+        } else {
+          filled.push({
+            id: entry.id,
+            label: entry.label,
+            name: entry.label,
+            state: "pending" as const,
+          } as any);
+          previousCompleted = false;
+        }
       }
     }
 
@@ -346,20 +365,26 @@ export function BridgingState({
       ? formatCompletedLabel(mintCompletedAt ?? completedAtDate, startedAt ?? null)
       : null;
 
-  const destinationChainId = useMemo(() => {
-    const bridgeDest = (
-      displayResult?.destination?.chain as { chainId?: number } | undefined
-    )?.chainId;
-    if (bridgeDest) return bridgeDest;
-    return toChain?.value ? Number(toChain.value) : undefined;
+  const destinationChainId: ChainId | undefined = useMemo(() => {
+    // Handle both EVM (chainId: number) and Solana (chain: string) identifiers
+    const chainDef = displayResult?.destination?.chain as { chainId?: number; chain?: string } | undefined;
+    const bridgeChainId = chainDef?.chainId ?? chainDef?.chain;
+    if (bridgeChainId) return bridgeChainId as ChainId;
+    // Fallback to prop value - check if it's numeric (EVM) or string (Solana)
+    if (!toChain?.value) return undefined;
+    const numValue = Number(toChain.value);
+    return !isNaN(numValue) ? numValue : (toChain.value as ChainId);
   }, [displayResult?.destination?.chain, toChain?.value]);
 
-  const sourceChainId = useMemo(() => {
-    const bridgeSource = (
-      displayResult?.source?.chain as { chainId?: number } | undefined
-    )?.chainId;
-    if (bridgeSource) return bridgeSource;
-    return fromChain?.value ? Number(fromChain.value) : undefined;
+  const sourceChainId: ChainId | undefined = useMemo(() => {
+    // Handle both EVM (chainId: number) and Solana (chain: string) identifiers
+    const chainDef = displayResult?.source?.chain as { chainId?: number; chain?: string } | undefined;
+    const bridgeChainId = chainDef?.chainId ?? chainDef?.chain;
+    if (bridgeChainId) return bridgeChainId as ChainId;
+    // Fallback to prop value - check if it's numeric (EVM) or string (Solana)
+    if (!fromChain?.value) return undefined;
+    const numValue = Number(fromChain.value);
+    return !isNaN(numValue) ? numValue : (fromChain.value as ChainId);
   }, [displayResult?.source?.chain, fromChain?.value]);
 
   // Extract burn transaction hash for polling
@@ -375,6 +400,7 @@ export function BridgingState({
   }, [displayResult?.steps]);
 
   // Check if we should poll for mint readiness (>5 min old, not completed, within time limit)
+  // Note: Polling only works for EVM destinations (uses contract simulation)
   const shouldPoll = useMemo(() => {
     // Don't poll if already successful
     if (displayResult?.state === "success") return false;
@@ -382,6 +408,9 @@ export function BridgingState({
 
     // Don't poll if we don't have required data
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
+
+    // Don't poll for Solana destinations - checkMintReadiness is EVM-only
+    if (isSolanaChain(destinationChainId)) return false;
 
     // Check if bridge is old enough to start polling
     const referenceTime = burnCompletedAt ?? startedAt;
@@ -424,13 +453,15 @@ export function BridgingState({
     const checkMint = async () => {
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
       if (!isMountedRef.current) return;
+      // Skip for Solana destinations - checkMintReadiness is EVM-only
+      if (isSolanaChain(destinationChainId)) return;
 
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
       try {
         const result = await checkMintReadiness(
-          sourceChainId,
-          destinationChainId,
+          sourceChainId as number,
+          destinationChainId as number,
           burnTxHash
         );
 
@@ -531,10 +562,18 @@ export function BridgingState({
     };
   }, [displayResult?.destination?.chain, toChain.label, toChain.value]);
 
-  const onDestinationChain =
-    chain?.id && destinationChainId ? chain.id === destinationChainId : false;
+  const onDestinationChain = useMemo(() => {
+    if (!destinationChainId) return false;
 
-  // Direct mint handler - bypasses Bridge Kit SDK to avoid duplicate transactions
+    if (isSolanaChain(destinationChainId)) {
+      // For Solana destinations, check Solana wallet is connected
+      return solanaWallet.connected;
+    }
+    // For EVM destinations, check EVM chain matches
+    return chain?.id === destinationChainId;
+  }, [destinationChainId, chain?.id, solanaWallet.connected]);
+
+  // Direct mint handler - uses SDK for Solana, direct mint for EVM
   const handleClaim = useCallback(async () => {
     if (!destinationChainId || !sourceChainId || !burnTxHash) {
       toast({
@@ -545,95 +584,169 @@ export function BridgingState({
       return;
     }
 
-    // Switch chain if needed
-    if (!onDestinationChain) {
-      try {
-        await switchChain({ chainId: destinationChainId });
-        // Wait a moment for chain switch to complete
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      } catch (err) {
+    const isDestSolana = isSolanaChain(destinationChainId);
+
+    if (isDestSolana) {
+      // SOLANA DESTINATION: Use direct mint via adapter's prepareAction
+      if (!solanaWallet.connected) {
         toast({
-          title: "Chain switch required",
-          description: `Please switch to the destination chain to claim`,
+          title: "Connect Solana wallet",
+          description: "Please connect your Solana wallet to claim",
           variant: "destructive",
         });
         return;
       }
-    }
 
-    // Execute direct mint
-    const result = await executeMint(
-      burnTxHash,
-      sourceChainId,
-      destinationChainId,
-      displayResult?.steps
-    );
+      // Execute direct mint on Solana
+      const result = await executeMintSolana(
+        burnTxHash,
+        sourceChainId,
+        destinationChainId as import("@/lib/types").SolanaChainId,
+        displayResult?.steps
+      );
 
-    if (result.success || result.alreadyMinted) {
-      // Update local state - handle both successful mint and already minted cases
-      const updatedSteps = (displayResult?.steps || []).map((step) => {
-        if (/attestation|attest/i.test(step.name)) {
-          return { ...step, state: "success" as const };
-        }
-        if (/mint|claim|receive/i.test(step.name)) {
-          return {
-            ...step,
-            state: "success" as const,
+      if (result.success || result.alreadyMinted) {
+        // Update local state
+        const updatedSteps = (displayResult?.steps || []).map((step) => {
+          if (/attestation|attest/i.test(step.name)) {
+            return { ...step, state: "success" as const };
+          }
+          if (/mint|claim|receive/i.test(step.name)) {
+            return {
+              ...step,
+              state: "success" as const,
+              txHash: result.mintTxHash,
+              errorMessage: result.alreadyMinted
+                ? "USDC claimed. Check your wallet for the USDC"
+                : undefined,
+            };
+          }
+          return step;
+        });
+
+        // Add mint step if it doesn't exist
+        if (!updatedSteps.some((s) => /mint|claim|receive/i.test(s.name))) {
+          updatedSteps.push({
+            name: "Mint",
+            state: "success",
             txHash: result.mintTxHash,
             errorMessage: result.alreadyMinted
               ? "USDC claimed. Check your wallet for the USDC"
               : undefined,
-          };
+          });
         }
-        return step;
-      });
 
-      // Add mint step if it doesn't exist
-      if (!updatedSteps.some((s) => /mint|claim|receive/i.test(s.name))) {
-        updatedSteps.push({
-          name: "Mint",
-          state: "success",
-          txHash: result.mintTxHash,
-          errorMessage: result.alreadyMinted
-            ? "USDC claimed. Check your wallet for the USDC"
-            : undefined,
-        });
-      }
+        setLocalBridgeResult((prev) =>
+          prev ? { ...prev, state: "success", steps: updatedSteps } : prev
+        );
 
-      setLocalBridgeResult((prev) =>
-        prev ? { ...prev, state: "success", steps: updatedSteps } : prev
-      );
-
-      // Sync mintSimulation state to stop polling
-      if (result.alreadyMinted) {
-        setMintSimulation((prev) => ({
-          ...prev,
-          alreadyMinted: true,
-          canMint: false,
-        }));
-      }
-
-      if (displayResult) {
-        onBridgeResultUpdate?.({
-          ...displayResult,
-          state: "success",
-          steps: updatedSteps,
+        if (displayResult) {
+          onBridgeResultUpdate?.({
+            ...displayResult,
+            state: "success",
+            steps: updatedSteps,
+          });
+        }
+      } else if (result.error) {
+        toast({
+          title: "Claim failed",
+          description: result.error,
+          variant: "destructive",
         });
       }
     } else {
-      toast({
-        title: "Claim failed",
-        description: result.error || "Unable to complete mint",
-        variant: "destructive",
-      });
+      // EVM DESTINATION: Use direct mint (existing logic)
+      if (!onDestinationChain) {
+        try {
+          await switchChain({ chainId: destinationChainId as number });
+          // Wait a moment for chain switch to complete
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (err) {
+          toast({
+            title: "Chain switch required",
+            description: `Please switch to the destination chain to claim`,
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      // Execute direct mint for EVM
+      const result = await executeMint(
+        burnTxHash,
+        sourceChainId as number,
+        destinationChainId as number,
+        displayResult?.steps
+      );
+
+      if (result.success || result.alreadyMinted) {
+        // Update local state - handle both successful mint and already minted cases
+        const updatedSteps = (displayResult?.steps || []).map((step) => {
+          if (/attestation|attest/i.test(step.name)) {
+            return { ...step, state: "success" as const };
+          }
+          if (/mint|claim|receive/i.test(step.name)) {
+            return {
+              ...step,
+              state: "success" as const,
+              txHash: result.mintTxHash,
+              errorMessage: result.alreadyMinted
+                ? "USDC claimed. Check your wallet for the USDC"
+                : undefined,
+            };
+          }
+          return step;
+        });
+
+        // Add mint step if it doesn't exist
+        if (!updatedSteps.some((s) => /mint|claim|receive/i.test(s.name))) {
+          updatedSteps.push({
+            name: "Mint",
+            state: "success",
+            txHash: result.mintTxHash,
+            errorMessage: result.alreadyMinted
+              ? "USDC claimed. Check your wallet for the USDC"
+              : undefined,
+          });
+        }
+
+        setLocalBridgeResult((prev) =>
+          prev ? { ...prev, state: "success", steps: updatedSteps } : prev
+        );
+
+        // Sync mintSimulation state to stop polling
+        if (result.alreadyMinted) {
+          setMintSimulation((prev) => ({
+            ...prev,
+            alreadyMinted: true,
+            canMint: false,
+          }));
+        }
+
+        if (displayResult) {
+          onBridgeResultUpdate?.({
+            ...displayResult,
+            state: "success",
+            steps: updatedSteps,
+          });
+        }
+      } else {
+        toast({
+          title: "Claim failed",
+          description: result.error || "Unable to complete mint",
+          variant: "destructive",
+        });
+      }
     }
   }, [
     destinationChainId,
     sourceChainId,
     burnTxHash,
     onDestinationChain,
+    solanaWallet.connected,
     switchChain,
     executeMint,
+    executeMintSolana,
     displayResult,
     onBridgeResultUpdate,
     toast,
@@ -643,8 +756,9 @@ export function BridgingState({
   const handleRetry = async (options?: { forceRetry?: boolean }) => {
     if (!destinationChainId || !displayResult) return;
     try {
-      if (!onDestinationChain) {
-        await switchChain({ chainId: destinationChainId });
+      // For Solana destinations, don't try to switch chain (Solana wallet handles this)
+      if (!onDestinationChain && !isSolanaChain(destinationChainId)) {
+        await switchChain({ chainId: destinationChainId as number });
       }
 
       const claimStep =
@@ -655,7 +769,7 @@ export function BridgingState({
         const explorer =
           claimStep.explorerUrl ||
           (destinationChainId
-            ? getExplorerTxUrl(destinationChainId, claimStep.txHash)
+            ? getExplorerTxUrlUniversal(destinationChainId, claimStep.txHash)
             : null);
         if (explorer) {
           window.open(explorer, "_blank");
@@ -810,9 +924,9 @@ export function BridgingState({
                                 step.explorerUrl ||
                                 (destinationChainId &&
                                 step.name.toLowerCase().includes("mint")
-                                  ? getExplorerTxUrl(destinationChainId, txHash)
+                                  ? getExplorerTxUrlUniversal(destinationChainId, txHash)
                                   : sourceChainId
-                                  ? getExplorerTxUrl(sourceChainId, txHash)
+                                  ? getExplorerTxUrlUniversal(sourceChainId, txHash)
                                   : null);
                               if (explorer) {
                                 window.open(explorer, "_blank");
@@ -861,10 +975,10 @@ export function BridgingState({
             <div className="flex flex-col gap-2">
               <Button
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={isSwitchingChain || isClaiming || isMinting}
+                disabled={isSwitchingChain || isClaiming || isMinting || isMintingSolana}
                 onClick={handleClaim}
               >
-                {isClaiming || isMinting ? (
+                {isClaiming || isMinting || isMintingSolana ? (
                   <span className="flex items-center justify-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Claiming...

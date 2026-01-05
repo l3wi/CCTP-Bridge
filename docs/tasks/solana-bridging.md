@@ -616,13 +616,108 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
   - Shows actual estimated fees once wallet connected
 - **Removed unused `isSolanaRoute` variable**
 
+### Step 23: Fix Solana Mint/Claim Flow (Completed)
+- **Issue 1**: "Switch chain to Solana" button showed even when Solana wallet was connected
+  - **Root cause**: `onDestinationChain` in `bridging-state.tsx` compared EVM `chain.id` (number) to Solana chain ID (string) — always `false`
+  - **Fix**: Updated `onDestinationChain` to use `useMemo` and check `solanaWallet.connected` for Solana destinations
+- **Issue 2**: `handleClaim` used `useDirectMint` which is EVM-only (calls `MessageTransmitter.receiveMessage()` contract)
+  - **Fix**: Branched `handleClaim` to use `retryClaim` from `useClaim` hook for Solana destinations
+- **Issue 3**: `useClaim.ts` always created EVM adapter regardless of destination chain type
+  - **Fix**: Updated `retryClaim` to detect source/destination chain types from `result.source/destination`
+  - Creates `sourceAdapter` and `destAdapter` separately based on chain type
+  - Uses `createSolanaAdapter()` for Solana chains, `createViemAdapter()` for EVM chains
+  - Updated dependency array to include `solanaWallet.connected` and `solanaWallet.wallet`
+
+**Files modified:**
+- `components/bridging-state.tsx`: Added `useWallet` hook, updated `onDestinationChain`, branched `handleClaim`
+- `lib/hooks/useClaim.ts`: Added Solana imports, detect chain types, create ecosystem-appropriate adapters
+
+### Step 24: Allow Solana Destinations in Add Transaction Modal (Completed)
+- **Issue**: "Add Transaction" modal rejected Solana destinations with error "only EVM chains are supported"
+- **Root cause**: `getChainIdFromDomain()` in `lib/contracts.ts` only searched EVM chains
+- **Fix**: Created `getChainIdFromDomainUniversal()` function that returns both EVM (number) and Solana (string) chain IDs
+- **Updated `history-modal.tsx`**:
+  - Replaced `getChainIdFromDomain` with `getChainIdFromDomainUniversal`
+  - Removed the "only EVM chains supported" error check
+  - Added `isSolanaChain` check to skip `isNonceUsed` verification for Solana destinations (EVM-only contract query)
+
+**Files modified:**
+- `lib/contracts.ts`: Added `getChainIdFromDomainUniversal()` function
+- `components/history-modal.tsx`: Use universal function, skip nonce check for Solana
+
+### Step 25: Fix Chain ID Extraction for Solana Destinations (Completed)
+- **Issue**: "Missing transaction details" error when clicking claim button for Solana destinations
+- **Root cause**: `destinationChainId` and `sourceChainId` in `bridging-state.tsx` only extracted numeric `chainId` (EVM)
+  - Solana chains use string `chain` property (e.g., `"Solana_Devnet"`) instead of numeric `chainId`
+  - `Number("Solana_Devnet")` returns `NaN`, causing undefined chain IDs
+- **Fix applied to `bridging-state.tsx`**:
+  - Updated `destinationChainId` and `sourceChainId` memos to check both `chainId` (EVM) and `chain` (Solana) properties
+  - Added `ChainId` type annotation (union of number | string)
+  - Skip mint readiness polling for Solana destinations (`checkMintReadiness` is EVM-only)
+  - Updated `handleRetry` to skip EVM chain switch for Solana destinations
+  - Replaced all `getExplorerTxUrl` calls with `getExplorerTxUrlUniversal` for universal chain support
+
+**Files modified:**
+- `components/bridging-state.tsx`: Universal chain ID extraction, skip polling for Solana, use universal explorer URLs
+
+### Step 26: Direct Mint for Solana Destinations (Completed)
+- **Issue**: `kit.retry()` returned "Retry not supported for this result, requires user action" error
+- **Root cause**: SDK's retry mechanism doesn't work for all transaction states, particularly when burn succeeds but no mint tx exists
+- **Solution**: Created `useDirectMintSolana` hook that directly executes the Solana mint using the adapter's `prepareAction`
+
+**New file: `lib/hooks/useDirectMintSolana.ts`**
+- Mirrors `useDirectMint` (EVM) pattern for Solana
+- Fetches attestation from Iris API (`fetchAttestation`)
+- Gets chain definitions via `getBridgeChainByIdUniversal()`
+- Creates Solana adapter from connected wallet
+- Calls `adapter.prepareAction('cctp.v2.receiveMessage', params, ctx)` with:
+  - `eventNonce` - from Iris attestation
+  - `attestation` - from Iris attestation
+  - `message` - from Iris attestation
+  - `fromChain` - source chain definition
+  - `toChain` - destination chain definition
+  - `destinationAddress` - user's Solana wallet pubkey
+  - `mintRecipient` - from decoded CCTP message
+- Executes prepared transaction and updates store on success
+- Handles "already minted" detection via nonce used errors
+
+**Updated `components/bridging-state.tsx`:**
+- Added `useDirectMintSolana` hook import and usage
+- Updated `handleClaim` for Solana destinations:
+  - Uses `executeMintSolana()` instead of `retryClaim()`
+  - Updates local state with mint result
+  - Shows toast on success/error
+- Updated button disabled state to include `isMintingSolana`
+
+### Step 27: Fix Block Height Exceeded Error Handling (Completed)
+- **Issue**: Solana mint succeeds but app shows "Claim failed" due to confirmation polling timeout ("block height exceeded")
+- **Root cause**: Circle SDK's `execute()` method has internal polling that can timeout even when transaction succeeded
+- **Solution**: Added simulation-based verification similar to EVM's `checkNonceUsed()`
+
+**New function: `checkSolanaMintStatus()` in `lib/simulation.ts`**
+- Simulates the receiveMessage call on Solana
+- If simulation fails with "account already in use" → nonce was consumed → mint succeeded
+- If simulation succeeds → mint can still be executed
+- Key detection pattern: `"Allocate: account Address {...} already in use"`
+
+**Updated `lib/hooks/useDirectMintSolana.ts`:**
+- Moved attestation fetch outside try block (needed for error recovery)
+- Added "already in use" to nonce detection patterns
+- Added block height error handling:
+  - Detects "block height exceeded" / "has expired" / "transaction expired" errors
+  - Calls `checkSolanaMintStatus()` to verify transaction status via simulation
+  - If simulation fails with "already in use" → marks transaction as success
+  - If simulation succeeds → suggests retry
+
 ---
 
 ## Remaining Work
 
 ### Testing Checklist
 - [ ] EVM to EVM bridging still works (regression test)
-- [ ] EVM → Solana bridging flow end-to-end
+- [x] EVM → Solana: Shows "Claim X USDC" when Solana wallet connected (not "Switch chain")
+- [x] EVM → Solana: Clicking "Claim" executes mint via `useDirectMintSolana`
+- [ ] EVM → Solana: Block height timeout correctly verifies mint status
 - [ ] Solana → EVM bridging flow end-to-end
 - [ ] Balance display switches correctly when changing source chain
 - [ ] Verify transaction history displays Solana transactions correctly
@@ -630,5 +725,5 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 - [ ] Test with Solflare wallet
 
 ### Known Limitations
-- Estimation skipped for Solana routes (shows static "No protocol fee")
 - Solana adapter requires browser wallet extension (no readonly mode)
+- Solana RPC WebSocket subscriptions may fail with malformed responses (affects confirmation polling)
