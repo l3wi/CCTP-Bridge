@@ -295,13 +295,13 @@ export function BridgeCard({
   const prevWalletChainRef = useRef<number | undefined>(walletChainId);
 
   // Default chain IDs when no wallet connected
-  // Mainnet: Arbitrum (42161), Base (8453)
-  // Testnet: Arbitrum Sepolia (421614), Base Sepolia (84532)
+  // Source: Arbitrum (mainnet: 42161, testnet: 421614)
+  // Target: Solana (mainnet: "Solana", testnet: "Solana_Devnet")
   const defaultSourceChainId = chainOptions.find(
     (c) => c.id === 42161 || c.id === 421614
   )?.id;
   const defaultTargetChainId = chainOptions.find(
-    (c) => c.id === 8453 || c.id === 84532
+    (c) => c.id === "Solana" || c.id === "Solana_Devnet"
   )?.id;
 
   // Track if user has explicitly changed the source chain
