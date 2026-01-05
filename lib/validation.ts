@@ -26,7 +26,7 @@ export const validateAmount = (
     const cleanStr = amountStr.replace(/[^0-9.]/g, "");
 
     if (!cleanStr || cleanStr === "") {
-      return { isValid: false, error: "Please enter an amount" };
+      return { isValid: false, error: "Enter Amount" };
     }
 
     // Check for multiple decimal points
@@ -182,7 +182,7 @@ export const validateBridgeParams = (params: {
 
   // Validate amount
   if (!params.amount || params.amount.bigInt === BigInt(0)) {
-    errors.push("Please enter an amount");
+    errors.push("Enter Amount");
   } else {
     const amountValidation = validateAmount(params.amount.str, params.balance);
     if (!amountValidation.isValid && amountValidation.error) {

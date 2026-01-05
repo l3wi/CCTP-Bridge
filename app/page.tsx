@@ -31,7 +31,7 @@ export default function Home() {
         <WalletConnect />
       </div>
 
-      <div className="w-full max-w-md pt-5">
+      <div className="w-full max-w-xl pt-5">
         {/* Floating Header */}
         <div className="mb-4">
           <h1 className="relative inline-block text-4xl font-bold text-white pb-2 ">

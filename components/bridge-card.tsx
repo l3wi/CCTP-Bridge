@@ -620,10 +620,6 @@ export function BridgeCard({
         activeSourceChainId != null
           ? getBridgeChainByIdUniversal(activeSourceChainId)
           : undefined;
-      const confirmations =
-        activeSourceChainId != null ? getCctpConfirmationsUniversal(activeSourceChainId) : null;
-      const blocks =
-        speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
       const finality = sourceChain
         ? getFinalityEstimate(
             sourceChain.name || String(sourceChain.chain),
@@ -631,12 +627,7 @@ export function BridgeCard({
           )?.averageTime
         : undefined;
 
-      // Show time estimate with block count, e.g., "~8 Sec (1 Block)"
-      const blockLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : null;
-      if (finality && blockLabel) {
-        return `${finality} (${blockLabel})`;
-      }
-      return finality ?? blockLabel ?? "Estimate unavailable";
+      return finality ?? "Estimate unavailable";
     },
     [activeSourceChainId]
   );
@@ -915,131 +906,189 @@ export function BridgeCard({
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
   const hasAmountInput = !!amount?.str;
 
-  const renderSpeedCard = (
-    speed: TransferSpeed,
-    estimate: BridgeEstimateResult | null | undefined,
-    isEstimating: boolean
-  ) => {
-    const feeTotal = getTotalProtocolFee(estimate);
+  // Helper to get estimate labels for a given speed
+  const getEstimateLabels = useCallback(
+    (
+      speed: TransferSpeed,
+      estimate: BridgeEstimateResult | null | undefined,
+      isEstimating: boolean
+    ) => {
+      const feeTotal = getTotalProtocolFee(estimate);
+      const needsSolanaWallet = sourceChainType === "solana" || targetChainType === "solana";
+      const blockedEstimateLabel = !amountForEstimate.isValid
+        ? "Complete the form"
+        : !isSourceChainSynced
+        ? "Switch wallet"
+        : !chainSelectionValid
+        ? "Select chains"
+        : needsSolanaWallet && !hasSolanaWallet
+        ? "Connect Solana"
+        : null;
 
-    // Estimate blocking conditions
-    // Need Solana wallet if source OR destination is Solana
-    const needsSolanaWallet = sourceChainType === "solana" || targetChainType === "solana";
-    const blockedEstimateLabel = !amountForEstimate.isValid
-      ? "Complete the form"
-      : !isSourceChainSynced
-      ? "Switch wallet to selected chain"
-      : !chainSelectionValid
-      ? "Select different chains"
-      : needsSolanaWallet && !hasSolanaWallet
-      ? "Connect Solana wallet"
-      : null;
+      const feeLabel = !hasAmountInput
+        ? "—"
+        : blockedEstimateLabel
+        ? blockedEstimateLabel
+        : isEstimating
+        ? "Fetching..."
+        : estimate
+        ? `${feeTotal.toFixed(6)} USDC`
+        : "—";
 
-    const feeLabel = !hasAmountInput
-      ? "Enter amount"
-      : blockedEstimateLabel
-      ? blockedEstimateLabel
-      : isEstimating
-      ? "Fetching..."
-      : estimate
-      ? `${feeTotal.toFixed(6)} USDC`
-      : "Awaiting estimate";
+      const receiveLabel = !hasAmountInput
+        ? "—"
+        : blockedEstimateLabel
+        ? blockedEstimateLabel
+        : estimate
+        ? getYouWillReceive(feeTotal)
+        : "—";
 
-    const receiveLabel = !hasAmountInput
-      ? "Enter amount"
-      : blockedEstimateLabel
-      ? blockedEstimateLabel
-      : estimate
-      ? getYouWillReceive(feeTotal)
-      : "Enter amount";
+      const confirmations = activeSourceChainId ? getCctpConfirmationsUniversal(activeSourceChainId) : null;
+      const blocks = speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
+      const confirmationLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : "—";
 
-    const isSpeedSubmitting =
-      (isLoading || isBridgeLoading) && activeTransferSpeed === speed;
+      return { feeLabel, receiveLabel, confirmationLabel, speedLabel: getTransferSpeedLabel(speed) };
+    },
+    [
+      getTotalProtocolFee,
+      sourceChainType,
+      targetChainType,
+      amountForEstimate.isValid,
+      isSourceChainSynced,
+      chainSelectionValid,
+      hasSolanaWallet,
+      hasAmountInput,
+      getYouWillReceive,
+      getTransferSpeedLabel,
+      activeSourceChainId,
+    ]
+  );
 
-    const validationMessage = validation.isValid
-      ? null
-      : validation.errors[0] || "Complete the form";
+  // Render the bridge comparison table (desktop) and cards (mobile)
+  const renderBridgeComparison = () => {
+    const fastLabels = getEstimateLabels(TransferSpeed.FAST, fastEstimate, isFastEstimating);
+    const standardLabels = getEstimateLabels(TransferSpeed.SLOW, standardEstimate, isStandardEstimating);
 
-    const badgeClasses =
-      speed === TransferSpeed.FAST
-        ? "bg-amber-500/10 text-amber-300 border-amber-500/40"
-        : "bg-slate-700/50 text-slate-200 border-slate-600/60";
+    const isFastSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.FAST;
+    const isStandardSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.SLOW;
 
-    return (
-      <div
-        key={speed}
-        className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-5 space-y-4"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-base font-semibold text-white">
-              {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
-            </p>
-          </div>
-          <span className={`text-xs px-2 py-1 rounded-full border ${badgeClasses}`}>
-            {speed === TransferSpeed.FAST ? "Priority" : "Standard"}
-          </span>
-        </div>
+    const validationMessage = validation.isValid ? null : validation.errors[0] || "Complete the form";
 
+    const renderButton = (speed: TransferSpeed, isPrimary: boolean) => {
+      const isSubmitting = speed === TransferSpeed.FAST ? isFastSubmitting : isStandardSubmitting;
+      const buttonText = validationMessage || (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard");
+      const buttonClass = isPrimary
+        ? "w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5"
+        : "w-full border border-slate-700 text-white hover:bg-slate-800 bg-transparent text-sm font-medium py-2.5";
+
+      const button = (
+        <LoadingButton
+          className={buttonClass}
+          onClick={() => handleSend(speed)}
+          isLoading={isSubmitting}
+          disabled={!validation.isValid || isLoading || isBridgeLoading || isSwitchingChain}
+        >
+          {buttonText}
+        </LoadingButton>
+      );
+
+      return sourceChainType === "solana" ? (
+        <SolanaConnectGuard>{button}</SolanaConnectGuard>
+      ) : (
+        <ConnectGuard>{button}</ConnectGuard>
+      );
+    };
+
+    const renderMobileCard = (speed: TransferSpeed, labels: typeof fastLabels, isPrimary: boolean) => (
+      <div className={`rounded-lg p-3 ${isPrimary ? "bg-slate-900/30" : "bg-slate-800/20"}`}>
+        <h3 className="text-white text-base font-semibold mb-3">
+          {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
+        </h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-slate-400">Estimate speed</span>
-            <span className="text-slate-100">{getTransferSpeedLabel(speed)}</span>
+            <span className="text-white">{labels.speedLabel}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-400">Confirmation</span>
+            <span className="text-white">{labels.confirmationLabel}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-400">Fee amount</span>
-            <span className="text-slate-100 text-right">{feeLabel}</span>
+            <span className="text-white">{labels.feeLabel}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-200">You will receive</span>
-            <span className="text-white">{receiveLabel}</span>
+            <span className="text-slate-400">You will receive</span>
+            <span className="text-white">{labels.receiveLabel}</span>
           </div>
         </div>
+        <div className="mt-3">{renderButton(speed, isPrimary)}</div>
+      </div>
+    );
 
-        {/* Use appropriate connect guard based on source chain type */}
-        {sourceChainType === "solana" ? (
-          <SolanaConnectGuard>
-            <LoadingButton
-              className={
-                speed === TransferSpeed.FAST
-                  ? "w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                  : "w-full border border-slate-600 bg-slate-800/80 hover:bg-slate-800 text-white font-medium py-3"
-              }
-              onClick={() => handleSend(speed)}
-              isLoading={isSpeedSubmitting}
-              disabled={
-                !validation.isValid ||
-                isLoading ||
-                isBridgeLoading ||
-                isSwitchingChain
-              }
-            >
-              {validationMessage ||
-                (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard")}
-            </LoadingButton>
-          </SolanaConnectGuard>
-        ) : (
-          <ConnectGuard>
-            <LoadingButton
-              className={
-                speed === TransferSpeed.FAST
-                  ? "w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                  : "w-full border border-slate-600 bg-slate-800/80 hover:bg-slate-800 text-white font-medium py-3"
-              }
-              onClick={() => handleSend(speed)}
-              isLoading={isSpeedSubmitting}
-              disabled={
-                !validation.isValid ||
-                isLoading ||
-                isBridgeLoading ||
-                isSwitchingChain
-              }
-            >
-              {validationMessage ||
-                (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard")}
-            </LoadingButton>
-          </ConnectGuard>
-        )}
+    return (
+      <div className="border-t border-slate-700/50 pt-4">
+        {/* Desktop: Table view */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="text-left py-2 pr-3 text-slate-400 font-normal text-sm"></th>
+                {fastTransferSupported && (
+                  <th className="text-center py-2 px-3">
+                    <span className="text-white text-base font-semibold">Fast Bridge</span>
+                  </th>
+                )}
+                <th className="text-center py-2 px-3">
+                  <span className="text-white text-base font-semibold">Standard Bridge</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-slate-800">
+                <td className="py-2.5 pr-3 text-slate-400 text-sm">Estimate speed</td>
+                {fastTransferSupported && (
+                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
+                )}
+                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-2.5 pr-3 text-slate-400 text-sm">Confirmation</td>
+                {fastTransferSupported && (
+                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
+                )}
+                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-2.5 pr-3 text-slate-400 text-sm">Fee amount</td>
+                {fastTransferSupported && (
+                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
+                )}
+                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-2.5 pr-3 text-slate-400 text-sm">You will receive</td>
+                {fastTransferSupported && (
+                  <td className="py-2.5 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
+                )}
+                <td className="py-2.5 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
+              </tr>
+              <tr>
+                <td className="pt-4 pr-3"></td>
+                {fastTransferSupported && (
+                  <td className="pt-4 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
+                )}
+                <td className="pt-4 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile: Stacked cards */}
+        <div className="md:hidden space-y-4">
+          {fastTransferSupported && renderMobileCard(TransferSpeed.FAST, fastLabels, true)}
+          {renderMobileCard(TransferSpeed.SLOW, standardLabels, !fastTransferSupported)}
+        </div>
       </div>
     );
   };
@@ -1424,58 +1473,8 @@ export function BridgeCard({
             </div>
           )}
 
-          {/* Transfer Options */}
-          {hasAmountInput ? (
-            <div className="space-y-4">
-              {fastTransferSupported &&
-                renderSpeedCard(
-                  TransferSpeed.FAST,
-                  fastEstimate,
-                  isFastEstimating
-                )}
-              {renderSpeedCard(
-                TransferSpeed.SLOW,
-                standardEstimate,
-                isStandardEstimating
-              )}
-            </div>
-          ) : sourceChainType === "solana" ? (
-            <SolanaConnectGuard>
-              <LoadingButton
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                onClick={() => handleSend(TransferSpeed.FAST)}
-                isLoading={isLoading || isBridgeLoading}
-                disabled={
-                  !validation.isValid ||
-                  isLoading ||
-                  isBridgeLoading ||
-                  isSwitchingChain
-                }
-              >
-                {validation.isValid
-                  ? "Bridge USDC"
-                  : validation.errors[0] || "Enter an amount to bridge"}
-              </LoadingButton>
-            </SolanaConnectGuard>
-          ) : (
-            <ConnectGuard>
-              <LoadingButton
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                onClick={() => handleSend(TransferSpeed.FAST)}
-                isLoading={isLoading || isBridgeLoading}
-                disabled={
-                  !validation.isValid ||
-                  isLoading ||
-                  isBridgeLoading ||
-                  isSwitchingChain
-                }
-              >
-                {validation.isValid
-                  ? "Bridge USDC"
-                  : validation.errors[0] || "Enter an amount to bridge"}
-              </LoadingButton>
-            </ConnectGuard>
-          )}
+          {/* Transfer Options - Comparison Table */}
+          {renderBridgeComparison()}
         </CardContent>
       </Card>
     </>
