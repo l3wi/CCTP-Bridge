@@ -146,11 +146,43 @@ export function useBurn() {
           }
 
           if (allowance < params.amount) {
-            return {
-              success: false,
-              approvalTxHash,
-              error: "Approval confirmed but allowance not set after 1 minute. Please try again.",
-            };
+            // Final check: verify approval tx actually succeeded before failing
+            // This handles RPC lag where allowance isn't visible yet
+            try {
+              const receipt = await publicClient.getTransactionReceipt({
+                hash: approvalTxHash,
+              });
+
+              if (receipt.status === "success") {
+                // Approval tx succeeded but allowance not visible - likely RPC lag
+                // Give one more extended retry window (30s) before failing
+                const EXTENDED_WAIT_MS = 30_000;
+                const extendedStart = Date.now();
+
+                while (Date.now() - extendedStart < EXTENDED_WAIT_MS) {
+                  allowance = await checkAllowance(
+                    publicClient,
+                    burnConfig.usdcAddress,
+                    evmAddress,
+                    burnConfig.tokenMessenger
+                  );
+                  if (allowance >= params.amount) break;
+                  await new Promise((r) => setTimeout(r, 2_000));
+                }
+              }
+            } catch {
+              // Receipt check failed - proceed with original error
+            }
+
+            // If still insufficient after extended retry, fail
+            if (allowance < params.amount) {
+              return {
+                success: false,
+                approvalTxHash,
+                error:
+                  "Approval transaction succeeded but allowance not detected. This may be due to RPC lag. Please try again or check your wallet.",
+              };
+            }
           }
 
           toast({
