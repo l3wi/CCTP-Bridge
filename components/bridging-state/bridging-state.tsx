@@ -13,6 +13,7 @@ import { ChainId, isSolanaChain, asTxHash, asUniversalTxHash } from "@/lib/types
 
 import { useBridgeSteps } from "@/lib/hooks/useBridgeSteps";
 import { useMintPolling } from "@/lib/hooks/useMintPolling";
+import { useBurnPolling } from "@/lib/hooks/useBurnPolling";
 import { useClaimHandler } from "@/lib/hooks/useClaimHandler";
 
 import { ChainPair } from "./chain-pair";
@@ -118,7 +119,7 @@ export function BridgingState({
   }, [displayResult?.steps]);
 
   // Use extracted hooks
-  const { derivedSteps, hasFetchAttestation, hasBurnCompleted, hasMintCompleted } = useBridgeSteps({
+  const { derivedSteps, hasFetchAttestation, hasBurnCompleted, hasBurnFailed, hasMintCompleted } = useBridgeSteps({
     bridgeResult: displayResult,
     sourceChainId,
   });
@@ -129,6 +130,45 @@ export function BridgingState({
       prev ? { ...prev, steps: updatedSteps, state: "success" } : prev
     );
   }, []);
+
+  // Handle burn failure detected by polling
+  const handleBurnFailed = useCallback(
+    (error: string) => {
+      // Update local steps to mark burn as failed
+      setLocalBridgeResult((prev) => {
+        if (!prev) return prev;
+        const updatedSteps = prev.steps.map((step) =>
+          /burn/i.test(step.name) ? { ...step, state: "error" as const, errorMessage: error } : step
+        );
+        // BridgeResult uses "error" state, not "failed"
+        return { ...prev, steps: updatedSteps, state: "error" as const };
+      });
+
+      // Persist to store (LocalTransaction uses "failed" status)
+      if (burnTxHash) {
+        const txHash = asTxHash(burnTxHash);
+        if (txHash) {
+          updateTransaction(txHash, { status: "failed", bridgeState: "error" });
+        }
+      }
+    },
+    [burnTxHash, updateTransaction]
+  );
+
+  // Handle burn confirmation (no-op, just for tracking)
+  const handleBurnConfirmed = useCallback(() => {
+    // Burn is confirmed - normal flow continues with mint polling
+  }, []);
+
+  // Burn transaction polling - detects burn failures
+  const { confirmed: burnConfirmed, failed: burnPollingFailed } = useBurnPolling({
+    burnTxHash,
+    sourceChainId,
+    onBurnFailed: handleBurnFailed,
+    onBurnConfirmed: handleBurnConfirmed,
+    // Disable polling if burn already completed or failed
+    disabled: hasBurnCompleted || hasBurnFailed,
+  });
 
   const {
     canMint,
@@ -336,6 +376,8 @@ export function BridgingState({
 
   // Show claim button logic
   const showClaimButton = useMemo(() => {
+    // Never show claim button if burn failed
+    if (hasBurnFailed || burnPollingFailed) return false;
     if (alreadyMinted) return false;
     if (hasMintCompleted) return false;
     if (canMint) return true;
@@ -346,6 +388,8 @@ export function BridgingState({
     }
     return hasFetchAttestation;
   }, [
+    hasBurnFailed,
+    burnPollingFailed,
     alreadyMinted,
     canMint,
     attestationReady,
@@ -357,7 +401,12 @@ export function BridgingState({
 
   // RENDER: With bridge result
   if (displayResult) {
-    const stateLabel = displayResult.state === "success" ? "Bridge Completed" : pendingTitle;
+    const stateLabel =
+      hasBurnFailed || burnPollingFailed || displayResult.state === "error"
+        ? "Bridge Failed"
+        : displayResult.state === "success"
+          ? "Bridge Completed"
+          : pendingTitle;
 
     return (
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
@@ -407,9 +456,11 @@ export function BridgingState({
           />
 
           <div className="text-center text-xs text-slate-500">
-            {displayResult.state === "success"
-              ? "Your burn & mint has been completed."
-              : "Circle is processing your transfer. It's safe to close the window."}
+            {hasBurnFailed || burnPollingFailed || displayResult.state === "error"
+              ? "Your burn transaction failed. Please try again."
+              : displayResult.state === "success"
+                ? "Your burn & mint has been completed."
+                : "Circle is processing your transfer. It's safe to close the window."}
           </div>
         </CardContent>
       </Card>

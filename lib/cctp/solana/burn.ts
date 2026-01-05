@@ -170,14 +170,30 @@ export async function buildDepositForBurnTransaction(
 
   // Fund message account for rent (~0.0039 SOL)
   // This is a refundable rent deposit, not a fee
-  const rentExemptLamports = 3_900_000;
+  // Account size: ~250 bytes (8 discriminator + 32 emitter + ~200 message data)
+  const MESSAGE_ACCOUNT_SIZE = 250;
+  const RENT_FALLBACK = 3_900_000; // Conservative fallback if RPC fails
+
+  let rentExemptLamports: number;
+  try {
+    rentExemptLamports = await connection.getMinimumBalanceForRentExemption(MESSAGE_ACCOUNT_SIZE);
+  } catch {
+    // Use conservative fallback if RPC call fails
+    rentExemptLamports = RENT_FALLBACK;
+  }
+
   const fundMessageAccountIx = SystemProgram.transfer({
     fromPubkey: user,
     toPubkey: messageAccount.publicKey,
     lamports: rentExemptLamports,
   });
 
-  // Build depositForBurn instruction using Anchor
+  /**
+   * Build depositForBurn instruction using Anchor.
+   * Cast required: Anchor generates methods dynamically from IDL at runtime.
+   * TypeScript cannot infer these methods from the Program type.
+   * The method signature is validated by the IDL, not compile-time types.
+   */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const depositForBurnIx = await (tokenMessenger.methods as any)
     .depositForBurn({

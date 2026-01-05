@@ -7,6 +7,7 @@
 import { getCctpDomainId, getCctpDomainIdUniversal, isTestnetChain, isTestnetChainUniversal } from "./contracts";
 import type { ChainId } from "./types";
 import { isSolanaChain, isValidEvmTxHash, isValidSolanaTxHash } from "./types";
+import { irisRateLimiter } from "./utils/rateLimiter";
 
 const IRIS_API_ENDPOINTS = {
   mainnet: "https://iris-api.circle.com",
@@ -76,12 +77,15 @@ export async function fetchAttestation(
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    // Rate limit API calls to stay under 35 req/s limit
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
 
     if (!response.ok) {
       // Log non-404 errors for debugging, but always return null
@@ -177,12 +181,15 @@ export async function fetchAttestationUniversal(
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    // Rate limit API calls to stay under 35 req/s limit
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
 
     if (!response.ok) {
       if (response.status !== 404) {

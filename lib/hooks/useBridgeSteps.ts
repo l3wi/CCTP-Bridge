@@ -44,6 +44,7 @@ interface UseBridgeStepsResult {
   derivedSteps: DerivedStep[];
   hasFetchAttestation: boolean;
   hasBurnCompleted: boolean;
+  hasBurnFailed: boolean;
   hasMintCompleted: boolean;
 }
 
@@ -134,6 +135,11 @@ export function useBridgeSteps({
     [derivedSteps]
   );
 
+  const hasBurnFailed = useMemo(
+    () => derivedSteps.some((step) => step.id === "burn" && step.state === "error"),
+    [derivedSteps]
+  );
+
   const hasMintCompleted = useMemo(
     () => derivedSteps.some((step) => step.id === "mint" && step.state === "success"),
     [derivedSteps]
@@ -143,6 +149,7 @@ export function useBridgeSteps({
     derivedSteps,
     hasFetchAttestation,
     hasBurnCompleted,
+    hasBurnFailed,
     hasMintCompleted,
   };
 }

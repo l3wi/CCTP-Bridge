@@ -46,6 +46,61 @@ export function createInitialSteps(params: CreateInitialStepsParams): Steps {
   return steps;
 }
 
+/**
+ * Create steps for EVM approval-in-progress state.
+ * Used to show progress screen early while user signs approval.
+ */
+export function createApprovalPendingSteps(): Steps {
+  return [
+    { name: "Approve", state: "pending" },
+    { name: "Burn", state: "pending" },
+    { name: "Fetch Attestation", state: "pending" },
+    { name: "Mint", state: "pending" },
+  ];
+}
+
+/**
+ * Update steps to mark approval as success and burn as pending.
+ */
+export function updateStepsApprovalComplete(
+  existingSteps: Steps,
+  approvalTxHash: EvmTxHash
+): Steps {
+  const steps = [...existingSteps];
+  const approveIndex = steps.findIndex((s) => s.name === "Approve");
+
+  if (approveIndex >= 0) {
+    steps[approveIndex] = {
+      ...steps[approveIndex],
+      state: "success",
+      txHash: approvalTxHash,
+    };
+  }
+
+  return steps;
+}
+
+/**
+ * Update steps to mark burn as success.
+ */
+export function updateStepsBurnComplete(
+  existingSteps: Steps,
+  burnTxHash: UniversalTxHash
+): Steps {
+  const steps = [...existingSteps];
+  const burnIndex = steps.findIndex((s) => s.name === "Burn");
+
+  if (burnIndex >= 0) {
+    steps[burnIndex] = {
+      ...steps[burnIndex],
+      state: "success",
+      txHash: burnTxHash,
+    };
+  }
+
+  return steps;
+}
+
 // =============================================================================
 // Step Updates
 // =============================================================================

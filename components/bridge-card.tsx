@@ -717,6 +717,10 @@ export function BridgeCard({
             transferType,
           },
           {
+            onApprovalStart: () => {
+              // Show progress screen immediately when EVM approval starts
+              setIsBridging(true);
+            },
             onPendingHash: (hash) => {
               pendingHash = hash;
               setBridgeTransactionHash(hash as `0x${string}`);

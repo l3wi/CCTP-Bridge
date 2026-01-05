@@ -417,7 +417,15 @@ function handleMintError(
     return { success: true, alreadyMinted: true };
   }
 
-  console.error("EVM mint failed:", error);
+  console.error("EVM mint failed:", {
+    ecosystem: "evm",
+    error: errorMessage,
+    context: {
+      burnTxHash,
+      timestamp: new Date().toISOString(),
+    },
+    rawError: error,
+  });
   return {
     success: false,
     error: errorMessage,
@@ -466,7 +474,16 @@ function handleSolanaMintError(
     return { success: true, alreadyMinted: true };
   }
 
-  console.error("Solana mint failed:", error);
+  console.error("Solana mint failed:", {
+    ecosystem: "solana",
+    error: errorMessage,
+    context: {
+      burnTxHash,
+      timestamp: new Date().toISOString(),
+    },
+    logs: errorLogs.length > 0 ? errorLogs : undefined,
+    rawError: error,
+  });
   return {
     success: false,
     error: errorMessage,

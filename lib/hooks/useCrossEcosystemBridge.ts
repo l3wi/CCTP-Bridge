@@ -10,8 +10,13 @@ import { formatUnits } from "viem";
 import { type BridgeResult, type ChainDefinition } from "@circle-fin/bridge-kit";
 import { useToast } from "@/components/ui/use-toast";
 import { getProviderFromWalletClient, resolveBridgeChainUniversal } from "@/lib/bridgeKit";
-import { useBurn } from "@/lib/cctp/hooks/useBurn";
-import { createInitialSteps, deriveBridgeState } from "@/lib/cctp/steps";
+import { useBurn, type BurnProgressCallbacks } from "@/lib/cctp/hooks/useBurn";
+import {
+  createInitialSteps,
+  createApprovalPendingSteps,
+  updateStepsApprovalComplete,
+  deriveBridgeState,
+} from "@/lib/cctp/steps";
 import {
   BridgeParams,
   UniversalTxHash,
@@ -47,6 +52,8 @@ export const useCrossEcosystemBridge = () => {
       opts?: {
         onPendingHash?: (hash: UniversalTxHash) => void;
         onStateChange?: (result: BridgeResult) => void;
+        /** Called when EVM approval starts - triggers progress screen early */
+        onApprovalStart?: () => void;
       }
     ): Promise<BridgeResult> => {
       const sourceChainType = getChainType(params.sourceChainId);
@@ -100,14 +107,41 @@ export const useCrossEcosystemBridge = () => {
       });
 
       try {
+        // Create burn progress callbacks for EVM sources
+        const burnCallbacks: BurnProgressCallbacks | undefined =
+          sourceChainType === "evm"
+            ? {
+                onApprovalStart: () => {
+                  // Show progress screen immediately when approval starts
+                  const pendingSteps = createApprovalPendingSteps();
+                  currentStepsRef.current = pendingSteps;
+                  const pendingResult = buildResult(pendingSteps, "pending");
+                  opts?.onApprovalStart?.();
+                  opts?.onStateChange?.(pendingResult);
+                },
+                onApprovalComplete: (approvalTxHash) => {
+                  // Update steps with approval hash
+                  const updatedSteps = updateStepsApprovalComplete(
+                    currentStepsRef.current,
+                    approvalTxHash
+                  );
+                  currentStepsRef.current = updatedSteps;
+                  opts?.onStateChange?.(buildResult(updatedSteps, "pending"));
+                },
+              }
+            : undefined;
+
         // Execute burn using unified hook
-        const burnResult = await executeBurn({
-          sourceChainId: params.sourceChainId,
-          destinationChainId: params.targetChainId,
-          amount: params.amount,
-          recipientAddress: recipientAddress!,
-          transferSpeed: transferType,
-        });
+        const burnResult = await executeBurn(
+          {
+            sourceChainId: params.sourceChainId,
+            destinationChainId: params.targetChainId,
+            amount: params.amount,
+            recipientAddress: recipientAddress!,
+            transferSpeed: transferType,
+          },
+          burnCallbacks
+        );
 
         if (!burnResult.success) {
           const errorMsg = burnResult.error || "Burn transaction failed";

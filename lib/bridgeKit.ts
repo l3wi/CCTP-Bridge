@@ -275,6 +275,12 @@ const createReadonlyProvider = (chain: Chain | EvmChainDefinition) => {
       if (method === "eth_requestAccounts" || method === "eth_accounts") {
         return [placeholderAccount];
       }
+      /**
+       * Cast required: EIP1193Provider.request() expects `readonly unknown[]` for params,
+       * but viem's PublicClient.request() uses stricter generic types. The runtime
+       * behavior is identical; this bridges the type incompatibility.
+       */
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return client.request({ method, params } as any);
     },
   } as EIP1193Provider;

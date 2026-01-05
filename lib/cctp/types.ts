@@ -71,13 +71,26 @@ export const isSolanaAddress = (address: string): boolean =>
 // Transaction Hash Validation
 // =============================================================================
 
+/**
+ * Hash validation constants
+ * EVM: 32 bytes = 64 hex characters after 0x prefix
+ * Solana: 64-byte signature encoded as Base58 (typically ~88 chars, valid range 80-90)
+ */
+const EVM_TX_HASH_HEX_LENGTH = 64;
+const SOLANA_TX_SIGNATURE_MIN_LENGTH = 80;
+const SOLANA_TX_SIGNATURE_MAX_LENGTH = 90;
+
 /** Validate EVM transaction hash (0x + 64 hex chars) */
 export const isValidEvmTxHash = (value: unknown): value is EvmTxHash =>
-  typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+  typeof value === "string" &&
+  new RegExp(`^0x[a-fA-F0-9]{${EVM_TX_HASH_HEX_LENGTH}}$`).test(value);
 
 /** Validate Solana transaction signature (Base58, 80-90 chars) */
 export const isValidSolanaTxHash = (value: unknown): value is SolanaTxHash =>
-  typeof value === "string" && /^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(value);
+  typeof value === "string" &&
+  new RegExp(
+    `^[1-9A-HJ-NP-Za-km-z]{${SOLANA_TX_SIGNATURE_MIN_LENGTH},${SOLANA_TX_SIGNATURE_MAX_LENGTH}}$`
+  ).test(value);
 
 /** Validate any transaction hash (EVM or Solana) */
 export const isValidTxHash = (value: unknown): value is UniversalTxHash =>

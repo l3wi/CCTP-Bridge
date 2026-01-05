@@ -9,10 +9,18 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
 import { createSolanaConnection } from "@/lib/solanaAdapter";
-import type { BurnParams, BurnResult, ChainId, SolanaChainId } from "../types";
+import type { BurnParams, BurnResult, ChainId, SolanaChainId, EvmTxHash } from "../types";
 import { isSolanaChain } from "../types";
 import { handleBurnError } from "../errors";
 import { getCctpDomain, getCctpDomainSafe, FINALITY_THRESHOLDS } from "../shared";
+
+/** Callbacks for burn progress updates - exported for useCrossEcosystemBridge */
+export interface BurnProgressCallbacks {
+  /** Called when EVM approval signing starts - triggers progress screen */
+  onApprovalStart?: () => void;
+  /** Called when EVM approval is confirmed with tx hash */
+  onApprovalComplete?: (txHash: EvmTxHash) => void;
+}
 
 // EVM burn utilities
 import {
@@ -52,7 +60,7 @@ export function useBurn() {
    * Execute a burn on EVM chain.
    */
   const executeEvmBurn = useCallback(
-    async (params: BurnParams): Promise<BurnResult> => {
+    async (params: BurnParams, callbacks?: BurnProgressCallbacks): Promise<BurnResult> => {
       const sourceChainId = params.sourceChainId as number;
 
       // Validate wallet connection
@@ -98,6 +106,9 @@ export function useBurn() {
             account: evmAddress,
           });
 
+          // Trigger progress screen after approval tx is sent
+          callbacks?.onApprovalStart?.();
+
           toast({
             title: "Approval submitted",
             description: "Waiting for approval confirmation...",
@@ -109,19 +120,36 @@ export function useBurn() {
             confirmations: 2,
           });
 
-          // Verify allowance was set
-          const allowance = await checkAllowance(
-            publicClient,
-            burnConfig.usdcAddress,
-            evmAddress,
-            burnConfig.tokenMessenger
-          );
+          // Verify allowance was set with retry logic
+          // ETH approvals can be slow on congested networks, so we retry for up to 1 minute
+          const MAX_ALLOWANCE_WAIT_MS = 60_000;
+          const INITIAL_BACKOFF_MS = 1_000;
+          const MAX_BACKOFF_MS = 10_000;
+
+          let allowance = 0n;
+          const startTime = Date.now();
+          let backoffMs = INITIAL_BACKOFF_MS;
+
+          while (Date.now() - startTime < MAX_ALLOWANCE_WAIT_MS) {
+            allowance = await checkAllowance(
+              publicClient,
+              burnConfig.usdcAddress,
+              evmAddress,
+              burnConfig.tokenMessenger
+            );
+
+            if (allowance >= params.amount) break;
+
+            // Exponential backoff with cap: 1s -> 2s -> 4s -> 8s -> 10s (cap)
+            await new Promise((r) => setTimeout(r, backoffMs));
+            backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+          }
 
           if (allowance < params.amount) {
             return {
               success: false,
               approvalTxHash,
-              error: "Approval confirmed but allowance not set. Please try again.",
+              error: "Approval confirmed but allowance not set after 1 minute. Please try again.",
             };
           }
 
@@ -129,6 +157,9 @@ export function useBurn() {
             title: "Approval confirmed",
             description: "Now submitting burn transaction...",
           });
+
+          // Notify approval complete with tx hash
+          callbacks?.onApprovalComplete?.(approvalTxHash);
         } catch (approvalError) {
           return handleBurnError(approvalError, "approval");
         }
@@ -277,14 +308,14 @@ export function useBurn() {
    * Execute burn - routes to EVM or Solana based on source chain.
    */
   const executeBurn = useCallback(
-    async (params: BurnParams): Promise<BurnResult> => {
+    async (params: BurnParams, callbacks?: BurnProgressCallbacks): Promise<BurnResult> => {
       setIsBurning(true);
 
       try {
         if (isSolanaChain(params.sourceChainId)) {
           return await executeSolanaBurn(params);
         } else {
-          return await executeEvmBurn(params);
+          return await executeEvmBurn(params, callbacks);
         }
       } finally {
         setIsBurning(false);
