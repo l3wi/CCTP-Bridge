@@ -977,7 +977,9 @@ export function BridgeCard({
     const isFastSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.FAST;
     const isStandardSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.SLOW;
 
-    const validationMessage = validation.isValid ? null : validation.errors[0] || "Complete the form";
+    // Show "Enter Address" when bridging from Solana without EVM wallet connected
+    const needsDestinationAddress = sourceChainType === "solana" && isCrossEcosystem && !crossEcosystemTargetAddress && !targetAddress;
+    const validationMessage = validation.isValid ? null : (needsDestinationAddress ? "Enter Address" : validation.errors[0] || "Complete the form");
 
     const renderButton = (speed: TransferSpeed, isPrimary: boolean) => {
       const isSubmitting = speed === TransferSpeed.FAST ? isFastSubmitting : isStandardSubmitting;
@@ -1032,7 +1034,7 @@ export function BridgeCard({
     );
 
     return (
-      <div className="border-t border-slate-700/50 pt-2">
+      <div>
         {/* Desktop: Table view */}
         <div className="hidden md:block overflow-x-auto">
           <table className="w-full">
@@ -1236,7 +1238,7 @@ export function BridgeCard({
   return (
     <>
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 space-y-6">
+        <CardContent className="p-6 space-y-4">
           {/* Chain Selectors */}
           <div className="flex items-center gap-3 md:flex-row flex-col">
             <div className="w-full md:flex-1">
@@ -1444,7 +1446,7 @@ export function BridgeCard({
                   <Label className="text-sm text-slate-300">
                     Destination Wallet on {targetChainType === "solana" ? "Solana" : "EVM"}
                   </Label>
-                  <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-slate-700/50 border border-slate-600">
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-slate-700/50 border border-slate-600">
                     <span className="text-white font-mono text-sm truncate">
                       {crossEcosystemTargetAddress}
                     </span>
