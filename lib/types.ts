@@ -1,5 +1,4 @@
 import type { BridgeResult } from "@circle-fin/bridge-kit";
-import { Chain } from "viem";
 
 // =============================================================================
 // Universal Chain & Address Types (EVM + Solana)
@@ -45,20 +44,8 @@ export const isEvmAddress = (address: string): address is EvmAddress =>
   /^0x[a-fA-F0-9]{40}$/.test(address);
 
 // =============================================================================
-// Contract-related types (EVM only)
+// Transaction Types (v3 schema)
 // =============================================================================
-
-// Contract-related types
-export interface ContractConfig {
-  readonly TokenMessenger: `0x${string}`;
-  readonly MessageTransmitter: `0x${string}`;
-  readonly TokenMinter: `0x${string}`;
-  readonly Usdc: `0x${string}`;
-}
-
-export type ContractsMap = {
-  readonly [chainId: number]: ContractConfig;
-};
 
 // Transaction types - supports both EVM and Solana chains (v3 schema)
 export interface LocalTransaction {
@@ -119,6 +106,10 @@ export interface LegacyLocalTransaction {
   claimHash?: `0x${string}`;
 }
 
+// =============================================================================
+// Bridge Operation Types
+// =============================================================================
+
 // Bridge operation types - supports both EVM and Solana chains
 export interface BridgeParams {
   amount: bigint;
@@ -132,130 +123,10 @@ export interface BridgeParams {
   transferType?: "standard" | "fast";
 }
 
-// V2 Fast Transfer specific params
-export interface FastTransferParams extends BridgeParams {
-  version: "v2";
-  transferType: "fast";
-  fee: bigint; // Maximum fee amount in token wei (calculated from BPS)
-}
-
-export interface DepositForBurnArgs {
-  amount: bigint;
-  destinationDomain: number;
-  mintRecipient: `0x${string}`;
-  burnToken: `0x${string}`;
-}
-
-export interface ReceiveMessageArgs {
-  message: `0x${string}`;
-  attestation: `0x${string}`;
-}
-
 // UI State types
 export interface AmountState {
   str: string;
   bigInt: bigint;
-}
-
-export interface BridgeFormState {
-  targetChain: Chain | null;
-  amount: AmountState | null;
-  version: "v1" | "v2";
-  transferType: "standard" | "fast";
-}
-
-// Bridge summary state for confirmation screen
-export interface BridgeSummaryState {
-  sourceChain: Chain;
-  targetChain: Chain;
-  amount: AmountState;
-  targetAddress: `0x${string}`;
-  version: "v1" | "v2";
-  transferType: "standard" | "fast";
-  estimatedTime: string;
-  fee: string;
-  totalCost: string;
-}
-
-// API Response types
-export interface CircleAttestationResponse {
-  messages: Array<{
-    attestation: string;
-    message: string;
-    event_nonce: number;
-    source_domain: number;
-    destination_domain: number;
-    source_tx_hash: string;
-    destination_tx_hash?: string;
-  }>;
-}
-
-// V2 API Response types
-export interface V2FastBurnAllowanceResponse {
-  allowance: number;
-  lastUpdated: string;
-}
-
-export interface V2FastBurnFeeTier {
-  finalityThreshold: number; // The finality threshold used to determine Fast vs Standard Transfer
-  minimumFee: number; // Fee in BPS (Basis Points) where 1 = 0.01%
-}
-
-export type V2FastBurnFeesResponse = V2FastBurnFeeTier[];
-
-export interface V2PublicKeysResponse {
-  publicKeys: Array<{
-    version: string;
-    publicKey: string;
-  }>;
-}
-
-export interface V2MessageResponse {
-  messages: Array<{
-    attestation: string;
-    message: string;
-    eventNonce: number;
-    sourceDomain: number;
-    destinationDomain: number;
-    sourceTxHash: string;
-    destinationTxHash?: string;
-    status: "pending" | "attested" | "complete"; // Fixed: API returns "complete" not "completed"
-    cctpVersion: number; // The CCTP version of the message (1 or 2)
-  }>;
-}
-
-// Domain and chain mapping types
-export type DomainMap = {
-  readonly [chainId: number]: number;
-};
-
-export type ChainSupportMap = {
-  readonly mainnet: readonly number[];
-  readonly testnet: readonly number[];
-};
-
-// Error types
-export interface BridgeError {
-  code: string;
-  message: string;
-  details?: any;
-}
-
-// Hook return types
-export interface UseBridgeReturn {
-  bridge: (params: BridgeParams) => Promise<BridgeResult>;
-  isLoading: boolean;
-  error: BridgeError | string | null;
-}
-
-export interface UseTransactionHistoryReturn {
-  transactions: LocalTransaction[];
-  addTransaction: (tx: Omit<LocalTransaction, "date">) => void;
-  updateTransaction: (
-    hash: UniversalTxHash,
-    updates: Partial<LocalTransaction>
-  ) => void;
-  clearTransactions: () => void;
 }
 
 // =============================================================================

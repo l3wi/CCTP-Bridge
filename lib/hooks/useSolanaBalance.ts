@@ -145,5 +145,3 @@ export const useSolanaBalance = (
     hasSufficientBalance,
   };
 };
-
-export default useSolanaBalance;

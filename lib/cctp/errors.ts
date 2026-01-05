@@ -148,42 +148,6 @@ export function handleBurnError(
   };
 }
 
-/**
- * Handle errors from mint operations.
- * Returns consistent MintResult with appropriate error message.
- */
-export function handleMintError(error: unknown): MintResult {
-  const code = getErrorCode(error);
-  const message = extractErrorMessage(error);
-
-  if (code === "USER_REJECTED") {
-    return {
-      success: false,
-      error: "Transaction cancelled by user",
-    };
-  }
-
-  if (code === "NONCE_ALREADY_USED") {
-    return {
-      success: false,
-      alreadyMinted: true,
-      error: "Transfer already claimed",
-    };
-  }
-
-  if (code === "INSUFFICIENT_GAS") {
-    return {
-      success: false,
-      error: "Insufficient gas for transaction",
-    };
-  }
-
-  return {
-    success: false,
-    error: `Mint failed: ${message}`,
-  };
-}
-
 // =============================================================================
 // Error Formatting
 // =============================================================================

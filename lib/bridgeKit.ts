@@ -100,7 +100,7 @@ export const getSupportedEvmChains = (
     );
 };
 
-export const getBridgeChainById = (
+const getBridgeChainById = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ) => {
@@ -115,7 +115,7 @@ export const getBridgeChainById = (
   );
 };
 
-export const getChainIdentifier = (
+const getChainIdentifier = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ) => getBridgeChainById(chainId, env)?.chain;
@@ -131,7 +131,7 @@ export const resolveBridgeChain = (
   return chain;
 };
 
-export const getCctpConfirmations = (
+const getCctpConfirmations = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ): { standard?: number; fast?: number } | null => {
@@ -226,12 +226,12 @@ export const getWagmiTransportsForEnv = (
   }, {});
 };
 
-export const getDefaultTransferSpeed = () => {
+const getDefaultTransferSpeed = () => {
   const configured = process.env.NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED;
   return configured === TransferSpeed.SLOW ? TransferSpeed.SLOW : TransferSpeed.FAST;
 };
 
-export const createViemAdapter = async (
+const createViemAdapter = async (
   provider: EIP1193Provider,
   env: BridgeEnvironment = DEFAULT_ENV
 ): Promise<BridgeKitAdapter> => {
@@ -411,7 +411,7 @@ export const getProviderFromWalletClient = (
 /**
  * Get all supported Solana chains from Bridge Kit for the current environment
  */
-export const getSupportedSolanaChains = (
+const getSupportedSolanaChains = (
   env: BridgeEnvironment = DEFAULT_ENV
 ): SolanaChainDefinition[] => {
   const allChains = getBridgeKit(env).getSupportedChains();
@@ -436,7 +436,7 @@ export const getAllSupportedChains = (
 /**
  * Get the Solana chain definition by chain identifier
  */
-export const getSolanaChainById = (
+const getSolanaChainById = (
   chainId: SolanaChainId,
   env: BridgeEnvironment = DEFAULT_ENV
 ): SolanaChainDefinition | undefined => {
@@ -530,7 +530,7 @@ export const getChainName = (
  * Get the USDC address for a chain (works for both EVM and Solana)
  * For Solana, returns the token mint address
  */
-export const getUsdcAddressUniversal = (
+const getUsdcAddressUniversal = (
   chainId: ChainId,
   env: BridgeEnvironment = DEFAULT_ENV
 ): string | undefined => {
@@ -573,6 +573,3 @@ export const getCctpConfirmationsUniversal = (
   return getCctpConfirmations(chainId, env);
 };
 
-// Re-export types and utilities for convenience
-export { isSolanaChain, getChainType };
-export type { ChainId, SolanaChainId, ChainType };

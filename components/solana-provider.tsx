@@ -58,5 +58,3 @@ export const SolanaProvider: FC<SolanaProviderProps> = ({ children }) => {
     </ConnectionProvider>
   );
 };
-
-export default SolanaProvider;

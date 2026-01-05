@@ -336,5 +336,3 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   };
 }
 
-// Re-export shared utilities for convenience
-export { getCctpDomain, formatMintRecipientHex, FINALITY_THRESHOLDS, ZERO_BYTES32 };

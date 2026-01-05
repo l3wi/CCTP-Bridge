@@ -44,5 +44,3 @@ export function SolanaWalletConnect() {
     </Button>
   );
 }
-
-export default SolanaWalletConnect;
