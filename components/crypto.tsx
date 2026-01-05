@@ -6,6 +6,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { WagmiProvider } from "wagmi";
 
 import { Toaster } from "./ui/toaster";
+import { SolanaProvider } from "./solana-provider";
 import {
   BRIDGEKIT_ENV,
   getWagmiChainsForEnv,
@@ -43,8 +44,10 @@ export default function CryptoProviders({
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider>
-          {children}
-          <Toaster />
+          <SolanaProvider>
+            {children}
+            <Toaster />
+          </SolanaProvider>
         </RainbowKitProvider>
       </QueryClientProvider>
     </WagmiProvider>

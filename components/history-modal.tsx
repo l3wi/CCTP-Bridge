@@ -18,13 +18,13 @@ import {
 } from "@/components/ui/select";
 import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 } from "lucide-react";
 import { useChains } from "wagmi";
-import { LocalTransaction } from "@/lib/types";
+import { LocalTransaction, type UniversalTxHash } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { ChainIcon } from "@/components/chain-icon";
-import { getExplorerTxUrl, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainById } from "@/lib/bridgeKit";
+import { getExplorerTxUrlUniversal, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal } from "@/lib/bridgeKit";
 import { fetchAttestation } from "@/lib/iris";
 import { getChainIdFromDomain, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
-import type { BridgeResult } from "@circle-fin/bridge-kit";
+import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
   open?: boolean;
@@ -52,7 +52,7 @@ export function HistoryModal({
     }
   };
 
-  const handleDeleteTransaction = (hash: `0x${string}`) => {
+  const handleDeleteTransaction = (hash: UniversalTxHash) => {
     removeTransaction(hash);
   };
 
@@ -188,7 +188,7 @@ interface TransactionRowProps {
     updates: Partial<LocalTransaction>
   ) => void;
   onTransactionClick: (transaction: LocalTransaction) => void;
-  onDelete: (hash: `0x${string}`) => void;
+  onDelete: (hash: UniversalTxHash) => void;
 }
 
 function TransactionRow({
@@ -198,15 +198,15 @@ function TransactionRow({
   onTransactionClick,
   onDelete,
 }: TransactionRowProps) {
-  // Get chain information
-  const origin = useMemo(
-    () => chains.find((c) => c.id === tx.originChain),
-    [chains, tx.originChain]
+  // Get chain information - use Bridge Kit for universal support (EVM + Solana)
+  const originChainDef = useMemo(
+    () => getBridgeChainByIdUniversal(tx.originChain),
+    [tx.originChain]
   );
 
-  const destination = useMemo(
-    () => chains.find((c) => c.id === tx.targetChain),
-    [chains, tx.targetChain]
+  const destinationChainDef = useMemo(
+    () => tx.targetChain ? getBridgeChainByIdUniversal(tx.targetChain) : null,
+    [tx.targetChain]
   );
 
   const isBridgeKit = !!tx.provider;
@@ -242,10 +242,10 @@ function TransactionRow({
     return null;
   };
 
-  const originName = origin?.name.split(" ")[0] || `Chain ${tx.originChain}`;
+  const originName = originChainDef?.name?.split(" ")[0] || String(tx.originChain);
   const destinationName =
-    destination?.name.split(" ")[0] ||
-    (tx.targetChain ? `Chain ${tx.targetChain}` : "Unknown");
+    destinationChainDef?.name?.split(" ")[0] ||
+    (tx.targetChain ? String(tx.targetChain) : "Unknown");
 
   return (
     <div
@@ -262,7 +262,7 @@ function TransactionRow({
             <div className="flex items-center">
               <ChainIcon chainId={tx.originChain} size={24} className="mr-2" />
               {(() => {
-                const url = getExplorerTxUrl(tx.originChain, tx.hash);
+                const url = getExplorerTxUrlUniversal(tx.originChain, tx.hash);
                 return url ? (
                   <a
                     href={url}
@@ -281,12 +281,12 @@ function TransactionRow({
               })()}
             </div>
             <span className="text-slate-400">→</span>
-            {destination && (
+            {tx.targetChain && (
               <div className="flex items-center">
-                <ChainIcon chainId={destination.id} size={24} className="mr-2" />
+                <ChainIcon chainId={tx.targetChain} size={24} className="mr-2" />
                 {tx.claimHash && tx.targetChain ? (
                   (() => {
-                    const claimUrl = getExplorerTxUrl(
+                    const claimUrl = getExplorerTxUrlUniversal(
                       tx.targetChain,
                       tx.claimHash
                     );
@@ -327,7 +327,7 @@ function TransactionRow({
             className="h-6 w-6 hover:bg-slate-700"
             onClick={(e) => {
               e.stopPropagation();
-              const originUrl = getExplorerTxUrl(tx.originChain, tx.hash);
+              const originUrl = getExplorerTxUrlUniversal(tx.originChain, tx.hash);
               if (originUrl) {
                 window.open(originUrl, "_blank");
               }
@@ -462,8 +462,8 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       }
 
       // Get chain definitions for bridgeResult
-      const sourceChain = getBridgeChainById(selectedChainId, BRIDGEKIT_ENV);
-      const destChain = getBridgeChainById(targetChainId, BRIDGEKIT_ENV);
+      const sourceChain = getBridgeChainByIdUniversal(selectedChainId, BRIDGEKIT_ENV);
+      const destChain = getBridgeChainByIdUniversal(targetChainId, BRIDGEKIT_ENV);
 
       // Determine step states based on attestation and claim status
       // Valid states: "error" | "success" | "pending" | "noop"
@@ -498,11 +498,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         token: "USDC",
         source: {
           address: recipientAddress,
-          chain: sourceChain!,
+          chain: sourceChain as unknown as ChainDefinition,
         },
         destination: {
           address: recipientAddress,
-          chain: destChain!,
+          chain: destChain as unknown as ChainDefinition,
         },
         steps,
       };

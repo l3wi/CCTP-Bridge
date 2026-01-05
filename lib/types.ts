@@ -1,6 +1,53 @@
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { Chain } from "viem";
 
+// =============================================================================
+// Universal Chain & Address Types (EVM + Solana)
+// =============================================================================
+
+// Solana chain identifiers used by Bridge Kit
+export type SolanaChainId = "Solana_Devnet" | "Solana";
+
+// Universal chain identifier - number for EVM, string for Solana
+export type ChainId = number | SolanaChainId;
+
+// Chain ecosystem type
+export type ChainType = "evm" | "solana";
+
+// EVM address format (0x-prefixed hex)
+export type EvmAddress = `0x${string}`;
+
+// Solana address format (Base58 encoded, 32-44 chars)
+export type SolanaAddress = string;
+
+// Universal address type supporting both ecosystems
+export type UniversalAddress = EvmAddress | SolanaAddress;
+
+// EVM transaction hash format (0x + 64 hex chars)
+export type EvmTxHash = `0x${string}`;
+
+// Solana transaction signature format (Base58, ~88 chars)
+export type SolanaTxHash = string;
+
+// Universal transaction hash type
+export type UniversalTxHash = EvmTxHash | SolanaTxHash;
+
+// Type guard: Check if chain is Solana
+export const isSolanaChain = (chainId: ChainId): chainId is SolanaChainId =>
+  typeof chainId === "string" && chainId.startsWith("Solana");
+
+// Get chain type from chain identifier
+export const getChainType = (chainId: ChainId): ChainType =>
+  isSolanaChain(chainId) ? "solana" : "evm";
+
+// Type guard: Check if address looks like EVM format
+export const isEvmAddress = (address: string): address is EvmAddress =>
+  /^0x[a-fA-F0-9]{40}$/.test(address);
+
+// =============================================================================
+// Contract-related types (EVM only)
+// =============================================================================
+
 // Contract-related types
 export interface ContractConfig {
   readonly TokenMessenger: `0x${string}`;
@@ -13,20 +60,22 @@ export type ContractsMap = {
   readonly [chainId: number]: ContractConfig;
 };
 
-// Transaction types
+// Transaction types - supports both EVM and Solana chains
 export interface LocalTransaction {
   date: Date;
-  originChain: number;
-  hash: `0x${string}`;
+  originChain: ChainId; // EVM chainId (number) or Solana chain identifier (string)
+  originChainType?: ChainType; // "evm" or "solana" - inferred from originChain if not provided
+  hash: UniversalTxHash; // EVM tx hash (0x...) or Solana signature (Base58)
   status: "pending" | "claimed" | "failed";
   provider?: string;
   bridgeState?: BridgeResult["state"];
   steps?: BridgeResult["steps"];
   amount?: string;
-  chain?: number;
-  targetChain?: number;
-  targetAddress?: `0x${string}`;
-  claimHash?: `0x${string}`;
+  chain?: ChainId; // Deprecated: use originChain
+  targetChain?: ChainId;
+  targetChainType?: ChainType; // "evm" or "solana" - inferred from targetChain if not provided
+  targetAddress?: UniversalAddress; // EVM address or Solana pubkey
+  claimHash?: UniversalTxHash;
   version: "v2"; // CCTP version used
   transferType?: "standard" | "fast"; // V2 transfer type
   fee?: string; // V2 fast transfer fee
@@ -49,13 +98,15 @@ export interface LegacyLocalTransaction {
   claimHash?: `0x${string}`;
 }
 
-// Bridge operation types
+// Bridge operation types - supports both EVM and Solana chains
 export interface BridgeParams {
   amount: bigint;
-  sourceChainId: number;
-  targetChainId: number;
-  targetAddress?: `0x${string}`; // Optional: recipient address if different from sender
-  sourceTokenAddress?: `0x${string}`;
+  sourceChainId: ChainId; // EVM chainId or Solana chain identifier
+  sourceChainType?: ChainType; // "evm" or "solana" - inferred from sourceChainId if not provided
+  targetChainId: ChainId;
+  targetChainType?: ChainType; // inferred from targetChainId if not provided
+  targetAddress?: UniversalAddress; // Optional: recipient address if different from sender
+  sourceTokenAddress?: EvmAddress; // EVM only - USDC contract address
   version?: "v1" | "v2";
   transferType?: "standard" | "fast";
 }
@@ -180,22 +231,47 @@ export interface UseTransactionHistoryReturn {
   transactions: LocalTransaction[];
   addTransaction: (tx: Omit<LocalTransaction, "date">) => void;
   updateTransaction: (
-    hash: `0x${string}`,
+    hash: UniversalTxHash,
     updates: Partial<LocalTransaction>
   ) => void;
   clearTransactions: () => void;
 }
 
-// Transaction hash validation utilities
-// Validates that a value is a properly formatted Ethereum transaction hash (0x + 64 hex chars)
-export const isValidTxHash = (value: unknown): value is `0x${string}` => {
+// =============================================================================
+// Transaction Hash Validation Utilities
+// =============================================================================
+
+// Validates EVM transaction hash (0x + 64 hex chars)
+export const isValidEvmTxHash = (value: unknown): value is EvmTxHash => {
+  return typeof value === "string" && /^0x[a-fA-F0-9]{64}$/.test(value);
+};
+
+// Validates Solana transaction signature (Base58, typically 87-88 chars)
+export const isValidSolanaTxHash = (value: unknown): value is SolanaTxHash => {
   return (
     typeof value === "string" &&
-    /^0x[a-fA-F0-9]{64}$/.test(value)
+    /^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(value)
   );
 };
 
-// Safely converts unknown value to tx hash, returning undefined if invalid
-export const asTxHash = (value: unknown): `0x${string}` | undefined => {
-  return isValidTxHash(value) ? value : undefined;
+// Validates any transaction hash (EVM or Solana)
+export const isValidTxHash = (value: unknown): value is UniversalTxHash => {
+  return isValidEvmTxHash(value) || isValidSolanaTxHash(value);
+};
+
+// Safely converts unknown value to EVM tx hash
+export const asEvmTxHash = (value: unknown): EvmTxHash | undefined => {
+  return isValidEvmTxHash(value) ? value : undefined;
+};
+
+// Safely converts unknown value to tx hash (backward compatible alias)
+export const asTxHash = (value: unknown): EvmTxHash | undefined => {
+  return asEvmTxHash(value);
+};
+
+// Safely converts unknown value to universal tx hash
+export const asUniversalTxHash = (value: unknown): UniversalTxHash | undefined => {
+  if (isValidEvmTxHash(value)) return value;
+  if (isValidSolanaTxHash(value)) return value;
+  return undefined;
 };

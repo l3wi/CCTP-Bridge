@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { formatUnits } from "viem";
 import { TransferSpeed, type BridgeResult, type ChainDefinition } from "@circle-fin/bridge-kit";
 import { useToast } from "@/components/ui/use-toast";
@@ -9,22 +10,43 @@ import {
   getProviderFromWalletClient,
   resolveBridgeChainUniversal,
 } from "@/lib/bridgeKit";
-import { BridgeParams, LocalTransaction, asTxHash } from "@/lib/types";
+import { createSolanaAdapter } from "@/lib/solanaAdapter";
+import {
+  BridgeParams,
+  LocalTransaction,
+  UniversalTxHash,
+  getChainType,
+  isSolanaChain,
+} from "@/lib/types";
 import { getErrorMessage } from "@/lib/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 
+// Validate and coerce tx hash to standard format
+const asTxHash = (value: unknown): `0x${string}` | string | undefined => {
+  if (typeof value !== "string" || !value) return undefined;
+  // EVM hash (0x prefix + 64 hex chars)
+  if (/^0x[a-fA-F0-9]{64}$/.test(value)) {
+    return value as `0x${string}`;
+  }
+  // Solana signature (Base58, typically 88 chars)
+  if (/^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(value)) {
+    return value;
+  }
+  return undefined;
+};
+
 const findTxHashes = (steps: BridgeResult["steps"]) => {
-  let burnHash: `0x${string}` | undefined;
-  let mintHash: `0x${string}` | undefined;
+  let burnHash: UniversalTxHash | undefined;
+  let mintHash: UniversalTxHash | undefined;
   let completedAt: Date | undefined;
 
   for (const step of steps) {
     const validatedHash = asTxHash(step.txHash);
     if (!burnHash && validatedHash) {
-      burnHash = validatedHash;
+      burnHash = validatedHash as UniversalTxHash;
     }
     if (validatedHash && /mint|receive/i.test(step.name)) {
-      mintHash = validatedHash;
+      mintHash = validatedHash as UniversalTxHash;
     }
     if (step.state === "success") {
       completedAt = new Date();
@@ -112,36 +134,50 @@ const deriveBridgeState = (steps: BridgeResult["steps"], fallback?: BridgeResult
   return fallback ?? "pending";
 };
 
-export const useBridge = () => {
+export const useCrossEcosystemBridge = () => {
+  // EVM wallet state
   const { chain } = useAccount();
   const { data: walletClient } = useWalletClient();
+  const evmProvider = getProviderFromWalletClient(walletClient);
+  const evmAddress = walletClient?.account?.address;
+
+  // Solana wallet state
+  const solanaWallet = useWallet();
+  const solanaAddress = solanaWallet.publicKey?.toBase58();
+
   const { toast } = useToast();
   const { addTransaction, updateTransaction } = useTransactionStore();
 
   const currentStepsRef = useRef<BridgeResult["steps"]>([]);
-  const currentHashRef = useRef<`0x${string}` | null>(null);
-  const pendingHashRef = useRef<`0x${string}` | null>(null);
+  const currentHashRef = useRef<UniversalTxHash | null>(null);
+  const pendingHashRef = useRef<UniversalTxHash | null>(null);
   const approveToastShownRef = useRef(false);
   const providerNameRef = useRef<string | null>(null);
-  // Track added hashes to prevent race conditions with duplicate addTransaction calls
   const addedHashesRef = useRef<Set<string>>(new Set());
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const provider = getProviderFromWalletClient(walletClient);
-  const address = walletClient?.account?.address;
-
   const bridge = useCallback(
     async (
       params: BridgeParams,
       opts?: {
-        onPendingHash?: (hash: `0x${string}`) => void;
+        onPendingHash?: (hash: UniversalTxHash) => void;
         onStateChange?: (result: BridgeResult) => void;
       }
     ): Promise<BridgeResult> => {
-      if (!provider || !walletClient) {
-        throw new Error("Wallet provider not found");
+      const sourceChainType = getChainType(params.sourceChainId);
+      const targetChainType = getChainType(params.targetChainId);
+
+      // Validate wallet connection based on source chain type
+      if (sourceChainType === "solana") {
+        if (!solanaWallet.connected || !solanaWallet.wallet?.adapter) {
+          throw new Error("Solana wallet not connected");
+        }
+      } else {
+        if (!evmProvider || !walletClient) {
+          throw new Error("EVM wallet not connected");
+        }
       }
 
       const sourceChainDef = resolveBridgeChainUniversal(params.sourceChainId);
@@ -161,8 +197,11 @@ export const useBridge = () => {
       providerNameRef.current = null;
       addedHashesRef.current.clear();
 
+      // Determine sender address based on source chain type
+      const senderAddress = sourceChainType === "solana" ? solanaAddress : evmAddress;
+
       // Use custom target address if provided, otherwise fall back to sender
-      const recipientAddress = params.targetAddress ?? address;
+      const recipientAddress = params.targetAddress ?? senderAddress;
 
       const buildResult = (
         steps: BridgeResult["steps"],
@@ -173,22 +212,20 @@ export const useBridge = () => {
         state: stateOverride ?? deriveBridgeState(steps),
         provider: providerNameRef.current ?? "CCTPV2BridgingProvider",
         source: {
-          address: address ?? "",
-          // Cast universal chain definition to SDK ChainDefinition
+          address: senderAddress ?? "",
           chain: sourceChainDef as unknown as ChainDefinition,
         },
         destination: {
           address: recipientAddress ?? "",
-          // Cast universal chain definition to SDK ChainDefinition
           chain: destinationChainDef as unknown as ChainDefinition,
         },
         steps,
       });
 
       const handleEvent = (payload: unknown) => {
-        const raw = payload && typeof payload === "object" ? (payload as Record<string, any>) : null;
+        const raw = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
         const method = typeof raw?.method === "string" ? raw.method : undefined;
-        const values = (raw?.values ?? raw) as Record<string, any> | null;
+        const values = (raw?.values ?? raw) as Record<string, unknown> | null;
 
         const name = normalizeStepName(
           (values?.name as string | undefined) || undefined,
@@ -200,7 +237,7 @@ export const useBridge = () => {
         const txHash = asTxHash(values?.txHash) ?? asTxHash(raw?.txHash);
         const explorerUrl = values?.explorerUrl as string | undefined;
         const errorMessage = values?.errorMessage as string | undefined;
-        const error = values?.error;
+        const errorVal = values?.error;
 
         if (!approveToastShownRef.current && name.toLowerCase().includes("approve")) {
           toast({
@@ -216,7 +253,7 @@ export const useBridge = () => {
           txHash,
           explorerUrl,
           errorMessage,
-          error,
+          error: errorVal,
           data: values?.data,
         };
 
@@ -230,7 +267,7 @@ export const useBridge = () => {
           pendingHashRef.current = burnHash;
           opts?.onPendingHash?.(burnHash);
 
-          // Server-side analytics (avoids adblockers)
+          // Server-side analytics
           const roundedAmount = Math.round(Number(formattedAmount));
           const txType = transferType === "fast" ? 1 : 0;
           fetch("/api/meta", {
@@ -256,7 +293,6 @@ export const useBridge = () => {
           const completedTime =
             bridgeState === "success" ? completedAt ?? new Date() : undefined;
 
-          // Use Set to prevent race conditions with duplicate addTransaction calls
           if (!addedHashesRef.current.has(burnHash)) {
             addedHashesRef.current.add(burnHash);
             currentHashRef.current = burnHash;
@@ -274,7 +310,8 @@ export const useBridge = () => {
               amount: formattedAmount,
               originChain: params.sourceChainId,
               targetChain: params.targetChainId,
-              targetAddress: recipientAddress as `0x${string}` | undefined,
+              targetAddress: recipientAddress,
+              // originChainType and targetChainType are auto-inferred by normalizeTransaction
             });
           } else {
             updateTransaction(burnHash, {
@@ -294,26 +331,47 @@ export const useBridge = () => {
       kit.on("*", handleEvent);
 
       try {
-        const adapter = await createViemAdapter(provider);
+        // Create SOURCE adapter based on source chain type
+        const sourceAdapter = sourceChainType === "solana"
+          ? await createSolanaAdapter(solanaWallet.wallet!.adapter)
+          : await createViemAdapter(evmProvider!);
+
         const transferSpeed: TransferSpeed =
           transferType === "fast" ? TransferSpeed.FAST : TransferSpeed.SLOW;
 
-        // Build destination config - only include address if different from sender
-        const hasCustomRecipient = params.targetAddress && params.targetAddress !== address;
-        const destinationConfig = hasCustomRecipient
+        // Create DESTINATION adapter for cross-ecosystem bridges
+        const isCrossEcosystem = sourceChainType !== targetChainType;
+        let destinationAdapter: Awaited<ReturnType<typeof createViemAdapter>> | undefined;
+
+        if (isCrossEcosystem) {
+          // Cross-ecosystem: create destination adapter if wallet connected
+          if (targetChainType === "solana" && solanaWallet.connected && solanaWallet.wallet?.adapter) {
+            destinationAdapter = await createSolanaAdapter(solanaWallet.wallet.adapter);
+          } else if (targetChainType === "evm" && evmProvider) {
+            destinationAdapter = await createViemAdapter(evmProvider);
+          }
+          // If no wallet connected for target chain, adapter will be undefined
+        } else {
+          // Same ecosystem: reuse source adapter
+          destinationAdapter = sourceAdapter;
+        }
+
+        // Build destination config - use adapter if available, otherwise address-only
+        // SDK rule: With adapter → auto-resolves address from wallet, do NOT pass address
+        //           Without adapter → MUST pass address (manual recipient)
+        const destinationConfig = destinationAdapter
           ? {
-              adapter,
+              adapter: destinationAdapter,
               chain: destinationChainDef as unknown as ChainDefinition,
-              address: params.targetAddress,
             }
           : {
-              adapter,
               chain: destinationChainDef as unknown as ChainDefinition,
+              address: recipientAddress,
             };
 
         const result = await kit.bridge({
           from: {
-            adapter,
+            adapter: sourceAdapter,
             chain: sourceChainDef as unknown as ChainDefinition,
           },
           to: destinationConfig as Parameters<typeof kit.bridge>[0]["to"],
@@ -359,7 +417,6 @@ export const useBridge = () => {
           const completedTime =
             finalState === "success" ? completedAt ?? new Date() : undefined;
 
-          // Use Set to prevent race conditions with duplicate addTransaction calls
           if (!addedHashesRef.current.has(burnHash)) {
             addedHashesRef.current.add(burnHash);
             currentHashRef.current = burnHash;
@@ -377,7 +434,8 @@ export const useBridge = () => {
               amount: formattedAmount,
               originChain: params.sourceChainId,
               targetChain: params.targetChainId,
-              targetAddress: recipientAddress as `0x${string}` | undefined,
+              targetAddress: recipientAddress,
+              // originChainType and targetChainType are auto-inferred by normalizeTransaction
             });
           } else {
             updateTransaction(burnHash, {
@@ -436,12 +494,25 @@ export const useBridge = () => {
         setIsLoading(false);
       }
     },
-    [provider, walletClient, addTransaction, updateTransaction, toast, address]
+    [
+      evmProvider,
+      walletClient,
+      solanaWallet.connected,
+      solanaWallet.wallet,
+      evmAddress,
+      solanaAddress,
+      addTransaction,
+      updateTransaction,
+      toast,
+    ]
   );
 
   return {
     bridge,
     isLoading,
     error,
+    // Expose wallet connection status for UI checks
+    isEvmConnected: !!walletClient,
+    isSolanaConnected: solanaWallet.connected,
   };
 };

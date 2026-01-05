@@ -7,6 +7,13 @@ import {
 import { createViemAdapterFromProvider } from "@circle-fin/adapter-viem-v2";
 import { createPublicClient, http } from "viem";
 import type { Chain, EIP1193Provider, Transport, WalletClient } from "viem";
+import {
+  type ChainId,
+  type SolanaChainId,
+  type ChainType,
+  isSolanaChain,
+  getChainType,
+} from "./types";
 
 export type BridgeEnvironment = "mainnet" | "testnet";
 type EvmChainDefinition = ChainDefinition & {
@@ -14,6 +21,32 @@ type EvmChainDefinition = ChainDefinition & {
   chainId: number;
   rpcUrls?: { default?: { http?: string[] } };
 };
+
+// Solana chain definition from Bridge Kit
+// The SDK uses string "solana" as the type, extending ChainDefinition
+export interface SolanaChainDefinition {
+  type: "solana";
+  chain: SolanaChainId;
+  name: string;
+  isTestnet: boolean;
+  explorerUrl?: string;
+  usdcAddress?: string;
+  eurcAddress?: string; // Required by SDK ChainDefinition
+  rpcEndpoints?: string[];
+  nativeCurrency: {
+    name: string;
+    symbol: string;
+    decimals: number;
+  };
+  cctp?: {
+    contracts?: {
+      v2?: {
+        confirmations?: number;
+        fastConfirmations?: number;
+      };
+    };
+  };
+}
 
 type RpcOverrideMap = Record<number, string>;
 
@@ -360,3 +393,157 @@ export const getProviderFromWalletClient = (
 
   return undefined;
 };
+
+// =============================================================================
+// Solana Chain Utilities
+// =============================================================================
+
+/**
+ * Get all supported Solana chains from Bridge Kit for the current environment
+ */
+export const getSupportedSolanaChains = (
+  env: BridgeEnvironment = DEFAULT_ENV
+): SolanaChainDefinition[] => {
+  const allChains = getBridgeKit(env).getSupportedChains();
+  // Cast through unknown because SDK types may not explicitly include "solana" type
+  return allChains
+    .filter((chain) => chain.type === "solana" && chain.isTestnet === (env === "testnet"))
+    .map((chain) => chain as unknown as SolanaChainDefinition);
+};
+
+// Union type for all supported chain definitions
+export type UniversalChainDefinition = EvmChainDefinition | SolanaChainDefinition;
+
+/**
+ * Get all supported chains (EVM + Solana) from Bridge Kit
+ */
+export const getAllSupportedChains = (
+  env: BridgeEnvironment = DEFAULT_ENV
+): UniversalChainDefinition[] => {
+  return [...getSupportedEvmChains(env), ...getSupportedSolanaChains(env)];
+};
+
+/**
+ * Get the Solana chain definition by chain identifier
+ */
+export const getSolanaChainById = (
+  chainId: SolanaChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): SolanaChainDefinition | undefined => {
+  return getSupportedSolanaChains(env).find((chain) => chain.chain === chainId);
+};
+
+/**
+ * Get default RPC endpoint for a Solana chain
+ */
+export const getSolanaRpcEndpoint = (
+  chainId: SolanaChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): string => {
+  const chain = getSolanaChainById(chainId, env);
+  if (chain?.rpcEndpoints?.[0]) return chain.rpcEndpoints[0];
+
+  // Fallback to public endpoints
+  return chainId === "Solana_Devnet"
+    ? "https://api.devnet.solana.com"
+    : "https://api.mainnet-beta.solana.com";
+};
+
+/**
+ * Resolve a universal chain ID (EVM number or Solana string) to a ChainDefinition
+ */
+export const resolveBridgeChainUniversal = (
+  chainId: ChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): UniversalChainDefinition => {
+  if (isSolanaChain(chainId)) {
+    const chain = getSolanaChainById(chainId, env);
+    if (!chain) {
+      throw new Error(`Unsupported Solana chain ${chainId} for Bridge Kit`);
+    }
+    return chain;
+  }
+  return resolveBridgeChain(chainId, env) as EvmChainDefinition;
+};
+
+/**
+ * Get explorer URL for a transaction (works for both EVM and Solana)
+ */
+export const getExplorerTxUrlUniversal = (
+  chainId: ChainId,
+  txHash: string,
+  env: BridgeEnvironment = DEFAULT_ENV
+): string | null => {
+  if (isSolanaChain(chainId)) {
+    const chain = getSolanaChainById(chainId, env);
+    if (!chain?.explorerUrl) return null;
+    return chain.explorerUrl.replace("{hash}", txHash);
+  }
+  return getExplorerTxUrl(chainId, txHash, env);
+};
+
+/**
+ * Get the chain name for display (works for both EVM and Solana)
+ */
+export const getChainName = (
+  chainId: ChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): string => {
+  if (isSolanaChain(chainId)) {
+    const chain = getSolanaChainById(chainId, env);
+    return chain?.name ?? chainId;
+  }
+  const chain = getBridgeChainById(chainId, env);
+  return chain?.name ?? `Chain ${chainId}`;
+};
+
+/**
+ * Get the USDC address for a chain (works for both EVM and Solana)
+ * For Solana, returns the token mint address
+ */
+export const getUsdcAddressUniversal = (
+  chainId: ChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): string | undefined => {
+  if (isSolanaChain(chainId)) {
+    const chain = getSolanaChainById(chainId, env);
+    return chain?.usdcAddress;
+  }
+  return getUsdcAddressForChain(chainId, env);
+};
+
+/**
+ * Get chain definition by chain ID (works for both EVM and Solana)
+ */
+export const getBridgeChainByIdUniversal = (
+  chainId: ChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): UniversalChainDefinition | undefined => {
+  if (isSolanaChain(chainId)) {
+    return getSolanaChainById(chainId, env);
+  }
+  return getBridgeChainById(chainId, env);
+};
+
+/**
+ * Get CCTP confirmations for a chain (works for both EVM and Solana)
+ */
+export const getCctpConfirmationsUniversal = (
+  chainId: ChainId,
+  env: BridgeEnvironment = DEFAULT_ENV
+): { standard?: number; fast?: number } | null => {
+  if (isSolanaChain(chainId)) {
+    const chain = getSolanaChainById(chainId, env);
+    const contracts = chain?.cctp?.contracts?.v2;
+    if (!contracts) return null;
+    return {
+      standard: contracts.confirmations,
+      fast: contracts.fastConfirmations,
+    };
+  }
+  return getCctpConfirmations(chainId, env);
+};
+
+// Re-export types and utilities for convenience
+export { isSolanaChain, getChainType };
+export type { ChainId, SolanaChainId, ChainType };

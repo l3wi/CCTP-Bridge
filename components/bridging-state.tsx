@@ -14,7 +14,7 @@ import { useClaim } from "@/lib/hooks/useClaim";
 import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { checkMintReadiness } from "@/lib/simulation";
-import { asTxHash } from "@/lib/types";
+import { asTxHash, ChainId, isSolanaChain } from "@/lib/types";
 
 // Polling configuration constants
 const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
@@ -508,28 +508,26 @@ export function BridgingState({
   ]);
 
   const displayFrom = useMemo(() => {
-    const chainName =
-      (displayResult?.source?.chain as { name?: string } | undefined)?.name ||
-      fromChain.label;
-    const value =
-      (displayResult?.source?.chain as { chainId?: number } | undefined)
-        ?.chainId || (fromChain.value ? Number(fromChain.value) : undefined);
+    const chainDef = displayResult?.source?.chain as { name?: string; chainId?: number; chain?: string } | undefined;
+    const chainName = chainDef?.name || fromChain.label;
+    // Handle both EVM (numeric chainId) and Solana (string chain identifier)
+    const chainId: ChainId | undefined = chainDef?.chainId ?? chainDef?.chain as ChainId | undefined;
+    const value = chainId ?? (fromChain.value && !isNaN(Number(fromChain.value)) ? Number(fromChain.value) : fromChain.value as ChainId);
     return {
       label: chainName,
-      value: value?.toString() || fromChain.value,
+      value,
     };
   }, [displayResult?.source?.chain, fromChain.label, fromChain.value]);
 
   const displayTo = useMemo(() => {
-    const chainName =
-      (displayResult?.destination?.chain as { name?: string } | undefined)
-        ?.name || toChain.label;
-    const value =
-      (displayResult?.destination?.chain as { chainId?: number } | undefined)
-        ?.chainId || (toChain.value ? Number(toChain.value) : undefined);
+    const chainDef = displayResult?.destination?.chain as { name?: string; chainId?: number; chain?: string } | undefined;
+    const chainName = chainDef?.name || toChain.label;
+    // Handle both EVM (numeric chainId) and Solana (string chain identifier)
+    const chainId: ChainId | undefined = chainDef?.chainId ?? chainDef?.chain as ChainId | undefined;
+    const value = chainId ?? (toChain.value && !isNaN(Number(toChain.value)) ? Number(toChain.value) : toChain.value as ChainId);
     return {
       label: chainName,
-      value: value?.toString() || toChain.value,
+      value,
     };
   }, [displayResult?.destination?.chain, toChain.label, toChain.value]);
 
@@ -746,7 +744,7 @@ export function BridgingState({
 
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
-              <ChainIcon chainId={Number(displayFrom.value)} size={24} />
+              <ChainIcon chainId={displayFrom.value} size={24} />
               <div>
                 <div className="font-medium">{displayFrom.label}</div>
                 <div className="text-xs text-slate-400">{amount} USDC</div>
@@ -754,7 +752,7 @@ export function BridgingState({
             </div>
             <ArrowRight className="text-slate-500" />
             <div className="flex items-center gap-2">
-              <ChainIcon chainId={Number(displayTo.value)} size={24} />
+              <ChainIcon chainId={displayTo.value} size={24} />
               <div>
                 <div className="font-medium">{displayTo.label}</div>
                 <div className="text-xs text-slate-400">
@@ -937,7 +935,7 @@ export function BridgingState({
           <div className="flex flex-col items-center">
             <div className="text-center">
               <div className="flex items-center justify-center mb-2">
-                <ChainIcon chainId={Number(displayFrom.value)} size={24} className="mr-2" />
+                <ChainIcon chainId={displayFrom.value} size={24} className="mr-2" />
                 <div className="font-medium">{displayFrom.label}</div>
               </div>
 
@@ -949,7 +947,7 @@ export function BridgingState({
 
           <div className="flex flex-col items-end">
             <div className="flex items-center justify-center mb-2">
-              <ChainIcon chainId={Number(displayTo.value)} size={24} className="mr-2" />
+              <ChainIcon chainId={displayTo.value} size={24} className="mr-2" />
               <div className="font-medium">{displayTo.label}</div>
             </div>
             <div className="text-sm text-slate-400">{recipientLabel}</div>

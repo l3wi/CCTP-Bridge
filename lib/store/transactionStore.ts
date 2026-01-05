@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { LegacyLocalTransaction, LocalTransaction } from "@/lib/types";
+import {
+  LegacyLocalTransaction,
+  LocalTransaction,
+  type ChainId,
+  type UniversalTxHash,
+  getChainType,
+} from "@/lib/types";
 
 const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
 
@@ -8,12 +14,12 @@ interface TransactionState {
   transactions: LocalTransaction[];
   isLoading: boolean;
   error: string | null;
-  addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
+  addTransaction: (transaction: Omit<LocalTransaction, "date" | "originChainType">) => void;
   updateTransaction: (
-    hash: `0x${string}`,
+    hash: UniversalTxHash,
     updates: Partial<LocalTransaction>
   ) => void;
-  removeTransaction: (hash: `0x${string}`) => void;
+  removeTransaction: (hash: UniversalTxHash) => void;
   clearPendingTransactions: () => void;
   clearAllTransactions: () => void;
   setLoading: (loading: boolean) => void;
@@ -27,30 +33,46 @@ const normalizeTransaction = (
   const txLocal = tx as Partial<LocalTransaction>;
   const bridgeResult = (tx as Partial<LocalTransaction>).bridgeResult;
 
-  const extractChainId = (chain: unknown) => {
-    if (chain && typeof chain === "object" && "chainId" in chain) {
+  // Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
+  const extractChainId = (chain: unknown): ChainId | undefined => {
+    if (!chain || typeof chain !== "object") return undefined;
+
+    // EVM chains have numeric chainId
+    if ("chainId" in chain) {
       const value = (chain as { chainId?: unknown }).chainId;
-      return typeof value === "number" ? value : undefined;
+      if (typeof value === "number") return value;
     }
+
+    // Solana chains have string 'chain' identifier (e.g., "Solana_Devnet")
+    if ("chain" in chain && "type" in chain) {
+      const chainObj = chain as { chain?: unknown; type?: unknown };
+      if (chainObj.type === "solana" && typeof chainObj.chain === "string") {
+        return chainObj.chain as ChainId;
+      }
+    }
+
     return undefined;
   };
 
+  const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain) ?? 1;
+  const targetChain = tx.targetChain ?? extractChainId(bridgeResult?.destination?.chain);
+
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
-    originChain:
-      tx.originChain ?? extractChainId(bridgeResult?.source.chain) ?? 1,
-    hash: tx.hash as `0x${string}`,
+    originChain,
+    originChainType: txLocal.originChainType ?? getChainType(originChain),
+    hash: tx.hash as UniversalTxHash,
     status: tx.status ?? "pending",
     provider: txLocal.provider ?? bridgeResult?.provider,
     bridgeState: txLocal.bridgeState ?? bridgeResult?.state,
     steps: txLocal.steps ?? bridgeResult?.steps,
     amount: txLocal.amount ?? bridgeResult?.amount,
     chain: txLocal.chain,
-    targetChain:
-      tx.targetChain ?? extractChainId(bridgeResult?.destination.chain),
+    targetChain,
+    targetChainType: txLocal.targetChainType ?? (targetChain ? getChainType(targetChain) : undefined),
     targetAddress:
       txLocal.targetAddress ??
-      (bridgeResult?.destination.address as `0x${string}` | undefined),
+      (bridgeResult?.destination?.address as string | undefined),
     claimHash: txLocal.claimHash,
     version: "v2",
     transferType: txLocal.transferType ?? "standard",
@@ -102,9 +124,12 @@ const sanitizeForStorage = <T>(value: T): T => {
 const migrateLegacyTransaction = (
   legacyTx: LegacyLocalTransaction
 ): LocalTransaction => {
+  // Legacy transactions are always EVM
   return {
     ...legacyTx,
     date: legacyTx.date ? new Date(legacyTx.date) : new Date(),
+    originChainType: "evm" as const, // Legacy transactions were EVM-only
+    targetChainType: legacyTx.targetChain ? "evm" as const : undefined,
     version: "v2" as const,
     transferType: "standard" as const,
     estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,

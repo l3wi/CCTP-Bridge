@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { BridgeCard } from "@/components/bridge-card";
 import { WalletConnect } from "@/components/wallet-connect";
+import { SolanaWalletConnect } from "@/components/solana-wallet-connect";
 import { HistoryModal } from "@/components/history-modal";
 import { LocalTransaction } from "@/lib/types";
 import AnimatedBackground from "@/components/animated-bg";
@@ -26,6 +27,7 @@ export default function Home() {
       {/* Top right controls */}
       <div className="absolute top-4 right-4 flex items-center gap-2">
         <HistoryModal onLoadBridging={handleLoadBridging} />
+        <SolanaWalletConnect />
         <WalletConnect />
       </div>
 
