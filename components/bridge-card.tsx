@@ -294,6 +294,16 @@ export function BridgeCard({
   // Track the previous wallet chain to detect actual wallet chain changes
   const prevWalletChainRef = useRef<number | undefined>(walletChainId);
 
+  // Default chain IDs when no wallet connected
+  // Mainnet: Arbitrum (42161), Base (8453)
+  // Testnet: Arbitrum Sepolia (421614), Base Sepolia (84532)
+  const defaultSourceChainId = chainOptions.find(
+    (c) => c.id === 42161 || c.id === 421614
+  )?.id;
+  const defaultTargetChainId = chainOptions.find(
+    (c) => c.id === 8453 || c.id === 84532
+  )?.id;
+
   // Sync source chain to wallet chain ONLY when wallet chain actually changes
   // Don't override if user explicitly selected a different chain (like Solana)
   useEffect(() => {
@@ -306,11 +316,11 @@ export function BridgeCard({
       return;
     }
 
-    // Fallback: set first supported chain if no source chain selected
+    // Fallback: set default chain (Arbitrum) if no source chain selected
     if (sourceChainId == null && chainOptions.length > 0) {
-      setSourceChainId(chainOptions[0].id);
+      setSourceChainId(defaultSourceChainId ?? chainOptions[0].id);
     }
-  }, [walletChainId, evmChainIds, chainOptions, sourceChainId]);
+  }, [walletChainId, evmChainIds, chainOptions, sourceChainId, defaultSourceChainId]);
 
   // Keep the destination list consistent with the selected source chain without stomping user choice
   useEffect(() => {
@@ -325,10 +335,13 @@ export function BridgeCard({
         return current;
       }
 
-      // Otherwise pick the first available
-      return destinationOptions[0]?.id ?? null;
+      // Prefer Base as default target if available, otherwise first option
+      const baseOption = destinationOptions.find(
+        (o) => o.id === defaultTargetChainId
+      );
+      return baseOption?.id ?? destinationOptions[0]?.id ?? null;
     });
-  }, [destinationOptionsKey, destinationOptions, sourceChainId]);
+  }, [destinationOptionsKey, destinationOptions, sourceChainId, defaultTargetChainId]);
 
   useEffect(() => {
     if (
