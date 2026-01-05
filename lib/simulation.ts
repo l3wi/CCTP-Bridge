@@ -11,7 +11,12 @@ import {
 import {
   getWagmiChainsForEnv,
   getWagmiTransportsForEnv,
+  getBridgeChainByIdUniversal,
+  BRIDGEKIT_ENV,
 } from "./bridgeKit";
+import { createSolanaAdapter } from "./solanaAdapter";
+import type { SolanaChainId } from "./types";
+import type { Adapter } from "@solana/wallet-adapter-base";
 
 // CCTP message format constants
 const CCTP_MESSAGE_HEADER_BYTES = 148; // Minimum header size
@@ -245,16 +250,25 @@ export async function simulateMint(
 /**
  * Full check: fetch attestation from Iris and simulate mint.
  * This is the main function used by the UI for polling.
+ * Supports both EVM and Solana source chains.
+ *
+ * @param skipSimulation - If true, skip EVM simulation and return success once attestation is ready.
+ *                         Use for Solana sources to avoid RPC spam (user must click Claim anyway).
  */
 export async function checkMintReadiness(
-  sourceChainId: number,
+  sourceChainId: number | string, // EVM chain ID or Solana chain string
   destinationChainId: number,
-  burnTxHash: string
+  burnTxHash: string,
+  skipSimulation: boolean = false
 ): Promise<SimulationResult & { attestationReady: boolean }> {
   // Import dynamically to avoid circular deps
-  const { fetchAttestation } = await import("./iris");
+  const { fetchAttestationUniversal } = await import("./iris");
 
-  const attestationData = await fetchAttestation(sourceChainId, burnTxHash);
+  // fetchAttestationUniversal accepts ChainId (number | string)
+  const attestationData = await fetchAttestationUniversal(
+    sourceChainId as import("./types").ChainId,
+    burnTxHash
+  );
 
   if (!attestationData) {
     return {
@@ -276,6 +290,17 @@ export async function checkMintReadiness(
     };
   }
 
+  // Skip RPC simulation if requested (for Solana sources)
+  // Once attestation is ready, we know the user can mint - they just need to click Claim
+  if (skipSimulation) {
+    return {
+      success: true,
+      canMint: true,
+      alreadyMinted: false,
+      attestationReady: true,
+    };
+  }
+
   const simResult = await simulateMint(
     destinationChainId,
     attestationData.message,
@@ -286,4 +311,104 @@ export async function checkMintReadiness(
     ...simResult,
     attestationReady: true,
   };
+}
+
+/**
+ * Check if a Solana CCTP mint has already been executed.
+ * Uses transaction simulation to detect "account already in use" error,
+ * which indicates the nonce account was already allocated (mint happened).
+ *
+ * @param sourceChainId - The source EVM chain ID
+ * @param destinationChainId - The destination Solana chain ID
+ * @param attestationData - The attestation data from Iris
+ * @param walletAdapter - The Solana wallet adapter
+ * @returns Simulation result with alreadyMinted status
+ */
+export async function checkSolanaMintStatus(
+  sourceChainId: number,
+  destinationChainId: SolanaChainId,
+  attestationData: {
+    nonce: string;
+    attestation: string;
+    message: string;
+    mintRecipient?: string;
+  },
+  walletAdapter: Adapter
+): Promise<SimulationResult> {
+  try {
+    const sourceChain = getBridgeChainByIdUniversal(sourceChainId, BRIDGEKIT_ENV);
+    const destChain = getBridgeChainByIdUniversal(destinationChainId, BRIDGEKIT_ENV);
+
+    if (!sourceChain || !destChain) {
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        error: "Could not resolve chain definitions",
+      };
+    }
+
+    const adapter = await createSolanaAdapter(walletAdapter);
+
+    // Cast adapter to access prepareAction method
+    const adapterWithActions = adapter as unknown as {
+      prepareAction: (
+        action: string,
+        params: Record<string, unknown>,
+        ctx: { chain: string }
+      ) => Promise<{ estimate: () => Promise<unknown> }>;
+    };
+
+    const preparedRequest = await adapterWithActions.prepareAction(
+      "cctp.v2.receiveMessage",
+      {
+        eventNonce: attestationData.nonce,
+        attestation: attestationData.attestation,
+        message: attestationData.message,
+        fromChain: sourceChain,
+        toChain: destChain,
+        mintRecipient: attestationData.mintRecipient,
+      },
+      { chain: destinationChainId }
+    );
+
+    // Try to simulate (estimate) the transaction
+    await preparedRequest.estimate();
+
+    // Simulation succeeded - mint can be executed
+    return {
+      success: true,
+      canMint: true,
+      alreadyMinted: false,
+    };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Extract logs from Solana simulation errors if available
+    const errorLogs = (error as { logs?: string[] })?.logs ?? [];
+    const logsText = errorLogs.join("\n");
+
+    // Check for "already in use" or CCTP Custom:0 error - means nonce consumed, mint happened
+    // CCTP logs "Allocate: account Address {...} already in use" when nonce consumed
+    if (
+      /already in use/i.test(errorMessage) ||
+      /already in use/i.test(logsText) ||
+      /account.*already.*use/i.test(errorMessage) ||
+      /"Custom":\s*0\b/.test(errorMessage)
+    ) {
+      return {
+        success: true,
+        canMint: false,
+        alreadyMinted: true,
+        error: "Nonce already used - mint was already executed",
+      };
+    }
+
+    return {
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
+      error: errorMessage.slice(0, 200),
+    };
+  }
 }

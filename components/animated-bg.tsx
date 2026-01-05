@@ -8,7 +8,7 @@ interface TelegramLogoProps {
   size?: number;
 }
 
-export function TelegramLogo({ className, size = 12 }: TelegramLogoProps) {
+function TelegramLogo({ className, size = 12 }: TelegramLogoProps) {
   return (
     <svg
       width={size}
@@ -28,7 +28,7 @@ interface XLogoProps {
   size?: number;
 }
 
-export function XLogo({ className, size = 12 }: XLogoProps) {
+function XLogo({ className, size = 12 }: XLogoProps) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"

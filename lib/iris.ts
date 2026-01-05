@@ -4,7 +4,10 @@
  * for manual mint execution.
  */
 
-import { getCctpDomainId, isTestnetChain } from "./contracts";
+import { getCctpDomainId, getCctpDomainIdUniversal, isTestnetChain, isTestnetChainUniversal } from "./contracts";
+import type { ChainId } from "./types";
+import { isSolanaChain, isValidEvmTxHash, isValidSolanaTxHash } from "./types";
+import { irisRateLimiter } from "./utils/rateLimiter";
 
 const IRIS_API_ENDPOINTS = {
   mainnet: "https://iris-api.circle.com",
@@ -74,12 +77,15 @@ export async function fetchAttestation(
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
 
   try {
-    const response = await fetch(url, {
-      method: "GET",
-      headers: {
-        Accept: "application/json",
-      },
-    });
+    // Rate limit API calls to stay under 35 req/s limit
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
 
     if (!response.ok) {
       // Log non-404 errors for debugging, but always return null
@@ -102,11 +108,111 @@ export async function fetchAttestation(
 
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
-      console.error("Missing decodedMessage in Iris response");
+      // Attestation still in progress - expected during attestation window
       return null;
     }
 
     // Ensure message and attestation have 0x prefix
+    const message = (
+      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
+    ) as `0x${string}`;
+    const attestation = (
+      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
+    ) as `0x${string}`;
+
+    return {
+      message,
+      attestation,
+      status: msg.status,
+      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
+      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+      nonce: msg.eventNonce,
+      amount: msg.decodedMessage.decodedMessageBody?.amount,
+      mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+    };
+  } catch (error) {
+    console.error("Failed to fetch attestation from Iris:", error);
+    return null;
+  }
+}
+
+/**
+ * Fetch attestation data from Iris API for any chain (EVM or Solana).
+ * This universal version handles both EVM transaction hashes (0x...) and
+ * Solana transaction signatures (Base58).
+ *
+ * @param sourceChainId - The chain ID where the burn occurred (EVM number or Solana string)
+ * @param burnTxHash - The burn transaction hash/signature
+ * @returns Attestation data if found, null otherwise
+ */
+export async function fetchAttestationUniversal(
+  sourceChainId: ChainId,
+  burnTxHash: string
+): Promise<AttestationData | null> {
+  const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
+  if (sourceDomain === null) {
+    console.error(`Unknown CCTP domain for chain ${sourceChainId}`);
+    return null;
+  }
+
+  const isTestnet = isTestnetChainUniversal(sourceChainId);
+  const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
+
+  // Normalize tx hash based on chain type
+  let normalizedHash: string;
+  if (isSolanaChain(sourceChainId)) {
+    // Solana signatures are Base58 encoded, use as-is (trimmed)
+    normalizedHash = burnTxHash.trim();
+    if (!isValidSolanaTxHash(normalizedHash)) {
+      console.error("Invalid Solana transaction signature format");
+      return null;
+    }
+  } else {
+    // EVM hashes need 0x prefix and lowercase
+    normalizedHash = burnTxHash.toLowerCase().startsWith("0x")
+      ? burnTxHash.toLowerCase()
+      : `0x${burnTxHash.toLowerCase()}`;
+    if (!isValidEvmTxHash(normalizedHash)) {
+      console.error("Invalid EVM transaction hash format");
+      return null;
+    }
+  }
+
+  const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
+
+  try {
+    // Rate limit API calls to stay under 35 req/s limit
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
+
+    if (!response.ok) {
+      if (response.status !== 404) {
+        console.error(
+          `Iris API error: ${response.status} ${response.statusText}`
+        );
+      }
+      return null;
+    }
+
+    const data: IrisAttestationResponse = await response.json();
+
+    if (!data.messages || data.messages.length === 0) {
+      return null;
+    }
+
+    const msg = data.messages[0];
+
+    if (!msg.decodedMessage) {
+      // Attestation still in progress - expected during attestation window
+      return null;
+    }
+
     const message = (
       msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
     ) as `0x${string}`;

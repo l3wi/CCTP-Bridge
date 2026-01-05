@@ -1,21 +1,40 @@
 # CCTP Bridge
 
-Next.js app router bridge UI backed by Wagmi/RainbowKit, Zustand, TanStack Query, and Circle Bridge Kit (EVM-only for now).
+Cross-chain USDC bridge supporting **EVM ↔ EVM**, **EVM → Solana**, and **Solana → EVM** transfers using Circle's CCTP v2 protocol.
+
+Built with Next.js App Router, Wagmi/RainbowKit (EVM), Solana Wallet Adapter, Zustand, and a custom CCTP library.
 
 ## Getting Started
-- Install deps: `bun install` (or npm/yarn if preferred).
-- Run dev server: `bun run dev`.
-- Lint: `bun run lint`.
-- Build: `bun run build`.
 
-## Bridge Kit Configuration
-- `NEXT_PUBLIC_BRIDGEKIT_ENV` — `testnet` (default) or `mainnet`. Filters supported chains and prevents cross-network routes.
-- `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` — optional comma list of `chainId=url` pairs to force RPCs (e.g. `421614=https://sepolia-rollup.arbitrum.io/rpc,84532=https://sepolia.base.org`).
-- `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` — optional `FAST` or `SLOW`; defaults to `FAST`.
-- `NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE` and `NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT` — optional absolute USDC fee and payout address for integrator monetization.
+```bash
+bun install        # Install dependencies
+bun run dev        # Start dev server (localhost:3000)
+bun run lint       # Run TypeScript & ESLint checks
+bun run build      # Build production bundle
+```
 
-Bridge Kit wiring lives in `lib/bridgeKit.ts`; it instantiates a singleton kit, scopes to EVM chains, honors the env-driven RPC overrides, and applies a custom fee policy when configured. See `docs/tasks/bridge-kit-cutover.md` for the migration plan and current status.
+## Supported Bridge Routes
 
-## Notes
-- Wagmi/RainbowKit chains are generated from Bridge Kit for the selected environment (mainnet or testnet), so no hardcoded contract maps are required.
-- Bridge form uses `BridgeKit.estimate` for fee/receive math and relies on Bridge Kit for approvals; manual attestation/claim UI has been removed in favor of SDK step tracking and history storage.
+| Source | Destination | Implementation |
+|--------|-------------|----------------|
+| EVM | EVM | Circle Bridge Kit SDK |
+| EVM | Solana | Direct CCTP v2 (custom library) |
+| Solana | EVM | Direct CCTP v2 (custom library) |
+
+## Environment Variables
+
+```bash
+NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: testnet)
+NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES=chainId=url  # Optional RPC overrides (comma-separated)
+NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED=FAST|SLOW   # Default transfer speed (default: FAST)
+NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
+NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
+```
+
+## Architecture
+
+- **`lib/cctp/`** — Custom CCTP v2 library with unified interfaces for EVM and Solana
+- **`lib/bridgeKit.ts`** — Circle Bridge Kit singleton for EVM-only routes and chain metadata
+- **`components/bridging-state/`** — Modular bridge progress UI (decomposed into hooks + sub-components)
+
+See `CLAUDE.md` for detailed architecture documentation.

@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from "react";
-import { validateAddress } from "@/lib/validation";
+import { validateAddress, validateUniversalAddress } from "@/lib/validation";
+import type { ChainType } from "@/lib/types";
 
 interface AddressValidationState {
   isValid: boolean;
   error?: string;
+  warning?: string;
   isValidating: boolean;
 }
 
@@ -11,11 +13,19 @@ interface AddressValidationState {
  * Hook for debounced address validation with real-time feedback.
  * Provides validation state after a configurable delay to avoid
  * excessive validation calls while the user is typing.
+ *
+ * @param address - The address to validate
+ * @param chainType - Optional chain type for cross-chain validation ("evm" or "solana")
+ * @param debounceMs - Debounce delay in milliseconds (default: 300)
  */
 export function useDebouncedAddressValidation(
   address: string | undefined,
-  debounceMs = 300
+  chainType: ChainType | null | undefined = null,
+  debounceMs: number = 300
 ): AddressValidationState {
+  // Normalize chainType to ensure consistent dependency tracking
+  const normalizedChainType = chainType ?? null;
+
   const [validation, setValidation] = useState<AddressValidationState>({
     isValid: false,
     isValidating: false,
@@ -50,10 +60,17 @@ export function useDebouncedAddressValidation(
     timeoutRef.current = setTimeout(() => {
       if (!mountedRef.current) return;
 
-      const result = validateAddress(address);
+      // Use chain-aware validation if chainType is provided
+      const result = normalizedChainType
+        ? validateUniversalAddress(address, normalizedChainType)
+        : validateAddress(address);
       setValidation({
         isValid: result.isValid,
         error: result.error,
+        warning:
+          "warning" in result
+            ? (result as { warning?: string }).warning
+            : undefined,
         isValidating: false,
       });
     }, debounceMs);
@@ -64,7 +81,7 @@ export function useDebouncedAddressValidation(
         timeoutRef.current = null;
       }
     };
-  }, [address, debounceMs]);
+  }, [address, normalizedChainType, debounceMs]);
 
   return validation;
 }

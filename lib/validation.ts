@@ -1,11 +1,12 @@
 import { isAddress, parseUnits } from "viem";
-import { ValidationError } from "./errors";
+import { isValidSolanaAddress } from "./solanaAdapter";
+import type { ChainType, ChainId } from "./types";
+import { getChainType } from "./types";
 
 // Constants for validation
 export const MAX_USDC_AMOUNT = parseUnits("1000000", 6); // 1M USDC
 export const MIN_USDC_AMOUNT = parseUnits("0.01", 6); // 0.01 USDC
 export const USDC_DECIMALS = 6;
-export const MAX_DECIMAL_PLACES = 6;
 
 export interface AmountValidation {
   isValid: boolean;
@@ -23,7 +24,7 @@ export const validateAmount = (
     const cleanStr = amountStr.replace(/[^0-9.]/g, "");
 
     if (!cleanStr || cleanStr === "") {
-      return { isValid: false, error: "Please enter an amount" };
+      return { isValid: false, error: "Enter Amount" };
     }
 
     // Check for multiple decimal points
@@ -96,15 +97,72 @@ export const validateAddress = (
   }
 
   if (!isAddress(address)) {
-    return { isValid: false, error: "Please enter a valid wallet address" };
+    return { isValid: false, error: "Invalid EVM address format" };
   }
 
   return { isValid: true };
 };
 
+/** Validation result with optional warning for soft errors */
+export interface AddressValidationResult {
+  isValid: boolean;
+  error?: string;
+  warning?: string;
+}
+
+/**
+ * Validate an address based on the target chain type (EVM or Solana)
+ */
+export const validateUniversalAddress = (
+  address: string,
+  chainType: ChainType
+): AddressValidationResult => {
+  if (!address || address.trim() === "") {
+    return { isValid: false, error: "Please enter a wallet address" };
+  }
+
+  const trimmed = address.trim();
+
+  if (chainType === "evm") {
+    if (!isAddress(trimmed)) {
+      return { isValid: false, error: "Invalid EVM address format" };
+    }
+  } else if (chainType === "solana") {
+    // Solana addresses are Base58-encoded 32 bytes (32-44 chars)
+    // 94% of wallets are 44 chars, 6% are 43 chars
+    if (trimmed.length < 32 || trimmed.length > 44) {
+      return { isValid: false, error: "Invalid Solana address length" };
+    }
+    // On-curve check: ensures it's a real wallet (not a PDA)
+    if (!isValidSolanaAddress(trimmed)) {
+      return { isValid: false, error: "Invalid Solana wallet address" };
+    }
+    // Soft warning for non-standard length (most wallets are 44 chars)
+    if (trimmed.length !== 44) {
+      return {
+        isValid: true,
+        warning: "Address length is unusual — please double-check",
+      };
+    }
+  }
+
+  return { isValid: true };
+};
+
+/**
+ * Validate an address based on the target chain ID (infers chain type)
+ */
+export const validateAddressForChain = (
+  address: string,
+  chainId: ChainId
+): AddressValidationResult => {
+  const chainType = getChainType(chainId);
+  return validateUniversalAddress(address, chainType);
+};
+
 export const validateChainSelection = (
-  sourceChain?: number,
-  targetChain?: number
+  sourceChain?: ChainId,
+  targetChain?: ChainId
 ): { isValid: boolean; error?: string } => {
   if (!targetChain) {
     return { isValid: false, error: "Please select a destination chain" };
@@ -125,25 +183,26 @@ export interface BridgeValidation {
   errors: string[];
   data?: {
     amount: bigint;
-    targetChain: number;
-    targetAddress?: `0x${string}`;
+    targetChain: ChainId;
+    targetAddress?: string; // Can be EVM or Solana address
   };
 }
 
 export const validateBridgeParams = (params: {
   amount?: { str: string; bigInt: bigint } | null;
-  targetChain?: number | null;
-  sourceChain?: number;
+  targetChain?: ChainId | null;
+  sourceChain?: ChainId;
   balance?: bigint;
-  userAddress?: `0x${string}`;
+  userAddress?: string; // Can be EVM or Solana address
   isCustomAddress?: boolean;
   targetAddress?: string;
+  targetChainType?: ChainType; // For validating custom address
 }): BridgeValidation => {
   const errors: string[] = [];
 
   // Validate amount
   if (!params.amount || params.amount.bigInt === BigInt(0)) {
-    errors.push("Please enter an amount");
+    errors.push("Enter Amount");
   } else {
     const amountValidation = validateAmount(params.amount.str, params.balance);
     if (!amountValidation.isValid && amountValidation.error) {
@@ -161,24 +220,31 @@ export const validateBridgeParams = (params: {
   }
 
   // Validate target address
+  // Note: Button errors should be short (2 words), input field errors can be longer
   if (params.isCustomAddress) {
     if (!params.targetAddress) {
-      errors.push("Please enter a destination wallet address");
+      errors.push("Enter Address");
     } else {
-      const addressValidation = validateAddress(params.targetAddress);
-      if (!addressValidation.isValid && addressValidation.error) {
-        errors.push(addressValidation.error);
+      // Use chain-aware validation if target chain type is known
+      const addressValidation = params.targetChainType
+        ? validateUniversalAddress(params.targetAddress, params.targetChainType)
+        : params.targetChain
+          ? validateAddressForChain(params.targetAddress, params.targetChain)
+          : validateAddress(params.targetAddress); // Fallback to EVM validation
+      if (!addressValidation.isValid) {
+        // Short button-friendly error (detailed error shown above input field)
+        errors.push("Check Address");
       }
     }
   } else if (!params.userAddress) {
-    errors.push("Target address is required");
+    errors.push("Enter Address");
   }
 
   const isValid = errors.length === 0;
 
   // Determine final target address
   const finalTargetAddress = params.isCustomAddress && params.targetAddress
-    ? (params.targetAddress as `0x${string}`)
+    ? params.targetAddress
     : params.userAddress;
 
   return {

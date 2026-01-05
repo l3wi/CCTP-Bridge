@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 bun install          # Install dependencies
 bun run dev          # Start dev server (localhost:3000, uses Turbopack)
 bun run build        # Build production bundle
-bun run lint         # Run ESLint checks
+bun run lint         # Run TypeScript + ESLint checks
 ```
 
 ## Environment Variables
@@ -23,50 +23,116 @@ NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 
 ## Architecture Overview
 
-Next.js 15 app router application for bridging USDC using Circle Bridge Kit (CCTPv2, EVM-only). The SDK handles routing, approvals, attestation, and minting end-to-end.
+Next.js 15 app router application for bridging USDC across **EVM and Solana** using Circle's CCTP v2 protocol.
+
+### Supported Bridge Routes
+
+| Route | Implementation |
+|-------|----------------|
+| EVM → EVM | Circle Bridge Kit SDK |
+| EVM → Solana | Custom CCTP library (`lib/cctp/`) |
+| Solana → EVM | Custom CCTP library (`lib/cctp/`) |
 
 ### Core Bridge Flow
-1. **Estimate** - `kit.estimate` provides fees/gas for the selected route
-2. **Approve + Burn** - Bridge Kit handles USDC approval and burn on source chain
-3. **Attestation + Mint** - Bridge Kit fetches attestation and mints on destination chain
-4. **Status** - Steps and state surfaced via `BridgeResult`; real-time updates via `kit.on('*')`
 
-### Key Architecture Components
+**EVM → EVM (Bridge Kit):**
+1. `kit.estimate` → fees/gas for route
+2. Bridge Kit handles approval + burn
+3. Bridge Kit fetches attestation + mints
+4. Steps surfaced via `BridgeResult`
 
-**State Management**
-- Zustand store (`lib/store/transactionStore.ts`) manages transaction history with localStorage persistence
-- React hooks pattern for blockchain interactions (Bridge Kit + Wagmi)
+**Cross-Ecosystem (Custom CCTP):**
+1. `useBurn` → direct CCTP v2 depositForBurn
+2. Poll Circle Iris API for attestation
+3. `useMint` → direct CCTP v2 receiveMessage
+4. Steps managed via `useBridgeSteps` hook
 
-**Blockchain Integration**
-- Wagmi v2 + Viem for Ethereum interactions via Bridge Kit viem adapter
-- RainbowKit for wallet connections
-- Chain metadata (RPCs, explorers, USDC addresses) derived from Bridge Kit SDK—no local contract maps
+---
 
-**Transaction Lifecycle**
-- Local transaction tracking with persisted `BridgeResult` + steps (deduped by burn tx hash)
-- Real-time step updates via Bridge Kit event listeners during active bridges
-- Manual resume via history UI for pending transfers
+## CCTP Library (`lib/cctp/`)
 
-**Multi-Chain Support**
-- EVM chains only, filtered by `NEXT_PUBLIC_BRIDGEKIT_ENV` (mainnet vs testnet)
-- Wagmi/RainbowKit chains generated from `getWagmiChainsForEnv()`
+Custom CCTP v2 implementation supporting both EVM and Solana. Bypasses Bridge Kit SDK for Solana routes to avoid WebSocket connection issues.
 
-### Key Files
-- `lib/bridgeKit.ts` - Bridge Kit singleton, chain helpers, RPC/fee config, viem adapter factory
-- `lib/hooks/useBridge.ts` - Core bridge hook: calls `kit.bridge`, streams events, persists state
-- `components/bridge-card.tsx` - Bridge form UI, calls `kit.estimate`, renders step status
-- `components/bridging-state.tsx` - Active bridge progress display
-- `lib/store/transactionStore.ts` - Transaction state with localStorage persistence and legacy migration
-- `lib/types.ts` - TypeScript interfaces (`LocalTransaction`, `BridgeParams`, etc.)
+### Directory Structure
 
-### UI Stack
-- Radix UI primitives with Tailwind CSS v4
-- Toast notifications via `@radix-ui/react-toast`
-- `lucide-react` icons
+```
+lib/cctp/
+├── types.ts          # Unified types (ChainId, Address, TxHash, BurnParams, MintParams)
+├── shared.ts         # Constants, domain resolution, hash normalization
+├── errors.ts         # BridgeError class, error detection, handlers
+├── steps.ts          # Step creation, updates, normalization, state derivation
+├── nonce.ts          # Nonce extraction and verification (EVM + Solana)
+├── evm/
+│   └── burn.ts       # EVM depositForBurn builder, fee calculation
+├── solana/
+│   ├── burn.ts       # Solana depositForBurn with PDA derivation
+│   └── mint.ts       # Solana receiveMessage with PDA derivation
+└── hooks/
+    ├── useBurn.ts    # Unified burn hook (routes to EVM or Solana)
+    └── useMint.ts    # Unified mint hook (routes to EVM or Solana)
+```
 
-### Important Notes
+### Key Design Patterns
+
+1. **Universal Interfaces** — `BurnParams`/`MintParams` work for both chains via type guards
+2. **PDA Derivation** — Solana Program Derived Addresses computed programmatically
+3. **Nonce Checking** — Prevents duplicate mints by verifying nonce usage on-chain
+4. **No Bridge Kit for Solana** — Direct Anchor calls avoid WebSocket hangs
+5. **Step Normalization** — Consistent step tracking across all bridge directions
+
+### Type Guards
+
+```typescript
+isSolanaChain(chainId)     // Check if Solana chain
+getChainType(chainId)      // Returns "evm" | "solana"
+isEvmAddress(address)      // Validate 0x + 40 hex chars
+isSolanaAddress(address)   // Validate Base58 format
+isValidTxHash(value)       // Universal tx hash validation
+```
+
+---
+
+## Key Files
+
+### Bridge Infrastructure
+- `lib/bridgeKit.ts` — Bridge Kit singleton, chain metadata, RPC config
+- `lib/cctp/hooks/useBurn.ts` — Unified burn hook (EVM + Solana)
+- `lib/cctp/hooks/useMint.ts` — Unified mint hook (EVM + Solana)
+- `lib/hooks/useCrossEcosystemBridge.ts` — Orchestrates burn + persistence
+
+### UI Hooks
+- `lib/hooks/useBridgeSteps.ts` — Step derivation and normalization
+- `lib/hooks/useMintPolling.ts` — Attestation polling (EVM + Solana)
+- `lib/hooks/useClaimHandler.ts` — Claim button handler
+
+### Components
+- `components/bridge-card.tsx` — Main bridge form UI
+- `components/bridging-state/` — Modular progress display (7 sub-components)
+- `components/solana-wallet-connect.tsx` — Solana wallet button
+
+### State & Types
+- `lib/store/transactionStore.ts` — Zustand store with localStorage (v3 format)
+- `lib/types.ts` — App-level types (`LocalTransaction`, `ChainId`, etc.)
+- `lib/cctp/types.ts` — CCTP-specific types
+
+---
+
+## Wallet Integration
+
+**EVM:** Wagmi v2 + RainbowKit
+- Chains generated from `getWagmiChainsForEnv()`
+- Viem adapter via Bridge Kit
+
+**Solana:** `@solana/wallet-adapter-react`
+- Phantom, Solflare, etc.
+- Direct transaction signing (no SDK abstraction)
+
+---
+
+## Important Notes
+
 - All amounts use 6 decimal precision (USDC standard)
 - Transaction store persists full `BridgeResult` for resume capability
-- Vercel Analytics tracks bridge usage metrics
 - Path aliases use `@/*` pointing to project root
-- don't run build after every change. running bun run lint is sufficent
+- Run `bun run lint` after changes (build not required for every change)
+- Solana burn returns immediately after send (no confirmation wait to avoid WebSocket hangs)

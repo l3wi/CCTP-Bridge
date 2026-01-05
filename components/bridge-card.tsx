@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -15,22 +15,26 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { BridgingState } from "@/components/bridging-state";
 import { ChainIcon } from "@/components/chain-icon";
-import {
-  useAccount,
-  useChains,
-  useSwitchChain,
-  useWalletClient,
-} from "wagmi";
-import { Chain, formatUnits } from "viem";
+import { useAccount, useChains, useSwitchChain } from "wagmi";
+import { Chain } from "viem";
 import {
   validateBridgeParams,
   validateAmount,
   validateChainSelection,
 } from "@/lib/validation";
-import { getErrorMessage } from "@/lib/errors";
-import { AmountState, LocalTransaction } from "@/lib/types";
-import { useBridge } from "@/lib/hooks/useBridge";
+import { getErrorMessage } from "@/lib/cctp/errors";
+import {
+  AmountState,
+  LocalTransaction,
+  ChainId,
+  getChainType,
+} from "@/lib/types";
+import { useCrossEcosystemBridge } from "@/lib/hooks/useCrossEcosystemBridge";
+import { estimateBridgeFee } from "@/lib/cctp/estimate";
+import type { BridgeEstimate } from "@/lib/cctp/types";
 import { useBalance } from "@/lib/hooks/useBalance";
+import { useSolanaBalance } from "@/lib/hooks/useSolanaBalance";
+import { useWallet } from "@solana/wallet-adapter-react";
 import { useDebouncedAddressValidation } from "@/lib/hooks/useDebouncedAddressValidation";
 import { useToast } from "@/components/ui/use-toast";
 import {
@@ -39,23 +43,17 @@ import {
   ChainSelectorSkeleton,
 } from "@/components/loading/LoadingStates";
 import ConnectGuard from "@/components/guards/ConnectGuard";
-import type { BridgeResult } from "@circle-fin/bridge-kit";
+import SolanaConnectGuard from "@/components/guards/SolanaConnectGuard";
+import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 import { TransferSpeed } from "@circle-fin/bridge-kit";
 import {
-  createReadonlyAdapter,
-  getBridgeChainById,
-  getCctpConfirmations,
-  getBridgeKit,
-  resolveBridgeChain,
-  getSupportedEvmChains,
-  getProviderFromWalletClient,
+  getBridgeChainByIdUniversal,
+  getCctpConfirmationsUniversal,
+  resolveBridgeChainUniversal,
+  getAllSupportedChains,
 } from "@/lib/bridgeKit";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
-
-type BridgeEstimateResult = Awaited<
-  ReturnType<ReturnType<typeof getBridgeKit>["estimate"]>
->;
 
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
@@ -73,16 +71,16 @@ export function BridgeCard({
   const { toast } = useToast();
   const chains = useChains();
   const { switchChain } = useSwitchChain();
-  const { bridge, isLoading: isBridgeLoading } = useBridge();
-  const { usdcBalance, usdcFormatted, isUsdcLoading } = useBalance();
-  const { data: walletClient } = useWalletClient();
-  const provider = getProviderFromWalletClient(walletClient);
+  const { bridge, isLoading: isBridgeLoading } = useCrossEcosystemBridge();
+  const { usdcBalance: evmUsdcBalance, usdcFormatted: evmUsdcFormatted, isUsdcLoading: evmIsUsdcLoading } = useBalance();
+  const solanaWallet = useWallet();
+  const { usdcBalance: solanaUsdcBalance, usdcFormatted: solanaUsdcFormatted, isLoading: solanaIsUsdcLoading } = useSolanaBalance();
 
   // State
-  const [sourceChainId, setSourceChainId] = useState<number | null>(
+  const [sourceChainId, setSourceChainId] = useState<ChainId | null>(
     () => chain?.id ?? null
   );
-  const [targetChainId, setTargetChainId] = useState<number | null>(null);
+  const [targetChainId, setTargetChainId] = useState<ChainId | null>(null);
   const [amount, setAmount] = useState<AmountState | null>(null);
   const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeed>(
     TransferSpeed.FAST
@@ -93,6 +91,8 @@ export function BridgeCard({
   const [isBridging, setIsBridging] = useState(false);
   const [bridgeSourceChain, setBridgeSourceChain] = useState<Chain | null>(null);
   const [bridgeTargetChain, setBridgeTargetChain] = useState<Chain | null>(null);
+  // Track target chain ID directly (works for both EVM and Solana destinations)
+  const [bridgeTargetChainId, setBridgeTargetChainId] = useState<ChainId | null>(null);
   const [bridgeStartedAt, setBridgeStartedAt] = useState<Date | null>(null);
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const [loadedTransactionData, setLoadedTransactionData] = useState<{
@@ -106,60 +106,79 @@ export function BridgeCard({
   >(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
 
+  // Determine target chain type early for validation
+  const targetChainType = useMemo(
+    () => targetChainId ? getChainType(targetChainId) : null,
+    [targetChainId]
+  );
+
   // Debounced address validation for custom recipient
+  // Pass target chain type for cross-chain address validation
   const addressValidation = useDebouncedAddressValidation(
-    diffWallet ? targetAddress : undefined
+    diffWallet ? targetAddress : undefined,
+    targetChainType
   );
 
   type ChainOption = {
     value: string;
     label: string;
-    id: number;
-    chain: Chain;
+    id: ChainId;
+    chain?: Chain; // Optional - not present for Solana chains
+    chainType: "evm" | "solana";
   };
 
-  // Memoized values
-  const bridgeKitChains = useMemo(() => getSupportedEvmChains(), []);
-  const supportedChainIds = useMemo(
-    () => new Set(bridgeKitChains.map((c) => c.chainId)),
-    [bridgeKitChains]
+  // Memoized values - get all supported chains (EVM + Solana) from Bridge Kit
+  const allBridgeKitChains = useMemo(() => getAllSupportedChains(), []);
+  const evmChainIds = useMemo(
+    () => new Set(allBridgeKitChains.filter(c => c.type === "evm").map((c) => c.chainId)),
+    [allBridgeKitChains]
   );
 
-  const [supportedChains, setSupportedChains] = useState<Chain[]>([]);
+  const [supportedEvmChains, setSupportedEvmChains] = useState<Chain[]>([]);
 
-  // Stabilize supported chains to avoid re-computation on every render
+  // Stabilize supported EVM chains to avoid re-computation on every render
   useEffect(() => {
     const filtered = chains
-      .filter((c) => supportedChainIds.has(c.id))
+      .filter((c) => evmChainIds.has(c.id))
       .sort((a, b) => a.name.localeCompare(b.name) || a.id - b.id);
 
-    setSupportedChains((prev) => {
+    setSupportedEvmChains((prev) => {
       const prevKey = prev.map((c) => c.id).join(",");
       const nextKey = filtered.map((c) => c.id).join(",");
       if (prevKey === nextKey) return prev;
       return filtered;
     });
-  }, [chains, supportedChainIds]);
+  }, [chains, evmChainIds]);
 
-  const chainOptions = useMemo<ChainOption[]>(
-    () =>
-      supportedChains.map((c) => ({
-        value: c.id.toString(),
-        label: c.name,
-        id: c.id,
-        chain: c,
-      })),
-    [supportedChains]
-  );
+  // Build chain options from all supported chains (EVM + Solana)
+  const chainOptions = useMemo<ChainOption[]>(() => {
+    const evmOptions: ChainOption[] = supportedEvmChains.map((c) => ({
+      value: c.id.toString(),
+      label: c.name,
+      id: c.id,
+      chain: c,
+      chainType: "evm" as const,
+    }));
+
+    const solanaChains = allBridgeKitChains.filter(c => c.type === "solana");
+    const solanaOptions: ChainOption[] = solanaChains.map((c) => ({
+      value: c.chain as string,
+      label: c.name || (c.chain as string),
+      id: c.chain as ChainId,
+      chainType: "solana" as const,
+    }));
+
+    return [...evmOptions, ...solanaOptions];
+  }, [supportedEvmChains, allBridgeKitChains]);
 
   const chainOptionById = useMemo(() => {
-    const map = new Map<number, ChainOption>();
+    const map = new Map<ChainId, ChainOption>();
     chainOptions.forEach((option) => map.set(option.id, option));
     return map;
   }, [chainOptions]);
 
   const destinationOptionsBySource = useMemo(() => {
-    const map = new Map<number, ChainOption[]>();
+    const map = new Map<ChainId, ChainOption[]>();
     chainOptions.forEach((source) => {
       map.set(
         source.id,
@@ -169,12 +188,29 @@ export function BridgeCard({
     return map;
   }, [chainOptions]);
 
-  const destinationOptions = useMemo(() => {
-    if (sourceChainId != null) {
-      return destinationOptionsBySource.get(sourceChainId) ?? [];
+  // Helper to check if a chain option is connected
+  const isChainConnected = useCallback((chainOption: ChainOption): boolean => {
+    if (chainOption.chainType === "solana") {
+      return solanaWallet.connected;
     }
-    return chainOptions;
-  }, [chainOptions, destinationOptionsBySource, sourceChainId]);
+    // EVM: connected if wallet is on this chain
+    return chain?.id === chainOption.id;
+  }, [chain?.id, solanaWallet.connected]);
+
+  const destinationOptions = useMemo(() => {
+    const baseOptions = sourceChainId != null
+      ? destinationOptionsBySource.get(sourceChainId) ?? []
+      : chainOptions;
+
+    // Sort: connected chains first, then rest alphabetically
+    return [...baseOptions].sort((a, b) => {
+      const aConnected = isChainConnected(a);
+      const bConnected = isChainConnected(b);
+      if (aConnected && !bConnected) return -1;
+      if (!aConnected && bConnected) return 1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [chainOptions, destinationOptionsBySource, sourceChainId, isChainConnected]);
 
   const destinationOptionsKey = useMemo(
     () => destinationOptions.map((o) => o.id).join(","),
@@ -202,36 +238,100 @@ export function BridgeCard({
     [chain?.id, sourceChainId]
   );
 
-  const isSourceChainSynced =
-    sourceChainId == null ? !!chain : !!chain && chain.id === sourceChainId;
+  // Determine source chain type and appropriate balance
+  const sourceChainType = useMemo(
+    () => activeSourceChainId ? getChainType(activeSourceChainId) : "evm",
+    [activeSourceChainId]
+  );
+
+  // Unified balance values based on source chain type
+  const usdcBalance = sourceChainType === "solana" ? solanaUsdcBalance : evmUsdcBalance;
+  const usdcFormatted = sourceChainType === "solana" ? solanaUsdcFormatted : evmUsdcFormatted;
+  const isUsdcLoading = sourceChainType === "solana" ? solanaIsUsdcLoading : evmIsUsdcLoading;
+
+  // For Solana, check if Solana wallet is connected; for EVM, check if chain matches
+  const isSourceChainSynced = useMemo(() => {
+    if (sourceChainType === "solana") {
+      return solanaWallet.connected;
+    }
+    return sourceChainId == null ? !!chain : !!chain && chain.id === sourceChainId;
+  }, [sourceChainType, solanaWallet.connected, sourceChainId, chain]);
+
+  // Detect cross-ecosystem bridging (EVM↔Solana)
+  const isCrossEcosystem = useMemo(() => {
+    if (!activeSourceChainId || !targetChainId) return false;
+    return getChainType(activeSourceChainId) !== getChainType(targetChainId);
+  }, [activeSourceChainId, targetChainId]);
+
+  // Pre-filled address for cross-ecosystem bridging
+  // Uses the connected wallet from the target ecosystem
+  const crossEcosystemTargetAddress = useMemo(() => {
+    if (!isCrossEcosystem || !targetChainType) return undefined;
+    // If target is EVM, use connected EVM address; if Solana, use Solana pubkey
+    return targetChainType === "evm" ? address : solanaWallet.publicKey?.toBase58();
+  }, [isCrossEcosystem, targetChainType, address, solanaWallet.publicKey]);
 
   const fastTransferSupported = useMemo(() => {
     if (!activeSourceChainId) return false;
-    return Boolean(getCctpConfirmations(activeSourceChainId)?.fast);
+    // Fast transfer supported for any source chain that has fast confirmations
+    // Per CCTP docs: Solana supports Fast Transfer as both source and destination
+    return Boolean(getCctpConfirmationsUniversal(activeSourceChainId)?.fast);
   }, [activeSourceChainId]);
 
   const walletChainId = chain?.id;
 
   const sourceChainOptions = useMemo(() => {
-    if (!walletChainId) return chainOptions;
-    const connectedChain = chainOptions.find((option) => option.id === walletChainId);
-    if (!connectedChain) return chainOptions;
-    const remaining = chainOptions.filter((option) => option.id !== walletChainId);
-    return [connectedChain, ...remaining];
-  }, [chainOptions, walletChainId]);
+    // Sort: connected chains first, then rest alphabetically
+    return [...chainOptions].sort((a, b) => {
+      const aConnected = isChainConnected(a);
+      const bConnected = isChainConnected(b);
+      if (aConnected && !bConnected) return -1;
+      if (!aConnected && bConnected) return 1;
+      return a.label.localeCompare(b.label);
+    });
+  }, [chainOptions, isChainConnected]);
 
-  // Sync source chain to wallet chain when wallet connects or changes chain
+  // Track the previous wallet chain to detect actual wallet chain changes
+  const prevWalletChainRef = useRef<number | undefined>(walletChainId);
+
+  // Default chain IDs when no wallet connected
+  // Source: Arbitrum (mainnet: 42161, testnet: 421614)
+  // Target: Solana (mainnet: "Solana", testnet: "Solana_Devnet")
+  const defaultSourceChainId = chainOptions.find(
+    (c) => c.id === 42161 || c.id === 421614
+  )?.id;
+  const defaultTargetChainId = chainOptions.find(
+    (c) => c.id === "Solana" || c.id === "Solana_Devnet"
+  )?.id;
+
+  // Track if user has explicitly changed the source chain
+  const userChangedSourceRef = useRef(false);
+
+  // Sync source chain to wallet chain ONLY when wallet chain actually changes
+  // Don't override if user explicitly selected a different chain (like Solana)
   useEffect(() => {
-    if (walletChainId && supportedChainIds.has(walletChainId)) {
+    const prevWalletChain = prevWalletChainRef.current;
+    prevWalletChainRef.current = walletChainId;
+
+    // Only sync if wallet chain changed (not on every sourceChainId change)
+    if (walletChainId && walletChainId !== prevWalletChain && evmChainIds.has(walletChainId)) {
       setSourceChainId(walletChainId);
+      userChangedSourceRef.current = true;
       return;
     }
 
-    // Fallback: set first supported chain if no wallet or unsupported chain
-    if (sourceChainId == null && supportedChains.length > 0) {
-      setSourceChainId(supportedChains[0].id);
+    // Set default chain (Arbitrum) when:
+    // 1. No source chain selected yet, OR
+    // 2. Default just became available and user hasn't explicitly changed it
+    if (defaultSourceChainId && !userChangedSourceRef.current) {
+      if (sourceChainId == null || sourceChainId !== defaultSourceChainId) {
+        setSourceChainId(defaultSourceChainId);
+      }
+    } else if (sourceChainId == null && chainOptions.length > 0) {
+      // Ultimate fallback if no default available
+      setSourceChainId(chainOptions[0].id);
     }
-  }, [walletChainId, supportedChainIds, supportedChains, sourceChainId]);
+  }, [walletChainId, evmChainIds, chainOptions, sourceChainId, defaultSourceChainId]);
 
   // Keep the destination list consistent with the selected source chain without stomping user choice
   useEffect(() => {
@@ -246,10 +346,13 @@ export function BridgeCard({
         return current;
       }
 
-      // Otherwise pick the first available
-      return destinationOptions[0]?.id ?? null;
+      // Prefer Base as default target if available, otherwise first option
+      const baseOption = destinationOptions.find(
+        (o) => o.id === defaultTargetChainId
+      );
+      return baseOption?.id ?? destinationOptions[0]?.id ?? null;
     });
-  }, [destinationOptionsKey, destinationOptions, sourceChainId]);
+  }, [destinationOptionsKey, destinationOptions, sourceChainId, defaultTargetChainId]);
 
   useEffect(() => {
     if (
@@ -260,6 +363,21 @@ export function BridgeCard({
       setActiveTransferSpeed(TransferSpeed.SLOW);
     }
   }, [activeSourceChainId, fastTransferSupported, activeTransferSpeed]);
+
+  // Auto-set address input for cross-ecosystem bridging
+  useEffect(() => {
+    if (isCrossEcosystem) {
+      // Force diffWallet mode for cross-ecosystem and pre-fill with target ecosystem wallet
+      setDiffWallet(true);
+      if (crossEcosystemTargetAddress) {
+        setTargetAddress(crossEcosystemTargetAddress);
+      }
+    } else {
+      // Reset to default for same-ecosystem bridging
+      setDiffWallet(false);
+      setTargetAddress(undefined);
+    }
+  }, [isCrossEcosystem, crossEcosystemTargetAddress]);
 
   // Handle amount change with validation
   const handleAmountChange = useCallback(
@@ -342,6 +460,7 @@ export function BridgeCard({
         userAddress: address,
         isCustomAddress: diffWallet,
         targetAddress,
+        targetChainType: targetChainType ?? undefined,
       }),
     [
       amount,
@@ -352,6 +471,7 @@ export function BridgeCard({
       address,
       diffWallet,
       targetAddress,
+      targetChainType,
     ]
   );
 
@@ -375,41 +495,39 @@ export function BridgeCard({
     }
   };
 
-  const hasCompleteForm = !!chain && isSourceChainSynced && !!targetChain && !!amount;
+  // Form validation - check wallet based on source chain type
+  const hasCompleteForm = useMemo(() => {
+    const hasWalletForSource = sourceChainType === "solana"
+      ? solanaWallet.connected
+      : !!chain;
+    return hasWalletForSource && isSourceChainSynced && (!!targetChain || !!targetChainId) && !!amount;
+  }, [sourceChainType, solanaWallet.connected, chain, isSourceChainSynced, targetChain, targetChainId, amount]);
+
+  // Can we estimate? No wallet required with custom estimate function
+  const hasSolanaWallet = solanaWallet.connected && !!solanaWallet.wallet?.adapter;
   const canEstimate =
     amountForEstimate.isValid &&
     chainSelectionValid &&
     activeSourceChainId != null &&
-    !!targetChain;
+    targetChainId != null;
 
   const estimateBridge = useCallback(
-    async (transferSpeed: TransferSpeed): Promise<BridgeEstimateResult> => {
+    async (transferSpeed: TransferSpeed): Promise<BridgeEstimate> => {
       const sourceId = sourceChainId ?? chain?.id;
+      const targetId = targetChainId;
 
-      if (!sourceId || !targetChain || !amount) {
+      if (!sourceId || !targetId || !amount) {
         throw new Error("Bridge parameters incomplete");
       }
 
-      const sourceChainDef = resolveBridgeChain(sourceId);
-      const destinationChainDef = resolveBridgeChain(targetChain.id);
-
-      const adapter = await createReadonlyAdapter(sourceId);
-
-      return getBridgeKit().estimate({
-        from: {
-          adapter,
-          chain: sourceChainDef,
-        },
-        to: {
-          adapter,
-          chain: destinationChainDef,
-        },
-        amount: formatUnits(amount.bigInt, 6),
-        token: "USDC",
-        config: { transferSpeed },
+      return estimateBridgeFee({
+        sourceChainId: sourceId,
+        destinationChainId: targetId,
+        amount: amount.str,
+        speed: transferSpeed === TransferSpeed.FAST ? "fast" : "standard",
       });
     },
-    [sourceChainId, targetChain, amount, chain?.id]
+    [sourceChainId, targetChainId, amount, chain?.id]
   );
 
   const {
@@ -417,18 +535,19 @@ export function BridgeCard({
     isFetching: isStandardEstimating,
     error: standardEstimateError,
     isError: isStandardEstimateError,
-  } = useQuery<BridgeEstimateResult>({
+  } = useQuery<BridgeEstimate>({
     queryKey: [
       "bridge-estimate",
       sourceChainId,
-      targetChain?.id,
+      targetChainId, // Use targetChainId instead of targetChain?.id for Solana support
       amount?.str,
       "standard",
     ],
     queryFn: () => estimateBridge(TransferSpeed.SLOW),
     enabled: canEstimate,
     staleTime: 300_000,
-    retry: 1,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   });
 
   const {
@@ -436,18 +555,19 @@ export function BridgeCard({
     isFetching: isFastEstimating,
     error: fastEstimateError,
     isError: isFastEstimateError,
-  } = useQuery<BridgeEstimateResult>({
+  } = useQuery<BridgeEstimate>({
     queryKey: [
       "bridge-estimate",
       sourceChainId,
-      targetChain?.id,
+      targetChainId, // Use targetChainId instead of targetChain?.id for Solana support
       amount?.str,
       "fast",
     ],
     queryFn: () => estimateBridge(TransferSpeed.FAST),
     enabled: canEstimate && fastTransferSupported,
     staleTime: 300_000,
-    retry: 1,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   });
 
   useEffect(() => {
@@ -471,7 +591,7 @@ export function BridgeCard({
   }, [fastEstimateError, isFastEstimateError, toast]);
 
   const getTotalProtocolFee = useCallback(
-    (estimate?: BridgeEstimateResult | null) => {
+    (estimate?: BridgeEstimate | null) => {
       if (!estimate?.fees) return 0;
       return estimate.fees.reduce(
         (acc, fee) => acc + (fee.amount ? Number(fee.amount) : 0),
@@ -485,12 +605,8 @@ export function BridgeCard({
     (speed: TransferSpeed) => {
       const sourceChain =
         activeSourceChainId != null
-          ? getBridgeChainById(activeSourceChainId)
+          ? getBridgeChainByIdUniversal(activeSourceChainId)
           : undefined;
-      const confirmations =
-        activeSourceChainId != null ? getCctpConfirmations(activeSourceChainId) : null;
-      const blocks =
-        speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
       const finality = sourceChain
         ? getFinalityEstimate(
             sourceChain.name || String(sourceChain.chain),
@@ -498,12 +614,7 @@ export function BridgeCard({
           )?.averageTime
         : undefined;
 
-      // Show time estimate with block count, e.g., "~8 Sec (1 Block)"
-      const blockLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : null;
-      if (finality && blockLabel) {
-        return `${finality} (${blockLabel})`;
-      }
-      return finality ?? blockLabel ?? "Estimate unavailable";
+      return finality ?? "Estimate unavailable";
     },
     [activeSourceChainId]
   );
@@ -525,8 +636,20 @@ export function BridgeCard({
     []
   );
 
-  const handleSwitchChain = async (chainId: string) => {
-    const parsedChainId = parseInt(chainId, 10);
+  const handleSwitchChain = async (chainIdValue: string) => {
+    // Mark that user has explicitly changed the source chain
+    userChangedSourceRef.current = true;
+
+    // Check if this is a Solana chain (string identifier)
+    if (chainIdValue.startsWith("Solana")) {
+      // For Solana chains, just update the source chain state
+      // No need to switch EVM wallet chain
+      setSourceChainId(chainIdValue as ChainId);
+      return;
+    }
+
+    // For EVM chains, parse the integer and switch chain
+    const parsedChainId = parseInt(chainIdValue, 10);
     if (Number.isNaN(parsedChainId)) return;
 
     try {
@@ -567,15 +690,15 @@ export function BridgeCard({
       if (
         !validation.isValid ||
         !validation.data ||
-        !targetChain ||
+        !targetChainId ||
         !amount
       ) {
         return;
       }
 
       try {
-        resolveBridgeChain(selectedSourceId);
-        resolveBridgeChain(targetChain.id);
+        resolveBridgeChainUniversal(selectedSourceId);
+        resolveBridgeChainUniversal(targetChainId);
       } catch (error) {
         toast({
           title: "Unsupported chain",
@@ -592,28 +715,42 @@ export function BridgeCard({
       const resolvedSourceChain =
         chainOptionById.get(selectedSourceId)?.chain || chain || null;
       setBridgeSourceChain(resolvedSourceChain);
-      setBridgeTargetChain(targetChain);
+      // Track target chain ID for both EVM and Solana destinations
+      setBridgeTargetChainId(targetChainId);
+      // Only set bridgeTargetChain if it's an EVM chain (has chain property)
+      const targetOption = chainOptionById.get(targetChainId);
+      if (targetOption?.chain) {
+        setBridgeTargetChain(targetOption.chain);
+      }
 
-      let pendingHash: `0x${string}` | null = null;
+      let pendingHash: string | null = null;
       try {
         const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
         // Use custom address if specified, otherwise use connected wallet
+        // For Solana source, use Solana address; for EVM source, use EVM address
+        const senderAddress = sourceChainType === "solana"
+          ? solanaWallet.publicKey?.toBase58()
+          : address;
         const finalTargetAddress = diffWallet && validation.data.targetAddress
           ? validation.data.targetAddress
-          : address;
+          : senderAddress;
 
         const result = await bridge(
           {
             amount: validation.data.amount,
             sourceChainId: selectedSourceId,
-            targetChainId: targetChain.id,
+            targetChainId: targetChainId,
             targetAddress: finalTargetAddress,
             transferType,
           },
           {
+            onApprovalStart: () => {
+              // Show progress screen immediately when EVM approval starts
+              setIsBridging(true);
+            },
             onPendingHash: (hash) => {
               pendingHash = hash;
-              setBridgeTransactionHash(hash);
+              setBridgeTransactionHash(hash as `0x${string}`);
               setIsBridging(true);
             },
             onStateChange: (next) => {
@@ -631,14 +768,14 @@ export function BridgeCard({
                   source:
                     next.source ??
                     prev?.source ?? {
-                      address: address ?? "",
-                      chain: resolveBridgeChain(selectedSourceId),
+                      address: senderAddress ?? "",
+                      chain: resolveBridgeChainUniversal(selectedSourceId) as unknown as ChainDefinition,
                     },
                   destination:
                     next.destination ??
                     prev?.destination ?? {
-                      address: address ?? "",
-                      chain: resolveBridgeChain(targetChain.id),
+                      address: finalTargetAddress ?? "",
+                      chain: resolveBridgeChainUniversal(targetChainId) as unknown as ChainDefinition,
                     },
                   steps: mergedSteps,
                 };
@@ -708,6 +845,7 @@ export function BridgeCard({
     setBridgeStartedAt(null);
     setBridgeSourceChain(null);
     setBridgeTargetChain(null);
+    setBridgeTargetChainId(null);
     // Call parent callback to reset loaded transaction
     if (onBackToNew) {
       onBackToNew();
@@ -717,21 +855,19 @@ export function BridgeCard({
   // Effect to handle loaded transaction from history
   useEffect(() => {
     if (loadedTransaction) {
-      const originChain = supportedChains.find(
-        (c) => c.id === loadedTransaction.originChain
-      );
-      const targetChainData = supportedChains.find(
-        (c) => c.id === loadedTransaction.targetChain
-      );
+      const originChainOption = chainOptionById.get(loadedTransaction.originChain);
+      const targetChainOption = loadedTransaction.targetChain
+        ? chainOptionById.get(loadedTransaction.targetChain)
+        : undefined;
 
-      if (originChain && targetChainData && loadedTransaction.amount) {
+      if (originChainOption && targetChainOption && loadedTransaction.amount) {
         const fromChain = {
-          value: originChain.id.toString(),
-          label: originChain.name,
+          value: originChainOption.value,
+          label: originChainOption.label,
         };
         const toChain = {
-          value: targetChainData.id.toString(),
-          label: targetChainData.name,
+          value: targetChainOption.value,
+          label: targetChainOption.label,
         };
 
         setLoadedTransactionData({
@@ -747,115 +883,203 @@ export function BridgeCard({
               : TransferSpeed.SLOW
           );
         }
-        setBridgeSourceChain(originChain);
-        setBridgeTargetChain(targetChainData);
+        // Only set bridgeSourceChain/bridgeTargetChain if EVM (they use Chain type)
+        if (originChainOption.chain) {
+          setBridgeSourceChain(originChainOption.chain);
+        }
+        if (targetChainOption.chain) {
+          setBridgeTargetChain(targetChainOption.chain);
+        }
         if (loadedTransaction.date) {
           setBridgeStartedAt(new Date(loadedTransaction.date));
         }
         setIsBridging(true);
       }
     }
-  }, [loadedTransaction, supportedChains]);
+  }, [loadedTransaction, chainOptionById]);
 
   // Loading states
-  const showChainLoader = !supportedChains.length; // Only show loader when chains haven't loaded
+  const showChainLoader = !chainOptions.length; // Only show loader when chains haven't loaded
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
   const hasAmountInput = !!amount?.str;
 
-  const renderSpeedCard = (
-    speed: TransferSpeed,
-    estimate: BridgeEstimateResult | null | undefined,
-    isEstimating: boolean
-  ) => {
-    const feeTotal = getTotalProtocolFee(estimate);
-    const blockedEstimateLabel = !amountForEstimate.isValid
-      ? "Complete the form to estimate"
-      : !isSourceChainSynced
-      ? "Switch wallet to selected chain"
-      : !chainSelectionValid
-      ? "Select different chains"
-      : !canEstimate
-      ? "Connect wallet to estimate"
-      : null;
+  // Helper to get estimate labels for a given speed
+  const getEstimateLabels = useCallback(
+    (
+      speed: TransferSpeed,
+      estimate: BridgeEstimate | null | undefined,
+      isEstimating: boolean
+    ) => {
+      const feeTotal = getTotalProtocolFee(estimate);
+      // Estimates no longer require wallet connection
+      const blockedEstimateLabel = !amountForEstimate.isValid
+        ? "Complete the form"
+        : !chainSelectionValid
+        ? "Select chains"
+        : null;
 
-    const feeLabel = !hasAmountInput
-      ? "Enter amount to calculate fees"
-      : blockedEstimateLabel
-      ? blockedEstimateLabel
-      : isEstimating
-      ? "Fetching..."
-      : estimate
-      ? `${feeTotal.toFixed(6)} USDC`
-      : "Awaiting estimate";
+      const feeLabel = !hasAmountInput
+        ? "—"
+        : blockedEstimateLabel
+        ? blockedEstimateLabel
+        : isEstimating
+        ? "Fetching..."
+        : estimate
+        ? `${feeTotal.toFixed(6)} USDC`
+        : "—";
 
-    const receiveLabel =
-      hasAmountInput && estimate && !blockedEstimateLabel
+      const receiveLabel = !hasAmountInput
+        ? "—"
+        : blockedEstimateLabel
+        ? blockedEstimateLabel
+        : estimate
         ? getYouWillReceive(feeTotal)
-        : blockedEstimateLabel ?? "Enter amount";
+        : "—";
 
-    const isSpeedSubmitting =
-      (isLoading || isBridgeLoading) && activeTransferSpeed === speed;
+      const confirmations = activeSourceChainId ? getCctpConfirmationsUniversal(activeSourceChainId) : null;
+      const blocks = speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
+      const confirmationLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : "—";
 
-    const validationMessage = validation.isValid
-      ? null
-      : validation.errors[0] || "Complete the form";
+      return { feeLabel, receiveLabel, confirmationLabel, speedLabel: getTransferSpeedLabel(speed) };
+    },
+    [
+      getTotalProtocolFee,
+      amountForEstimate.isValid,
+      chainSelectionValid,
+      hasAmountInput,
+      getYouWillReceive,
+      getTransferSpeedLabel,
+      activeSourceChainId,
+    ]
+  );
 
-    const badgeClasses =
-      speed === TransferSpeed.FAST
-        ? "bg-amber-500/10 text-amber-300 border-amber-500/40"
-        : "bg-slate-700/50 text-slate-200 border-slate-600/60";
+  // Render the bridge comparison table (desktop) and cards (mobile)
+  const renderBridgeComparison = () => {
+    const fastLabels = getEstimateLabels(TransferSpeed.FAST, fastEstimate, isFastEstimating);
+    const standardLabels = getEstimateLabels(TransferSpeed.SLOW, standardEstimate, isStandardEstimating);
 
-    return (
-      <div
-        key={speed}
-        className="rounded-xl border border-slate-700/60 bg-slate-900/50 p-5 space-y-4"
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-base font-semibold text-white">
-              {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
-            </p>
-          </div>
-          <span className={`text-xs px-2 py-1 rounded-full border ${badgeClasses}`}>
-            {speed === TransferSpeed.FAST ? "Priority" : "Standard"}
-          </span>
-        </div>
+    const isFastSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.FAST;
+    const isStandardSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.SLOW;
 
+    // Show "Enter Address" when bridging from Solana without EVM wallet connected
+    const needsDestinationAddress = sourceChainType === "solana" && isCrossEcosystem && !crossEcosystemTargetAddress && !targetAddress;
+    const validationMessage = validation.isValid ? null : (needsDestinationAddress ? "Enter Address" : validation.errors[0] || "Complete the form");
+
+    const renderButton = (speed: TransferSpeed, isPrimary: boolean) => {
+      const isSubmitting = speed === TransferSpeed.FAST ? isFastSubmitting : isStandardSubmitting;
+      const buttonText = validationMessage || (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard");
+      const buttonClass = isPrimary
+        ? "w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2.5"
+        : "w-full border border-slate-700 text-white hover:bg-slate-800 bg-transparent text-sm font-medium py-2.5";
+
+      const button = (
+        <LoadingButton
+          className={buttonClass}
+          onClick={() => handleSend(speed)}
+          isLoading={isSubmitting}
+          disabled={!validation.isValid || isLoading || isBridgeLoading || isSwitchingChain}
+        >
+          {buttonText}
+        </LoadingButton>
+      );
+
+      return sourceChainType === "solana" ? (
+        <SolanaConnectGuard>{button}</SolanaConnectGuard>
+      ) : (
+        <ConnectGuard>{button}</ConnectGuard>
+      );
+    };
+
+    const renderMobileCard = (speed: TransferSpeed, labels: typeof fastLabels, isPrimary: boolean) => (
+      <div className={`rounded-lg p-3 ${isPrimary ? "bg-slate-900/30" : "bg-slate-800/20"}`}>
+        <h3 className="text-white text-base font-semibold mb-3">
+          {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
+        </h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
             <span className="text-slate-400">Estimate speed</span>
-            <span className="text-slate-100">{getTransferSpeedLabel(speed)}</span>
+            <span className="text-white">{labels.speedLabel}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-400">Confirmation</span>
+            <span className="text-white">{labels.confirmationLabel}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-slate-400">Fee amount</span>
-            <span className="text-slate-100 text-right">{feeLabel}</span>
+            <span className="text-white">{labels.feeLabel}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-slate-200">You will receive</span>
-            <span className="text-white">{receiveLabel}</span>
+            <span className="text-slate-400">You will receive</span>
+            <span className="text-white">{labels.receiveLabel}</span>
           </div>
         </div>
+        <div className="mt-3">{renderButton(speed, isPrimary)}</div>
+      </div>
+    );
 
-        <ConnectGuard>
-          <LoadingButton
-            className={
-              speed === TransferSpeed.FAST
-                ? "w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-                : "w-full border border-slate-600 bg-slate-800/80 hover:bg-slate-800 text-white font-medium py-3"
-            }
-            onClick={() => handleSend(speed)}
-            isLoading={isSpeedSubmitting}
-            disabled={
-              !validation.isValid ||
-              isLoading ||
-              isBridgeLoading ||
-              isSwitchingChain
-            }
-          >
-            {validationMessage ||
-              (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard")}
-          </LoadingButton>
-        </ConnectGuard>
+    return (
+      <div>
+        {/* Desktop: Table view */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="text-left py-1 pr-3 text-slate-400 font-normal text-sm"></th>
+                {fastTransferSupported && (
+                  <th className="text-center py-1 px-3">
+                    <span className="text-white text-sm font-semibold">Fast Bridge</span>
+                  </th>
+                )}
+                <th className="text-center py-1 px-3">
+                  <span className="text-white text-sm font-semibold">Standard Bridge</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-slate-800">
+                <td className="py-1 pr-3 text-slate-400 text-sm">Estimate speed</td>
+                {fastTransferSupported && (
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
+                )}
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-1 pr-3 text-slate-400 text-sm">Confirmation</td>
+                {fastTransferSupported && (
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
+                )}
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-1 pr-3 text-slate-400 text-sm">Fee amount</td>
+                {fastTransferSupported && (
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
+                )}
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
+              </tr>
+              <tr className="border-b border-slate-800">
+                <td className="py-1 pr-3 text-slate-400 text-sm">You will receive</td>
+                {fastTransferSupported && (
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
+                )}
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
+              </tr>
+              <tr>
+                <td className="pt-2 pr-3"></td>
+                {fastTransferSupported && (
+                  <td className="pt-2 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
+                )}
+                <td className="pt-2 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Mobile: Stacked cards */}
+        <div className="md:hidden space-y-4">
+          {fastTransferSupported && renderMobileCard(TransferSpeed.FAST, fastLabels, true)}
+          {renderMobileCard(TransferSpeed.SLOW, standardLabels, !fastTransferSupported)}
+        </div>
       </div>
     );
   };
@@ -871,9 +1095,9 @@ export function BridgeCard({
           recipientAddress={loadedTransactionData.recipient || undefined}
           onBack={handleBackToNew}
           onBridgeResultUpdate={(next) => setBridgeResult(next)}
-          confirmations={getCctpConfirmations(loadedTransaction.originChain) || undefined}
+          confirmations={getCctpConfirmationsUniversal(loadedTransaction.originChain) || undefined}
           finalityEstimate={(() => {
-            const chainDef = getBridgeChainById(loadedTransaction.originChain);
+            const chainDef = getBridgeChainByIdUniversal(loadedTransaction.originChain);
             if (!chainDef) return undefined;
             const speed =
               loadedTransaction.transferType === "fast"
@@ -887,10 +1111,10 @@ export function BridgeCard({
           bridgeResult={(() => {
             if (loadedTransaction.bridgeResult) return loadedTransaction.bridgeResult;
             if (!loadedTransaction.steps) return undefined;
-            const sourceChainDef = getBridgeChainById(loadedTransaction.originChain);
+            const sourceChainDef = getBridgeChainByIdUniversal(loadedTransaction.originChain);
             const destChainDef =
               (loadedTransaction.targetChain &&
-                getBridgeChainById(loadedTransaction.targetChain)) ||
+                getBridgeChainByIdUniversal(loadedTransaction.targetChain)) ||
               sourceChainDef;
 
             if (!sourceChainDef || !destChainDef) return undefined;
@@ -899,14 +1123,14 @@ export function BridgeCard({
               amount: loadedTransaction.amount ?? "0",
               token: "USDC",
               state: loadedTransaction.bridgeState ?? "pending",
-              provider: loadedTransaction.provider ?? "CCTPV2BridgingProvider",
+              provider: "CCTPV2BridgingProvider",
               source: {
                 address: loadedTransaction.targetAddress || "",
-                chain: sourceChainDef,
+                chain: sourceChainDef as unknown as ChainDefinition,
               },
               destination: {
                 address: loadedTransaction.targetAddress || "",
-                chain: destChainDef,
+                chain: destChainDef as unknown as ChainDefinition,
               },
               steps: loadedTransaction.steps || [],
             };
@@ -923,9 +1147,13 @@ export function BridgeCard({
           )}
         />
       );
-    } else if ((bridgeTargetChain || targetChain) && amount && bridgeTransactionHash) {
+    } else if ((bridgeTargetChain || bridgeTargetChainId || targetChain) && amount && bridgeTransactionHash) {
       const sourceId = bridgeSourceChain?.id ?? chain?.id ?? sourceChainId ?? null;
-      const targetId = bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
+      // Use bridgeTargetChainId for Solana destinations (where bridgeTargetChain is null)
+      const targetId = bridgeTargetChainId ?? bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
+
+      // Get target chain label from chainOptionById (works for both EVM and Solana)
+      const targetChainOption = targetId != null ? chainOptionById.get(targetId) : null;
 
       const fromChain = {
         value: sourceId != null ? sourceId.toString() : "",
@@ -933,19 +1161,19 @@ export function BridgeCard({
       };
       const toChain = {
         value: targetId != null ? targetId.toString() : "",
-        label: bridgeTargetChain?.name || targetChain?.name || "Destination",
+        label: targetChainOption?.label || bridgeTargetChain?.name || targetChain?.name || "Destination",
       };
 
       const recipientAddressValue = (diffWallet && targetAddress) ? targetAddress : (address ?? undefined);
       const sourceChainIdForResult = sourceId ?? (fromChain.value ? Number(fromChain.value) : undefined);
-      const targetChainIdForResult =
-        targetId ?? (toChain.value ? Number(toChain.value) : undefined);
+      // Use targetId directly - it's already the correct ChainId type (number for EVM, string for Solana)
+      const targetChainIdForResult = targetId ?? undefined;
 
       const sourceChainDef = sourceChainIdForResult
-        ? getBridgeChainById(sourceChainIdForResult)
+        ? getBridgeChainByIdUniversal(sourceChainIdForResult)
         : null;
       const confirmations = sourceChainIdForResult
-        ? getCctpConfirmations(sourceChainIdForResult) || undefined
+        ? getCctpConfirmationsUniversal(sourceChainIdForResult) || undefined
         : undefined;
       const finalityEstimate = sourceChainDef
         ? getFinalityEstimate(
@@ -971,7 +1199,7 @@ export function BridgeCard({
           bridgeResult={(() => {
             if (bridgeResult) return bridgeResult;
             const destChain = targetChainIdForResult
-              ? getBridgeChainById(targetChainIdForResult)
+              ? getBridgeChainByIdUniversal(targetChainIdForResult)
               : null;
             if (sourceChainDef && destChain && bridgeTransactionHash) {
               return {
@@ -994,7 +1222,7 @@ export function BridgeCard({
   return (
     <>
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 space-y-6">
+        <CardContent className="p-4 md:p-6 space-y-4">
           {/* Chain Selectors */}
           <div className="flex items-center gap-3 md:flex-row flex-col">
             <div className="w-full md:flex-1">
@@ -1005,51 +1233,58 @@ export function BridgeCard({
                 <Select
                   value={sourceChainId != null ? sourceChainId.toString() : ""}
                   onValueChange={handleSwitchChain}
-                  disabled={isLoading || isSwitchingChain || !address}
+                  disabled={isLoading || isSwitchingChain || (!address && !solanaWallet.connected)}
                 >
                   <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                     <SelectValue placeholder="Select Chain...">
                       {(() => {
-                        const displayChain =
-                          selectedSourceChain ||
-                          chain ||
-                          chainOptions[0]?.chain;
-                        return displayChain ? (
+                        // Get chain option - works for both EVM and Solana chains
+                        const chainOption = sourceChainId != null
+                          ? chainOptionById.get(sourceChainId)
+                          : chain?.id
+                            ? chainOptionById.get(chain.id)
+                            : chainOptions[0];
+                        if (!chainOption) return null;
+                        const connected = isChainConnected(chainOption);
+                        return (
                           <div className="flex items-center gap-2">
                             {isSwitchingChain ? (
                               <Loader2 className="h-4 w-4 animate-spin" />
                             ) : (
-                              <ChainIcon chainId={displayChain.id} size={24} />
+                              <ChainIcon chainId={chainOption.id} size={24} />
                             )}
-                            <span>{displayChain.name}</span>
+                            <span>{chainOption.label}</span>
                             {isSwitchingChain ? (
                               <span className="text-xs text-slate-400 ml-auto">
                                 Switching...
                               </span>
-                            ) : address ? (
+                            ) : connected ? (
                               <span className="text-green-500 ml-auto">●</span>
                             ) : null}
                           </div>
-                        ) : null;
+                        );
                       })()}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    {sourceChainOptions.map((chainOption) => (
-                      <SelectItem
-                        key={chainOption.value}
-                        value={chainOption.value}
-                        className="text-white hover:bg-slate-700"
-                      >
-                        <div className="flex items-center gap-2">
-                          <ChainIcon chainId={chainOption.id} size={24} />
-                          <span>{chainOption.label}</span>
-                          {sourceChainId === chainOption.id && address && (
-                            <span className="ml-auto text-green-500">●</span>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
+                    {sourceChainOptions.map((chainOption) => {
+                      const connected = isChainConnected(chainOption);
+                      return (
+                        <SelectItem
+                          key={chainOption.value}
+                          value={chainOption.value}
+                          className="text-white hover:bg-slate-700"
+                        >
+                          <div className="flex items-center gap-2">
+                            <ChainIcon chainId={chainOption.id} size={24} />
+                            <span>{chainOption.label}</span>
+                            {connected && (
+                              <span className="ml-auto text-green-500">●</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               )}
@@ -1069,7 +1304,9 @@ export function BridgeCard({
                 <Select
                   value={targetChainId != null ? targetChainId.toString() : ""}
                   onValueChange={(value) => {
-                    const selectedChain = chainOptionById.get(Number(value));
+                    // Handle both EVM (number) and Solana (string) chain IDs
+                    const chainId = value.startsWith("Solana") ? value : Number(value);
+                    const selectedChain = chainOptionById.get(chainId as ChainId);
                     if (selectedChain) {
                       setTargetChainId(selectedChain.id);
                     }
@@ -1079,35 +1316,45 @@ export function BridgeCard({
                   <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                     <SelectValue placeholder="Select Chain...">
                       {(() => {
-                        const displayChain =
-                          targetChain ||
-                          (targetChainId != null
-                            ? chainOptionById.get(targetChainId)?.chain
-                            : undefined);
-                        return displayChain ? (
+                        // Get chain option - works for both EVM and Solana chains
+                        const chainOption = targetChainId != null
+                          ? chainOptionById.get(targetChainId)
+                          : undefined;
+                        if (!chainOption) return null;
+                        const connected = isChainConnected(chainOption);
+                        return (
                           <div className="flex items-center gap-2">
-                            <ChainIcon chainId={displayChain.id} size={24} />
+                            <ChainIcon chainId={chainOption.id} size={24} />
                             <span className="truncate">
-                              {displayChain.name}
+                              {chainOption.label}
                             </span>
+                            {connected && (
+                              <span className="text-green-500 ml-auto">●</span>
+                            )}
                           </div>
-                        ) : null;
+                        );
                       })()}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700">
-                    {destinationOptions.map((chainOption) => (
-                      <SelectItem
-                        key={chainOption.value}
-                        value={chainOption.value}
-                        className="text-white hover:bg-slate-700"
-                      >
-                        <div className="flex items-center gap-2">
-                          <ChainIcon chainId={chainOption.id} size={24} />
-                          <span>{chainOption.label}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
+                    {destinationOptions.map((chainOption) => {
+                      const connected = isChainConnected(chainOption);
+                      return (
+                        <SelectItem
+                          key={chainOption.value}
+                          value={chainOption.value}
+                          className="text-white hover:bg-slate-700"
+                        >
+                          <div className="flex items-center gap-2">
+                            <ChainIcon chainId={chainOption.id} size={24} />
+                            <span>{chainOption.label}</span>
+                            {connected && (
+                              <span className="ml-auto text-green-500">●</span>
+                            )}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
                   </SelectContent>
                 </Select>
               )}
@@ -1115,8 +1362,8 @@ export function BridgeCard({
           </div>
 
           {/* Amount Input */}
-          <div className="bg-slate-900/50 rounded-lg p-6">
-            <div className="flex justify-between items-center mb-4">
+          <div className="bg-slate-900/50 rounded-lg px-4 py-3">
+            <div className="flex justify-between items-center mb-2">
               <Label className="text-sm text-slate-300">Amount</Label>
               <div className="flex items-center gap-2">
                 {showBalanceLoader ? (
@@ -1150,31 +1397,49 @@ export function BridgeCard({
           </div>
 
           {/* Custom Recipient Address */}
-          {address && targetChain && (
+          {(address || solanaWallet.publicKey) && targetChainId && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <Checkbox
-                  id="custom-address"
-                  checked={diffWallet}
-                  onCheckedChange={(checked) => {
-                    if (checked) {
-                      setDiffWallet(true);
-                      setTargetAddress(address);
-                    } else {
-                      setDiffWallet(false);
-                      setTargetAddress(undefined);
-                    }
-                  }}
-                  disabled={isLoading}
-                />
-                <Label
-                  htmlFor="custom-address"
-                  className="text-xs text-slate-300 cursor-pointer"
-                >
-                  Send to a different wallet on {targetChain.name}
-                </Label>
-              </div>
-              {diffWallet && (
+              {/* Show checkbox only for same-ecosystem bridging */}
+              {!isCrossEcosystem && (
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="custom-address"
+                    checked={diffWallet}
+                    onCheckedChange={(checked) => {
+                      if (checked) {
+                        setDiffWallet(true);
+                        setTargetAddress(address);
+                      } else {
+                        setDiffWallet(false);
+                        setTargetAddress(undefined);
+                      }
+                    }}
+                    disabled={isLoading}
+                  />
+                  <Label
+                    htmlFor="custom-address"
+                    className="text-xs text-slate-300 cursor-pointer"
+                  >
+                    Send to a different wallet on {chainOptionById.get(targetChainId)?.label || "destination chain"}
+                  </Label>
+                </div>
+              )}
+              {/* Cross-ecosystem with connected destination wallet: show read-only address */}
+              {isCrossEcosystem && crossEcosystemTargetAddress && (
+                <div className="space-y-2">
+                  <Label className="text-sm text-slate-300">
+                    Destination Wallet on {targetChainType === "solana" ? "Solana" : "EVM"}
+                  </Label>
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-md bg-slate-700/50 border border-slate-600">
+                    <span className="text-white font-mono text-sm truncate">
+                      {crossEcosystemTargetAddress}
+                    </span>
+                    <span className="text-xs text-green-400 whitespace-nowrap">Connected</span>
+                  </div>
+                </div>
+              )}
+              {/* Cross-ecosystem without destination wallet OR same-ecosystem diffWallet: show input */}
+              {((isCrossEcosystem && !crossEcosystemTargetAddress) || (!isCrossEcosystem && diffWallet)) && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label className="text-sm text-slate-300">
@@ -1186,14 +1451,19 @@ export function BridgeCard({
                     {addressValidation.error && !addressValidation.isValidating && (
                       <span className="text-xs text-red-400">{addressValidation.error}</span>
                     )}
+                    {addressValidation.warning && !addressValidation.error && !addressValidation.isValidating && (
+                      <span className="text-xs text-yellow-400">{addressValidation.warning}</span>
+                    )}
                   </div>
                   <Input
-                    placeholder="0x..."
+                    placeholder={targetChainType === "solana" ? "Solana address..." : "0x..."}
                     value={targetAddress || ""}
                     onChange={(e) => setTargetAddress(e.target.value)}
                     className={`bg-slate-700/50 border-slate-600 text-white ${
                       addressValidation.error && !addressValidation.isValidating
                         ? "border-red-500 focus:border-red-500"
+                        : addressValidation.warning && !addressValidation.isValidating
+                        ? "border-yellow-500 focus:border-yellow-500"
                         : ""
                     }`}
                     disabled={isLoading}
@@ -1203,40 +1473,8 @@ export function BridgeCard({
             </div>
           )}
 
-          {/* Transfer Options */}
-          {hasAmountInput ? (
-            <div className="space-y-4">
-              {fastTransferSupported &&
-                renderSpeedCard(
-                  TransferSpeed.FAST,
-                  fastEstimate,
-                  isFastEstimating
-                )}
-              {renderSpeedCard(
-                TransferSpeed.SLOW,
-                standardEstimate,
-                isStandardEstimating
-              )}
-            </div>
-          ) : (
-            <ConnectGuard>
-            <LoadingButton
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3"
-              onClick={() => handleSend(TransferSpeed.FAST)}
-              isLoading={isLoading || isBridgeLoading}
-              disabled={
-                !validation.isValid ||
-                isLoading ||
-                isBridgeLoading ||
-                isSwitchingChain
-              }
-            >
-                {validation.isValid
-                  ? "Bridge USDC"
-                  : validation.errors[0] || "Enter an amount to bridge"}
-              </LoadingButton>
-            </ConnectGuard>
-          )}
+          {/* Transfer Options - Comparison Table */}
+          {renderBridgeComparison()}
         </CardContent>
       </Card>
     </>

@@ -6,7 +6,9 @@ type FinalityEstimate = {
 };
 
 // Derived from Circle's CCTP attestation guidance.
+// https://developers.circle.com/stablecoins/cctp-getting-started
 const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
+  // Fast + Standard chains
   ethereum: {
     fast: { blocks: 2, averageTime: "~20 seconds" },
     standard: { blocks: 65, averageTime: "~13 to 19 minutes" },
@@ -35,6 +37,10 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
     fast: { blocks: 1, averageTime: "~8 seconds" },
     standard: { blocks: 65, averageTime: "~13 to 19 minutes" },
   },
+  optimism: {
+    fast: { blocks: 1, averageTime: "~8 seconds" },
+    standard: { blocks: 65, averageTime: "~13 to 19 minutes" },
+  },
   plume: {
     fast: { blocks: 1, averageTime: "~8 seconds" },
     standard: { blocks: 65, averageTime: "~13 to 19 minutes" },
@@ -42,6 +48,18 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
   solana: {
     fast: { blocks: 3, averageTime: "~8 seconds" },
     standard: { blocks: 32, averageTime: "~25 seconds" },
+  },
+  "solana devnet": {
+    fast: { blocks: 3, averageTime: "~8 seconds" },
+    standard: { blocks: 32, averageTime: "~25 seconds" },
+  },
+  solana_devnet: {
+    fast: { blocks: 3, averageTime: "~8 seconds" },
+    standard: { blocks: 32, averageTime: "~25 seconds" },
+  },
+  starknet: {
+    fast: { blocks: 1, averageTime: "~8 seconds" },
+    standard: { blocks: 65, averageTime: "~4 to 8 hours" },
   },
   unichain: {
     fast: { blocks: 1, averageTime: "~8 seconds" },
@@ -51,6 +69,7 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
     fast: { blocks: 1, averageTime: "~8 seconds" },
     standard: { blocks: 65, averageTime: "~13 to 19 minutes" },
   },
+  // Standard-only chains (fast not applicable - already fast)
   "arc testnet": {
     standard: { blocks: 1, averageTime: "~0.5 seconds" },
   },
@@ -60,6 +79,9 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
   "bnb smart chain": {
     standard: { blocks: 3, averageTime: "~2 seconds" },
   },
+  bsc: {
+    standard: { blocks: 3, averageTime: "~2 seconds" },
+  },
   hyperevm: {
     standard: { blocks: 1, averageTime: "~5 seconds" },
   },
@@ -67,6 +89,9 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
     standard: { blocks: 1, averageTime: "~5 seconds" },
   },
   "polygon pos": {
+    standard: { blocks: 3, averageTime: "~8 seconds" },
+  },
+  polygon: {
     standard: { blocks: 3, averageTime: "~8 seconds" },
   },
   sei: {
@@ -84,7 +109,25 @@ export const getFinalityEstimate = (
   chainName: string,
   speed: TransferSpeed
 ): FinalityEstimate[keyof FinalityEstimate] | undefined => {
-  const key = chainName.trim().toLowerCase();
+  // Normalize chain name: lowercase, trim, handle common variants
+  let key = chainName.trim().toLowerCase();
+
+  // Handle Solana variants (e.g., "Solana_Devnet", "Solana Devnet", "solana-devnet")
+  if (key.startsWith("solana")) {
+    key = key.includes("devnet") ? "solana devnet" : "solana";
+  }
+
+  // Handle common name variations
+  const aliases: Record<string, string> = {
+    "op": "op mainnet",
+    "optimism mainnet": "op mainnet",
+    "bnb": "bnb smart chain",
+    "binance": "bnb smart chain",
+    "polygon mainnet": "polygon pos",
+    "matic": "polygon pos",
+  };
+  key = aliases[key] ?? key;
+
   const entry = FINALITY_BY_CHAIN[key];
   if (!entry) return undefined;
   return speed === TransferSpeed.FAST ? entry.fast ?? entry.standard : entry.standard;

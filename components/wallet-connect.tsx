@@ -3,7 +3,7 @@
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { useDisconnect } from "wagmi";
 import { Button } from "@/components/ui/button";
-import { Wallet } from "lucide-react";
+import { NetworkIcon } from "@web3icons/react/dynamic";
 
 export function WalletConnect() {
   const { disconnect } = useDisconnect();
@@ -43,7 +43,7 @@ export function WalletConnect() {
                     variant="outline"
                     className="bg-slate-800/50 border-slate-700 text-white hover:bg-slate-700/50"
                   >
-                    <Wallet className="h-4 w-4 mr-2" />
+                    <NetworkIcon chainId={1} variant="mono" className="h-5 w-5 mr-2" />
                     Connect
                   </Button>
                 );
@@ -60,7 +60,7 @@ export function WalletConnect() {
                   variant="outline"
                   className="bg-slate-800/50 border-slate-700 text-white hover:bg-slate-700/50"
                 >
-                  <Wallet className="h-4 w-4 mr-2" />
+                  <NetworkIcon chainId={1} variant="mono" className="h-5 w-5 mr-2" />
                   {displayName}
                 </Button>
               );

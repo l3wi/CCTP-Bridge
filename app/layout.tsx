@@ -7,19 +7,22 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   applicationName: "CCTP Bridge",
-  title: "Bridge USDC via CCTP",
+  title: "Bridge USDC across EVM & Solana via CCTP",
   openGraph: {
+    title: "CCTP Bridge — Bridge USDC across EVM & Solana",
+    description:
+      "Bridge USDC natively across Ethereum, Arbitrum, Base, Optimism, Polygon, Avalanche, and Solana using Circle's CCTP v2 infrastructure.",
     images: [
       {
         url: "https://cctp.io/og.png",
         width: 1000,
         height: 525,
-        alt: "CCTP Bridge",
+        alt: "CCTP Bridge — Now with Solana!",
       },
     ],
   },
   description:
-    "A native USDC bridge powered by Circle's CCTP infrastructure. Now with CCTP v2!",
+    "Bridge USDC natively across EVM chains and Solana using Circle's CCTP v2 infrastructure. Fast, secure, and trustless.",
   keywords: [
     "USDC",
     "CCTP",
@@ -27,10 +30,13 @@ export const metadata: Metadata = {
     "Circle",
     "Stablecoin",
     "Ethereum",
+    "Solana",
+    "Arbitrum",
+    "Base",
+    "Optimism",
     "Polygon",
     "Avalanche",
-    "Optimism",
-    "Arbitrum",
+    "Cross-chain",
   ],
   metadataBase: new URL("https://cctp.io"),
 };
