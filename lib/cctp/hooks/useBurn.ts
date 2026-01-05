@@ -16,9 +16,9 @@ import { getCctpDomain, getCctpDomainSafe, FINALITY_THRESHOLDS } from "../shared
 
 /** Callbacks for burn progress updates - exported for useCrossEcosystemBridge */
 export interface BurnProgressCallbacks {
-  /** Called when EVM approval signing starts - triggers progress screen */
-  onApprovalStart?: () => void;
-  /** Called when EVM approval is confirmed with tx hash */
+  /** Called when EVM approval tx is sent - triggers progress screen with tx hash */
+  onApprovalSent?: (txHash: EvmTxHash) => void;
+  /** Called when EVM approval is confirmed */
   onApprovalComplete?: (txHash: EvmTxHash) => void;
 }
 
@@ -107,7 +107,7 @@ export function useBurn() {
           });
 
           // Trigger progress screen after approval tx is sent
-          callbacks?.onApprovalStart?.();
+          callbacks?.onApprovalSent?.(approvalTxHash);
 
           toast({
             title: "Approval submitted",

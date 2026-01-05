@@ -111,16 +111,18 @@ export const useCrossEcosystemBridge = () => {
         const burnCallbacks: BurnProgressCallbacks | undefined =
           sourceChainType === "evm"
             ? {
-                onApprovalStart: () => {
-                  // Show progress screen immediately when approval starts
+                onApprovalSent: (approvalTxHash) => {
+                  // Show progress screen after approval tx sent, with tx hash visible
                   const pendingSteps = createApprovalPendingSteps();
+                  // Update first step with tx hash (still pending confirmation)
+                  pendingSteps[0] = { ...pendingSteps[0], txHash: approvalTxHash };
                   currentStepsRef.current = pendingSteps;
                   const pendingResult = buildResult(pendingSteps, "pending");
                   opts?.onApprovalStart?.();
                   opts?.onStateChange?.(pendingResult);
                 },
                 onApprovalComplete: (approvalTxHash) => {
-                  // Update steps with approval hash
+                  // Mark approval as success after confirmation
                   const updatedSteps = updateStepsApprovalComplete(
                     currentStepsRef.current,
                     approvalTxHash
