@@ -71,6 +71,23 @@ export function getCctpDomainId(
 }
 
 /**
+ * Get CCTP domain ID for any chain (EVM or Solana) from Bridge Kit.
+ */
+export function getCctpDomainIdUniversal(
+  chainId: ChainId,
+  env?: BridgeEnvironment
+): number | null {
+  const chains = getAllSupportedChains(env);
+  const chain = chains.find((c) => {
+    if (c.type === "evm") return (c as { chainId: number }).chainId === chainId;
+    if (c.type === "solana") return (c as { chain: SolanaChainId }).chain === chainId;
+    return false;
+  });
+  const cctp = chain?.cctp as { domain?: number } | undefined;
+  return cctp?.domain ?? null;
+}
+
+/**
  * Get chain ID from CCTP domain.
  * Searches all supported chains for matching domain.
  */
@@ -144,6 +161,22 @@ export function isTestnetChain(
 ): boolean {
   const chains = getSupportedEvmChains(env);
   const chain = chains.find((c) => c.chainId === chainId);
+  return chain?.isTestnet ?? false;
+}
+
+/**
+ * Check if a chain is a testnet (works for both EVM and Solana chains).
+ */
+export function isTestnetChainUniversal(
+  chainId: ChainId,
+  env?: BridgeEnvironment
+): boolean {
+  const chains = getAllSupportedChains(env);
+  const chain = chains.find((c) => {
+    if (c.type === "evm") return (c as { chainId: number }).chainId === chainId;
+    if (c.type === "solana") return (c as { chain: SolanaChainId }).chain === chainId;
+    return false;
+  });
   return chain?.isTestnet ?? false;
 }
 

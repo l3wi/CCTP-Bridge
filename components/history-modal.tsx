@@ -18,13 +18,12 @@ import {
 } from "@/components/ui/select";
 import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 } from "lucide-react";
 import { useChains } from "wagmi";
-import { LocalTransaction, type UniversalTxHash } from "@/lib/types";
+import { LocalTransaction, type UniversalTxHash, type ChainId, isValidTxHash, isValidEvmTxHash, isSolanaChain, getChainType } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { ChainIcon } from "@/components/chain-icon";
-import { getExplorerTxUrlUniversal, getSupportedEvmChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal } from "@/lib/bridgeKit";
-import { fetchAttestation } from "@/lib/iris";
+import { getExplorerTxUrlUniversal, getAllSupportedChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal, type UniversalChainDefinition } from "@/lib/bridgeKit";
+import { fetchAttestationUniversal } from "@/lib/iris";
 import { getChainIdFromDomainUniversal, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
-import { isSolanaChain } from "@/lib/types";
 import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
@@ -79,17 +78,23 @@ export function HistoryModal({
 
   const pendingCount = useMemo(
     () =>
-      transactions.filter(
-        (tx) =>
+      transactions.filter((tx) => {
+        // If status is explicitly claimed/failed, it's not pending
+        if (tx.status === "claimed" || tx.status === "failed") return false;
+        // Check pending indicators
+        return (
           tx.status === "pending" ||
           tx.bridgeState === "pending" ||
           tx.bridgeResult?.state === "pending"
-      ).length,
+        );
+      }).length,
     [transactions]
   );
 
   const claimableCount = useMemo(() => {
     return transactions.filter((tx) => {
+      // If already claimed or failed, not claimable
+      if (tx.status === "claimed" || tx.status === "failed") return false;
       const steps = tx.steps || tx.bridgeResult?.steps || [];
       // Heuristic: look for a step that mentions claim and is pending/ready
       return steps.some((step) => {
@@ -361,12 +366,29 @@ interface AddTransactionViewProps {
 }
 
 function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes }: AddTransactionViewProps) {
-  const [selectedChainId, setSelectedChainId] = useState<number | null>(null);
+  const [selectedChainId, setSelectedChainId] = useState<ChainId | null>(null);
   const [txHash, setTxHash] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const supportedChains = useMemo(() => getSupportedEvmChains(BRIDGEKIT_ENV), []);
+  // Get all supported chains (EVM + Solana)
+  const supportedChains = useMemo(() => getAllSupportedChains(BRIDGEKIT_ENV), []);
+
+  // Helper to get chain identifier for the select value
+  const getChainSelectId = (chain: UniversalChainDefinition): string => {
+    if (chain.type === "evm") return String((chain as { chainId: number }).chainId);
+    if (chain.type === "solana") return (chain as { chain: string }).chain;
+    return "";
+  };
+
+  // Helper to parse chain ID from select value
+  const parseChainSelectId = (value: string): ChainId => {
+    if (value.startsWith("Solana")) return value as ChainId;
+    return Number(value);
+  };
+
+  // Determine if selected chain is Solana (for UI hints)
+  const isSolanaSelected = selectedChainId !== null && isSolanaChain(selectedChainId);
 
   const handleSubmit = async () => {
     if (!selectedChainId || !txHash) {
@@ -374,15 +396,26 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       return;
     }
 
-    // Validate tx hash format
-    const normalizedHash = txHash.trim().toLowerCase();
-    if (!/^0x[a-f0-9]{64}$/.test(normalizedHash)) {
-      setError("Invalid transaction hash format");
+    // Normalize tx hash based on chain type
+    const trimmedHash = txHash.trim();
+    const isSolana = isSolanaChain(selectedChainId);
+
+    // For EVM, lowercase the hash; for Solana, keep as-is (Base58 is case-sensitive)
+    const normalizedHash = isSolana ? trimmedHash : trimmedHash.toLowerCase();
+
+    // Validate tx hash format based on chain type
+    if (!isValidTxHash(normalizedHash)) {
+      if (isSolana) {
+        setError("Invalid Solana transaction signature. Expected Base58 format (80-90 characters).");
+      } else {
+        setError("Invalid transaction hash format. Expected 0x followed by 64 hex characters.");
+      }
       return;
     }
 
-    // Check for duplicate transaction
-    if (existingHashes.has(normalizedHash)) {
+    // Check for duplicate transaction (case-insensitive for EVM, case-sensitive for Solana)
+    const hashToCheck = isSolana ? normalizedHash : normalizedHash.toLowerCase();
+    if (existingHashes.has(hashToCheck)) {
       setError("This transaction has already been added");
       return;
     }
@@ -391,7 +424,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
     setError(null);
 
     try {
-      const attestationData = await fetchAttestation(selectedChainId, normalizedHash);
+      const attestationData = await fetchAttestationUniversal(selectedChainId, normalizedHash);
 
       if (!attestationData) {
         setError("Transaction not found. Make sure the chain and hash are correct.");
@@ -507,12 +540,14 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         steps,
       };
 
-      // Create the transaction entry
+      // Create the transaction entry with chain types
       const transaction: Omit<LocalTransaction, "date"> = {
-        hash: normalizedHash as `0x${string}`,
+        hash: normalizedHash as UniversalTxHash,
         originChain: selectedChainId,
+        originChainType: getChainType(selectedChainId),
         targetChain: targetChainId,
-        targetAddress: attestationData.mintRecipient as `0x${string}` | undefined,
+        targetChainType: getChainType(targetChainId),
+        targetAddress: attestationData.mintRecipient as UniversalTxHash | undefined,
         amount: formattedAmount,
         status: txStatus,
         version: "v2",
@@ -550,35 +585,49 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         <div className="space-y-2">
           <label className="text-sm font-medium text-slate-300">Source Chain</label>
           <Select
-            value={selectedChainId?.toString() ?? ""}
-            onValueChange={(value) => setSelectedChainId(Number(value))}
+            value={selectedChainId !== null ? (typeof selectedChainId === "string" ? selectedChainId : String(selectedChainId)) : ""}
+            onValueChange={(value) => setSelectedChainId(parseChainSelectId(value))}
           >
             <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
               <SelectValue placeholder="Select Chain...">
-                {selectedChainId && (() => {
-                  const selected = supportedChains.find(c => c.chainId === selectedChainId);
-                  return selected ? (
+                {selectedChainId !== null && (() => {
+                  const selected = supportedChains.find(c => {
+                    if (c.type === "evm") return (c as { chainId: number }).chainId === selectedChainId;
+                    if (c.type === "solana") return (c as { chain: ChainId }).chain === selectedChainId;
+                    return false;
+                  });
+                  if (!selected) return null;
+                  const chainIdForIcon: ChainId = selected.type === "evm"
+                    ? (selected as { chainId: number }).chainId
+                    : (selected as { chain: ChainId }).chain;
+                  return (
                     <div className="flex items-center gap-2">
-                      <ChainIcon chainId={selected.chainId} size={24} />
+                      <ChainIcon chainId={chainIdForIcon} size={24} />
                       <span>{selected.name}</span>
                     </div>
-                  ) : null;
+                  );
                 })()}
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="bg-slate-800 border-slate-700">
-              {supportedChains.map((chain) => (
-                <SelectItem
-                  key={chain.chainId}
-                  value={chain.chainId.toString()}
-                  className="text-white hover:bg-slate-700"
-                >
-                  <div className="flex items-center gap-2">
-                    <ChainIcon chainId={chain.chainId} size={24} />
-                    <span>{chain.name}</span>
-                  </div>
-                </SelectItem>
-              ))}
+              {supportedChains.map((chain) => {
+                const chainSelectId = getChainSelectId(chain);
+                const chainIdForIcon: ChainId = chain.type === "evm"
+                  ? (chain as { chainId: number }).chainId
+                  : (chain as { chain: ChainId }).chain;
+                return (
+                  <SelectItem
+                    key={chainSelectId}
+                    value={chainSelectId}
+                    className="text-white hover:bg-slate-700"
+                  >
+                    <div className="flex items-center gap-2">
+                      <ChainIcon chainId={chainIdForIcon} size={24} />
+                      <span>{chain.name}</span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
             </SelectContent>
           </Select>
         </div>
@@ -587,13 +636,15 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
           <label className="text-sm font-medium text-slate-300">Transaction Hash</label>
           <input
             type="text"
-            placeholder="0x..."
+            placeholder={isSolanaSelected ? "Enter Solana signature (e.g., 2bX4P87La...)" : "0x..."}
             value={txHash}
             onChange={(e) => setTxHash(e.target.value)}
             className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
           />
           <p className="text-xs text-slate-400">
-            Enter the burn transaction hash from the source chain
+            {isSolanaSelected
+              ? "Enter the Solana transaction signature (Base58 format)"
+              : "Enter the burn transaction hash from the source chain (0x...)"}
           </p>
         </div>
 

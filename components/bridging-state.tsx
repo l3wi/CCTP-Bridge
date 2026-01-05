@@ -16,7 +16,7 @@ import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useDirectMintSolana } from "@/lib/hooks/useDirectMintSolana";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { checkMintReadiness } from "@/lib/simulation";
-import { asTxHash, ChainId, isSolanaChain } from "@/lib/types";
+import { asTxHash, asUniversalTxHash, ChainId, isSolanaChain } from "@/lib/types";
 
 // Polling configuration constants
 const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
@@ -397,16 +397,16 @@ export function BridgingState({
     return !isNaN(numValue) ? numValue : (fromChain.value as ChainId);
   }, [displayResult?.source?.chain, fromChain?.value]);
 
-  // Extract burn transaction hash for polling
+  // Extract burn transaction hash for polling (supports both EVM and Solana signatures)
   const burnTxHash = useMemo(() => {
     if (!displayResult?.steps) return null;
     // Find the burn step or first step with a tx hash
     const burnStep = displayResult.steps.find((s) => /burn/i.test(s.name));
-    const burnHash = asTxHash(burnStep?.txHash);
+    const burnHash = asUniversalTxHash(burnStep?.txHash);
     if (burnHash) return burnHash;
     // Fallback to first tx hash
     const firstWithHash = displayResult.steps.find((s) => s.txHash);
-    return asTxHash(firstWithHash?.txHash) ?? null;
+    return asUniversalTxHash(firstWithHash?.txHash) ?? null;
   }, [displayResult?.steps]);
 
   // Check if we should poll for mint readiness (>5 min old, not completed, within time limit)
@@ -681,10 +681,10 @@ export function BridgingState({
         }
       }
 
-      // Execute direct mint for EVM
+      // Execute direct mint for EVM (supports both EVM and Solana source chains)
       const result = await executeMint(
         burnTxHash,
-        sourceChainId as number,
+        sourceChainId,
         destinationChainId as number,
         displayResult?.steps
       );

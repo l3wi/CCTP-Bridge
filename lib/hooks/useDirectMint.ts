@@ -2,13 +2,14 @@
  * Hook for executing CCTP mint transactions directly.
  * Bypasses Bridge Kit SDK to avoid creating duplicate transactions.
  * Updates the existing transaction in the store instead of creating a new one.
+ * Supports both EVM and Solana source chains claiming to EVM destinations.
  */
 
 import { useCallback, useState } from "react";
 import { useWalletClient, usePublicClient } from "wagmi";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchAttestation } from "@/lib/iris";
+import { fetchAttestationUniversal } from "@/lib/iris";
 import { simulateMint } from "@/lib/simulation";
 import {
   getMessageTransmitterAddress,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/contracts";
 import { getExplorerTxUrl } from "@/lib/bridgeKit";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
+import type { ChainId, UniversalTxHash } from "@/lib/types";
 
 interface DirectMintResult {
   success: boolean;
@@ -34,11 +36,12 @@ export function useDirectMint() {
   /**
    * Execute a direct mint by fetching attestation from Iris and calling receiveMessage.
    * Updates the existing transaction in the store.
+   * Supports both EVM and Solana source chains.
    */
   const executeMint = useCallback(
     async (
-      burnTxHash: `0x${string}`,
-      sourceChainId: number,
+      burnTxHash: UniversalTxHash,
+      sourceChainId: ChainId,
       destinationChainId: number,
       existingSteps?: BridgeResult["steps"]
     ): Promise<DirectMintResult> => {
@@ -61,8 +64,8 @@ export function useDirectMint() {
       setIsMinting(true);
 
       try {
-        // 1. Fetch attestation from Iris
-        const attestationData = await fetchAttestation(sourceChainId, burnTxHash);
+        // 1. Fetch attestation from Iris (supports both EVM and Solana sources)
+        const attestationData = await fetchAttestationUniversal(sourceChainId, burnTxHash);
 
         if (!attestationData) {
           return {
