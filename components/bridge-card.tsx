@@ -304,6 +304,9 @@ export function BridgeCard({
     (c) => c.id === 8453 || c.id === 84532
   )?.id;
 
+  // Track if user has explicitly changed the source chain
+  const userChangedSourceRef = useRef(false);
+
   // Sync source chain to wallet chain ONLY when wallet chain actually changes
   // Don't override if user explicitly selected a different chain (like Solana)
   useEffect(() => {
@@ -313,12 +316,20 @@ export function BridgeCard({
     // Only sync if wallet chain changed (not on every sourceChainId change)
     if (walletChainId && walletChainId !== prevWalletChain && evmChainIds.has(walletChainId)) {
       setSourceChainId(walletChainId);
+      userChangedSourceRef.current = true;
       return;
     }
 
-    // Fallback: set default chain (Arbitrum) if no source chain selected
-    if (sourceChainId == null && chainOptions.length > 0) {
-      setSourceChainId(defaultSourceChainId ?? chainOptions[0].id);
+    // Set default chain (Arbitrum) when:
+    // 1. No source chain selected yet, OR
+    // 2. Default just became available and user hasn't explicitly changed it
+    if (defaultSourceChainId && !userChangedSourceRef.current) {
+      if (sourceChainId == null || sourceChainId !== defaultSourceChainId) {
+        setSourceChainId(defaultSourceChainId);
+      }
+    } else if (sourceChainId == null && chainOptions.length > 0) {
+      // Ultimate fallback if no default available
+      setSourceChainId(chainOptions[0].id);
     }
   }, [walletChainId, evmChainIds, chainOptions, sourceChainId, defaultSourceChainId]);
 
@@ -626,6 +637,9 @@ export function BridgeCard({
   );
 
   const handleSwitchChain = async (chainIdValue: string) => {
+    // Mark that user has explicitly changed the source chain
+    userChangedSourceRef.current = true;
+
     // Check if this is a Solana chain (string identifier)
     if (chainIdValue.startsWith("Solana")) {
       // For Solana chains, just update the source chain state
