@@ -148,14 +148,30 @@ export const getSolanaNativeBalance = async (
 };
 
 /**
- * Validate a Solana address (Base58 public key)
+ * Validate a Solana wallet address using ed25519 curve validation.
+ * Uses PublicKey.isOnCurve() to ensure the address is a valid wallet (not a PDA).
+ *
+ * - Returns true for wallet addresses (generated from Keypair, on-curve)
+ * - Returns false for PDAs (program-derived addresses, off-curve)
+ * - Throws are caught and return false for invalid Base58 strings
+ *
  * @param address - The address string to validate
  */
 export const isValidSolanaAddress = (address: string): boolean => {
+  if (!address || typeof address !== "string") {
+    return false;
+  }
+
+  const trimmed = address.trim();
+
   try {
-    new PublicKey(address);
-    return true;
+    // isOnCurve validates:
+    // 1. Valid Base58 encoding
+    // 2. Decodes to 32 bytes
+    // 3. Is a valid point on the ed25519 curve (real wallet, not a PDA)
+    return PublicKey.isOnCurve(trimmed);
   } catch {
+    // Invalid Base58 or other parsing error
     return false;
   }
 };

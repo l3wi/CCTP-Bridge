@@ -290,6 +290,59 @@ export interface ReceiveMessageParams {
 }
 
 // =============================================================================
+// Estimation Types
+// =============================================================================
+
+/** Fee item in bridge estimate */
+export interface EstimateFee {
+  /** Fee amount in USDC (e.g., "0.000050") */
+  amount: string;
+  /** Fee type - CCTP only has protocol fees */
+  type: "protocol";
+}
+
+/** Result from bridge fee estimation */
+export interface BridgeEstimate {
+  /** Protocol fees (only for fast transfers) */
+  fees: EstimateFee[];
+  /** Gas fees - empty for CCTP (no gas to user) */
+  gasFees: [];
+  /** Amount recipient will receive after fees */
+  receivedAmount: string;
+  /** Human-readable time estimate (e.g., "~20 seconds") */
+  estimatedTime: string;
+  /** Transfer speed this estimate is for */
+  speed: TransferSpeed;
+  /** Source chain CCTP domain */
+  sourceDomain: number;
+  /** Destination chain CCTP domain */
+  destinationDomain: number;
+}
+
+/** Parameters for estimate function */
+export interface EstimateParams {
+  sourceChainId: ChainId;
+  destinationChainId: ChainId;
+  /** Amount in USDC (e.g., "10.50") */
+  amount: string;
+  /** Transfer speed - defaults to "fast" */
+  speed?: TransferSpeed;
+}
+
+/** Error codes for estimation failures */
+export type EstimateErrorCode =
+  | "UNSUPPORTED_CHAIN"
+  | "AMOUNT_TOO_SMALL"
+  | "NETWORK_ERROR"
+  | "INVALID_AMOUNT";
+
+/** Error returned when estimation fails */
+export interface EstimateError {
+  code: EstimateErrorCode;
+  message: string;
+}
+
+// =============================================================================
 // Re-exports for convenience
 // =============================================================================
 

@@ -31,13 +31,13 @@ export default function Home() {
         <WalletConnect />
       </div>
 
-      <div className="w-full max-w-xl pt-5">
+      <div className="w-full max-w-xl pt-16 md:pt-5 pb-12 md:pb-0">
         {/* Floating Header */}
         <div className="mb-4">
           <h1 className="relative inline-block text-4xl font-bold text-white pb-2 ">
             CCTP Bridge
-            <span className="hidden md:block absolute text-xs text-blue-500 -top-3 -right-15 transform rotate-15 bg-slate-800/50 px-2 py-1 rounded-md">
-              {`Now using v2!`}
+            <span className="hidden md:block absolute text-xs text-blue-500 -top-[7px] -right-[70px] transform rotate-15 bg-slate-800/50 px-2 py-1 rounded-md">
+              {`Now with Solana!`}
             </span>
           </h1>
 

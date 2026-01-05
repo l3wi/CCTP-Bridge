@@ -21,7 +21,7 @@ import {
   useSwitchChain,
   useWalletClient,
 } from "wagmi";
-import { Chain, formatUnits } from "viem";
+import { Chain } from "viem";
 import {
   validateBridgeParams,
   validateAmount,
@@ -33,10 +33,10 @@ import {
   LocalTransaction,
   ChainId,
   getChainType,
-  isSolanaChain,
 } from "@/lib/types";
 import { useCrossEcosystemBridge } from "@/lib/hooks/useCrossEcosystemBridge";
-import { createSolanaAdapter } from "@/lib/solanaAdapter";
+import { estimateBridgeFee } from "@/lib/cctp/estimate";
+import type { BridgeEstimate } from "@/lib/cctp/types";
 import { useBalance } from "@/lib/hooks/useBalance";
 import { useSolanaBalance } from "@/lib/hooks/useSolanaBalance";
 import { useWallet } from "@solana/wallet-adapter-react";
@@ -52,22 +52,14 @@ import SolanaConnectGuard from "@/components/guards/SolanaConnectGuard";
 import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 import { TransferSpeed } from "@circle-fin/bridge-kit";
 import {
-  createReadonlyAdapter,
   getBridgeChainByIdUniversal,
   getCctpConfirmationsUniversal,
-  getBridgeKit,
-  resolveBridgeChain,
   resolveBridgeChainUniversal,
   getAllSupportedChains,
   getProviderFromWalletClient,
-  getChainName,
 } from "@/lib/bridgeKit";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
-
-type BridgeEstimateResult = Awaited<
-  ReturnType<ReturnType<typeof getBridgeKit>["estimate"]>
->;
 
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
@@ -452,6 +444,7 @@ export function BridgeCard({
         userAddress: address,
         isCustomAddress: diffWallet,
         targetAddress,
+        targetChainType: targetChainType ?? undefined,
       }),
     [
       amount,
@@ -462,6 +455,7 @@ export function BridgeCard({
       address,
       diffWallet,
       targetAddress,
+      targetChainType,
     ]
   );
 
@@ -493,23 +487,16 @@ export function BridgeCard({
     return hasWalletForSource && isSourceChainSynced && (!!targetChain || !!targetChainId) && !!amount;
   }, [sourceChainType, solanaWallet.connected, chain, isSourceChainSynced, targetChain, targetChainId, amount]);
 
-  // Can we estimate via SDK?
-  // SDK requires adapters for BOTH source and destination
-  // - EVM chains: Can use readonly adapter (no wallet needed)
-  // - Solana chains: Requires connected wallet (no readonly mode)
+  // Can we estimate? No wallet required with custom estimate function
   const hasSolanaWallet = solanaWallet.connected && !!solanaWallet.wallet?.adapter;
   const canEstimate =
     amountForEstimate.isValid &&
     chainSelectionValid &&
     activeSourceChainId != null &&
-    targetChainId != null &&
-    // If source is Solana, need wallet; EVM always works
-    (sourceChainType !== "solana" || hasSolanaWallet) &&
-    // If target is Solana, need wallet; EVM always works
-    (targetChainType !== "solana" || hasSolanaWallet);
+    targetChainId != null;
 
   const estimateBridge = useCallback(
-    async (transferSpeed: TransferSpeed): Promise<BridgeEstimateResult> => {
+    async (transferSpeed: TransferSpeed): Promise<BridgeEstimate> => {
       const sourceId = sourceChainId ?? chain?.id;
       const targetId = targetChainId;
 
@@ -517,34 +504,14 @@ export function BridgeCard({
         throw new Error("Bridge parameters incomplete");
       }
 
-      const sourceChainDef = resolveBridgeChainUniversal(sourceId);
-      const destinationChainDef = resolveBridgeChainUniversal(targetId);
-
-      // Create source adapter based on chain type
-      const sourceAdapter = isSolanaChain(sourceId)
-        ? await createSolanaAdapter(solanaWallet.wallet!.adapter)
-        : await createReadonlyAdapter(sourceId as number);
-
-      // Create destination adapter based on chain type
-      const destAdapter = isSolanaChain(targetId)
-        ? await createSolanaAdapter(solanaWallet.wallet!.adapter)
-        : await createReadonlyAdapter(targetId as number);
-
-      return getBridgeKit().estimate({
-        from: {
-          adapter: sourceAdapter,
-          chain: sourceChainDef as Parameters<typeof getBridgeKit>["0"] extends undefined ? never : any,
-        },
-        to: {
-          adapter: destAdapter,
-          chain: destinationChainDef as Parameters<typeof getBridgeKit>["0"] extends undefined ? never : any,
-        },
-        amount: formatUnits(amount.bigInt, 6),
-        token: "USDC",
-        config: { transferSpeed },
+      return estimateBridgeFee({
+        sourceChainId: sourceId,
+        destinationChainId: targetId,
+        amount: amount.str,
+        speed: transferSpeed === TransferSpeed.FAST ? "fast" : "standard",
       });
     },
-    [sourceChainId, targetChainId, amount, chain?.id, solanaWallet.wallet]
+    [sourceChainId, targetChainId, amount, chain?.id]
   );
 
   const {
@@ -552,7 +519,7 @@ export function BridgeCard({
     isFetching: isStandardEstimating,
     error: standardEstimateError,
     isError: isStandardEstimateError,
-  } = useQuery<BridgeEstimateResult>({
+  } = useQuery<BridgeEstimate>({
     queryKey: [
       "bridge-estimate",
       sourceChainId,
@@ -571,7 +538,7 @@ export function BridgeCard({
     isFetching: isFastEstimating,
     error: fastEstimateError,
     isError: isFastEstimateError,
-  } = useQuery<BridgeEstimateResult>({
+  } = useQuery<BridgeEstimate>({
     queryKey: [
       "bridge-estimate",
       sourceChainId,
@@ -606,7 +573,7 @@ export function BridgeCard({
   }, [fastEstimateError, isFastEstimateError, toast]);
 
   const getTotalProtocolFee = useCallback(
-    (estimate?: BridgeEstimateResult | null) => {
+    (estimate?: BridgeEstimate | null) => {
       if (!estimate?.fees) return 0;
       return estimate.fees.reduce(
         (acc, fee) => acc + (fee.amount ? Number(fee.amount) : 0),
@@ -915,19 +882,15 @@ export function BridgeCard({
   const getEstimateLabels = useCallback(
     (
       speed: TransferSpeed,
-      estimate: BridgeEstimateResult | null | undefined,
+      estimate: BridgeEstimate | null | undefined,
       isEstimating: boolean
     ) => {
       const feeTotal = getTotalProtocolFee(estimate);
-      const needsSolanaWallet = sourceChainType === "solana" || targetChainType === "solana";
+      // Estimates no longer require wallet connection
       const blockedEstimateLabel = !amountForEstimate.isValid
         ? "Complete the form"
-        : !isSourceChainSynced
-        ? "Switch wallet"
         : !chainSelectionValid
         ? "Select chains"
-        : needsSolanaWallet && !hasSolanaWallet
-        ? "Connect Solana"
         : null;
 
       const feeLabel = !hasAmountInput
@@ -956,12 +919,8 @@ export function BridgeCard({
     },
     [
       getTotalProtocolFee,
-      sourceChainType,
-      targetChainType,
       amountForEstimate.isValid,
-      isSourceChainSynced,
       chainSelectionValid,
-      hasSolanaWallet,
       hasAmountInput,
       getYouWillReceive,
       getTransferSpeedLabel,
@@ -1040,52 +999,52 @@ export function BridgeCard({
           <table className="w-full">
             <thead>
               <tr className="border-b border-slate-800">
-                <th className="text-left py-1.5 pr-3 text-slate-400 font-normal text-sm"></th>
+                <th className="text-left py-1 pr-3 text-slate-400 font-normal text-sm"></th>
                 {fastTransferSupported && (
-                  <th className="text-center py-1.5 px-3">
+                  <th className="text-center py-1 px-3">
                     <span className="text-white text-sm font-semibold">Fast Bridge</span>
                   </th>
                 )}
-                <th className="text-center py-1.5 px-3">
+                <th className="text-center py-1 px-3">
                   <span className="text-white text-sm font-semibold">Standard Bridge</span>
                 </th>
               </tr>
             </thead>
             <tbody>
               <tr className="border-b border-slate-800">
-                <td className="py-1.5 pr-3 text-slate-400 text-sm">Estimate speed</td>
+                <td className="py-1 pr-3 text-slate-400 text-sm">Estimate speed</td>
                 {fastTransferSupported && (
-                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
                 )}
-                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-1.5 pr-3 text-slate-400 text-sm">Confirmation</td>
+                <td className="py-1 pr-3 text-slate-400 text-sm">Confirmation</td>
                 {fastTransferSupported && (
-                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
                 )}
-                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-1.5 pr-3 text-slate-400 text-sm">Fee amount</td>
+                <td className="py-1 pr-3 text-slate-400 text-sm">Fee amount</td>
                 {fastTransferSupported && (
-                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
                 )}
-                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
               </tr>
               <tr className="border-b border-slate-800">
-                <td className="py-1.5 pr-3 text-slate-400 text-sm">You will receive</td>
+                <td className="py-1 pr-3 text-slate-400 text-sm">You will receive</td>
                 {fastTransferSupported && (
-                  <td className="py-1.5 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
+                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
                 )}
-                <td className="py-1.5 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
+                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
               </tr>
               <tr>
-                <td className="pt-3 pr-3"></td>
+                <td className="pt-2 pr-3"></td>
                 {fastTransferSupported && (
-                  <td className="pt-3 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
+                  <td className="pt-2 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
                 )}
-                <td className="pt-3 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
+                <td className="pt-2 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
               </tr>
             </tbody>
           </table>
@@ -1238,7 +1197,7 @@ export function BridgeCard({
   return (
     <>
       <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 space-y-4">
+        <CardContent className="p-4 md:p-6 space-y-4">
           {/* Chain Selectors */}
           <div className="flex items-center gap-3 md:flex-row flex-col">
             <div className="w-full md:flex-1">
@@ -1378,8 +1337,8 @@ export function BridgeCard({
           </div>
 
           {/* Amount Input */}
-          <div className="bg-slate-900/50 rounded-lg p-6">
-            <div className="flex justify-between items-center mb-4">
+          <div className="bg-slate-900/50 rounded-lg px-4 py-3">
+            <div className="flex justify-between items-center mb-2">
               <Label className="text-sm text-slate-300">Amount</Label>
               <div className="flex items-center gap-2">
                 {showBalanceLoader ? (
