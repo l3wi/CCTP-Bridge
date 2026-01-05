@@ -163,67 +163,75 @@ export function useDirectMintSolana() {
           { chain: destinationChainId }
         );
 
-        // 5. Execute the transaction
+        // 5. Execute the transaction with timeout + polling fallback
+        // The SDK's execute() uses WebSocket for confirmation which can fail.
+        // We use a short timeout and fall back to HTTP polling via simulation.
         toast({
           title: "Minting USDC",
-          description: "Executing mint transaction on Solana...",
+          description: "Please approve the transaction in your wallet...",
         });
 
-        const txSignature = await preparedRequest.execute();
+        const EXECUTE_TIMEOUT_MS = 15000; // 15s timeout for execute (signing + initial confirmation attempt)
+        const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds
+        const MAX_POLL_TIME_MS = 45000; // Poll for max 45 seconds
 
-        // 6. Update the transaction in store
-        const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
-        const explorerUrl = getExplorerTxUrlUniversal(
-          destinationChainId,
-          txSignature,
-          BRIDGEKIT_ENV
-        );
+        let txSignature: string | undefined;
 
-        updateTransaction(burnTxHash as `0x${string}`, {
-          claimHash: txSignature,
-          status: "claimed",
-          bridgeState: "success",
-          completedAt: new Date(),
-          steps: updatedSteps,
-        });
+        // Try execute with timeout - it may fail on WebSocket confirmation
+        try {
+          const executePromise = preparedRequest.execute();
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("CONFIRMATION_TIMEOUT")), EXECUTE_TIMEOUT_MS)
+          );
+          txSignature = await Promise.race([executePromise, timeoutPromise]);
+        } catch (executeError) {
+          const execErrorMsg = executeError instanceof Error ? executeError.message : String(executeError);
+          const execErrorLogs = (executeError as { logs?: string[] })?.logs ?? [];
+          const execLogsText = execErrorLogs.join("\n");
 
-        toast({
-          title: "USDC Claimed!",
-          description: explorerUrl
-            ? "Your USDC has been minted successfully on Solana."
-            : `Mint tx: ${txSignature.slice(0, 20)}...`,
-        });
+          // If user rejected, bail immediately
+          if (
+            /user rejected/i.test(execErrorMsg) ||
+            /user denied/i.test(execErrorMsg) ||
+            /rejected the request/i.test(execErrorMsg)
+          ) {
+            return { success: false, error: "Transaction cancelled by user" };
+          }
 
-        return { success: true, mintTxHash: txSignature };
-      } catch (error: unknown) {
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
+          // Check if nonce already used (transaction already claimed)
+          // CCTP logs "Allocate: account Address {...} already in use" when nonce consumed
+          if (
+            /already in use/i.test(execErrorMsg) ||
+            /already in use/i.test(execLogsText) ||
+            /"Custom":\s*0\b/.test(execErrorMsg)
+          ) {
+            const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+            updateTransaction(burnTxHash as `0x${string}`, {
+              status: "claimed",
+              bridgeState: "success",
+              completedAt: new Date(),
+              steps: updatedSteps,
+            });
 
-        // Extract logs from Solana simulation errors if available
-        const errorLogs = (error as { logs?: string[] })?.logs ?? [];
-        const logsText = errorLogs.join("\n");
+            toast({
+              title: "Already Claimed",
+              description: "This transfer was already minted. Check your wallet for the USDC.",
+            });
 
-        // Check for user rejection
-        if (
-          /user rejected/i.test(errorMessage) ||
-          /user denied/i.test(errorMessage) ||
-          /rejected the request/i.test(errorMessage)
-        ) {
-          return { success: false, error: "Transaction cancelled by user" };
+            return { success: true, alreadyMinted: true };
+          }
+
+          // For any other error (timeout, WebSocket failure, etc.), fall through to polling
+          console.log("Execute failed/timed out, starting confirmation polling:", execErrorMsg);
         }
 
-        // Check for nonce already used (already minted)
-        // CCTP logs "Allocate: account Address {...} already in use" when nonce consumed
-        // Also check Custom:0 error code as fallback
-        if (
-          /nonce already used/i.test(errorMessage) ||
-          /already been processed/i.test(errorMessage) ||
-          /already in use/i.test(errorMessage) ||
-          /already in use/i.test(logsText) ||
-          /"Custom":\s*0\b/.test(errorMessage)
-        ) {
-          const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+        // If execute succeeded, we're done
+        if (txSignature) {
+          const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
+          const explorerUrl = getExplorerTxUrlUniversal(destinationChainId, txSignature, BRIDGEKIT_ENV);
+
           updateTransaction(burnTxHash as `0x${string}`, {
+            claimHash: txSignature,
             status: "claimed",
             bridgeState: "success",
             completedAt: new Date(),
@@ -231,30 +239,26 @@ export function useDirectMintSolana() {
           });
 
           toast({
-            title: "Already Claimed",
-            description:
-              "This transfer was already minted. Check your wallet for the USDC.",
+            title: "USDC Claimed!",
+            description: explorerUrl
+              ? "Your USDC has been minted successfully on Solana."
+              : `Mint tx: ${txSignature.slice(0, 20)}...`,
           });
 
-          return { success: true, alreadyMinted: true };
+          return { success: true, mintTxHash: txSignature };
         }
 
-        // Handle block height exceeded / transaction expiration / WebSocket malformed response
-        // These errors indicate confirmation polling failed, but transaction may have succeeded
-        // Use simulation to verify if the mint actually succeeded
-        if (
-          /block height exceeded/i.test(errorMessage) ||
-          /has expired/i.test(errorMessage) ||
-          /transaction expired/i.test(errorMessage) ||
-          /response malformed/i.test(errorMessage) ||
-          /must include either.*result.*or.*error/i.test(errorMessage)
-        ) {
-          toast({
-            title: "Verifying transaction",
-            description: "Confirmation timed out. Checking if mint succeeded...",
-          });
+        // 6. Poll for confirmation using simulation (HTTP-based, no WebSocket)
+        toast({
+          title: "Confirming transaction",
+          description: "Waiting for confirmation...",
+        });
 
-          // Use simulation to check if nonce is already used
+        const pollStartTime = Date.now();
+        while (Date.now() - pollStartTime < MAX_POLL_TIME_MS) {
+          // Wait before checking
+          await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+
           const statusCheck = await checkSolanaMintStatus(
             sourceChainId as number,
             destinationChainId,
@@ -268,7 +272,7 @@ export function useDirectMintSolana() {
           );
 
           if (statusCheck.alreadyMinted) {
-            // Mint succeeded despite timeout error!
+            // Transaction confirmed!
             const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
             updateTransaction(burnTxHash as `0x${string}`, {
               status: "claimed",
@@ -285,16 +289,26 @@ export function useDirectMintSolana() {
             return { success: true, alreadyMinted: true };
           }
 
-          // Mint didn't complete - suggest retry
-          return {
-            success: false,
-            error: statusCheck.canMint
-              ? "Transaction may not have completed. Please try claiming again."
-              : "Could not verify transaction. Please check your Solana wallet.",
-          };
+          // If simulation shows it can still be minted, keep polling
+          if (!statusCheck.canMint && statusCheck.error) {
+            // Simulation failed for another reason, stop polling
+            console.error("Simulation check failed:", statusCheck.error);
+            break;
+          }
         }
 
-        console.error("Solana direct mint failed:", error);
+        // Polling timed out without confirmation
+        return {
+          success: false,
+          error: "Transaction confirmation timed out. Please check your wallet and try again if needed.",
+        };
+      } catch (error: unknown) {
+        // This catches errors from preparation phase (chain resolution, adapter creation, prepareAction)
+        // Execute errors are handled in the try block above with polling fallback
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+
+        console.error("Solana mint preparation failed:", error);
         return {
           success: false,
           error: errorMessage.slice(0, 200),

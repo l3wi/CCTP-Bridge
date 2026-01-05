@@ -803,6 +803,14 @@ export function BridgingState({
     [derivedSteps]
   );
 
+  const hasBurnCompleted = useMemo(
+    () =>
+      derivedSteps.some(
+        (step) => step.id === "burn" && (step.state === "success" || step.state === "noop")
+      ),
+    [derivedSteps]
+  );
+
   const hasMintCompleted = useMemo(
     () =>
       derivedSteps.some((step) => step.id === "mint" && step.state === "success"),
@@ -821,6 +829,12 @@ export function BridgingState({
     // If attestation is ready (from simulation check), show button
     if (mintSimulation.attestationReady) return true;
 
+    // For Solana destinations: show claim button if burn is complete
+    // useDirectMintSolana will fetch attestation and handle errors gracefully
+    if (destinationChainId && isSolanaChain(destinationChainId) && hasBurnCompleted) {
+      return true;
+    }
+
     // Fallback: show if attestation step is success (original behavior)
     return hasFetchAttestation;
   }, [
@@ -828,7 +842,9 @@ export function BridgingState({
     mintSimulation.canMint,
     mintSimulation.attestationReady,
     hasMintCompleted,
+    hasBurnCompleted,
     hasFetchAttestation,
+    destinationChainId,
   ]);
 
   if (displayResult) {
