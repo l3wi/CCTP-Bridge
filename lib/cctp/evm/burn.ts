@@ -248,13 +248,14 @@ export async function calculateMaxFee(
   // Calculate fee: (baseFeeInBps * amount + 9999) / 10000 (ceiling division)
   const baseFee = (baseFeeInBps * amount + 9999n) / 10000n;
 
+  // Safety check BEFORE adding buffer - prevents unexpected failures for small amounts
+  // Check if fee with 10% buffer would exceed amount
+  if ((baseFee * 11n) / 10n >= amount) {
+    throw new Error("Transfer amount too small for fast transfer fee");
+  }
+
   // Add 10% buffer for fee fluctuations
   const maxFee = baseFee + baseFee / 10n;
-
-  // Safety check: ensure fee doesn't exceed amount
-  if (maxFee >= amount) {
-    throw new Error("Calculated fee exceeds transfer amount");
-  }
 
   return maxFee;
 }

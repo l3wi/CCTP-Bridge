@@ -254,13 +254,37 @@ export async function sendTransactionNoConfirm(
 ): Promise<string> {
   const rawTransaction = signedTransaction.serialize();
 
-  // Send without confirming - returns immediately
-  const signature = await connection.sendRawTransaction(rawTransaction, {
-    skipPreflight: false, // Still do preflight simulation to catch errors
-    preflightCommitment: "confirmed",
-  });
+  try {
+    // Send without confirming - returns immediately
+    const signature = await connection.sendRawTransaction(rawTransaction, {
+      skipPreflight: false, // Still do preflight simulation to catch errors
+      preflightCommitment: "confirmed",
+    });
 
-  return signature;
+    return signature;
+  } catch (error) {
+    // Provide user-friendly messages for common preflight errors
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (message.includes("insufficient funds") || message.includes("Insufficient")) {
+      throw new Error("Insufficient SOL for transaction fees");
+    }
+    if (message.includes("insufficient lamports")) {
+      throw new Error("Insufficient SOL balance for rent deposit");
+    }
+    if (message.includes("TokenAccountNotFoundError") || message.includes("could not find account")) {
+      throw new Error("USDC token account not found. Please ensure you have USDC in your wallet.");
+    }
+    if (message.includes("InsufficientFunds") || message.includes("insufficient token")) {
+      throw new Error("Insufficient USDC balance for this transfer");
+    }
+    if (message.includes("blockhash not found") || message.includes("BlockhashNotFound")) {
+      throw new Error("Transaction expired. Please try again.");
+    }
+
+    // Re-throw with original message for unhandled errors
+    throw error;
+  }
 }
 
 // =============================================================================
