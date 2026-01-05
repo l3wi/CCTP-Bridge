@@ -328,15 +328,15 @@ Support displaying transactions with Solana chains and addresses.
 ---
 
 ## Testing Checklist
-- [ ] EVM to EVM bridging still works
-- [ ] EVM to Solana bridging works
-- [ ] Solana to EVM bridging works
-- [ ] Solana to Solana (devnet↔mainnet) works
-- [ ] Balance displays correctly for both ecosystems
-- [ ] Manual destination address entry works
-- [ ] Transaction history shows correct chain icons
-- [ ] Explorer links work for both ecosystems
-- [ ] Testnet mode uses Devnet, Mainnet mode uses Mainnet-beta
+- [x] EVM to EVM bridging still works ✅
+- [x] EVM to Solana bridging works ✅
+- [x] Solana to EVM bridging works ✅
+- [ ] Solana to Solana (devnet↔mainnet) works (not implemented - no cross-cluster bridging support)
+- [x] Balance displays correctly for both ecosystems ✅
+- [x] Manual destination address entry works ✅
+- [x] Transaction history shows correct chain icons ✅
+- [x] Explorer links work for both ecosystems ✅
+- [x] Testnet mode uses Devnet, Mainnet mode uses Mainnet-beta ✅
 
 ---
 
@@ -714,17 +714,21 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 ## Remaining Work
 
 ### Testing Checklist
-- [x] EVM to EVM bridging still works (regression test)
-- [x] EVM → Solana: Shows "Claim X USDC" when Solana wallet connected (not "Switch chain")
-- [x] EVM → Solana: Clicking "Claim" executes mint via `useDirectMintSolana`
-- [ ] EVM → Solana: Block height timeout correctly verifies mint status
-- [x] Solana → EVM: Add transaction modal accepts Solana source chains
-- [x] Solana → EVM: Claim flow works with Solana source and EVM destination
-- [x] Solana → EVM: History badge updates correctly after claiming
-- [x] Balance display switches correctly when changing source chain
-- [x] Verify transaction history displays Solana transactions correctly
-- [ ] Test with Phantom wallet
-- [x] Test with Solflare wallet
+- [x] EVM to EVM bridging still works (regression test) ✅
+- [x] EVM → Solana: Shows "Claim X USDC" when Solana wallet connected (not "Switch chain") ✅
+- [x] EVM → Solana: Clicking "Claim" executes mint via `useDirectMintSolana` ✅
+- [x] EVM → Solana: Block height timeout correctly verifies mint status ✅
+- [x] EVM → Solana: Direct mint using `lib/solana/cctpMint.ts` (Step 33) ✅
+- [x] EVM → Solana: Full end-to-end test with direct mint ✅
+- [x] Solana → EVM: Add transaction modal accepts Solana source chains ✅
+- [x] Solana → EVM: Claim flow works with Solana source and EVM destination ✅
+- [x] Solana → EVM: History badge updates correctly after claiming ✅
+- [x] Balance display switches correctly when changing source chain ✅
+- [x] Verify transaction history displays Solana transactions correctly ✅
+- [x] Test with Phantom wallet ✅
+- [x] Test with Solflare wallet ✅
+
+**All bridging directions working:** EVM↔EVM, EVM→Solana, Solana→EVM
 
 ### Step 28: Handle WebSocket Malformed Response Error (Completed)
 - **Issue**: `signatureSubscribe` fails with "Server response malformed. Response must include either 'result' or 'error', but not both"
@@ -798,5 +802,432 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 
 ---
 
+### Step 31: Direct Burn for Solana Sources (Completed)
+- **Issue**: Bridge Kit SDK's `kit.bridge()` hangs for 60+ seconds when bridging FROM Solana due to WebSocket confirmation failures ("Server response malformed" error)
+- **Root Cause**: The SDK uses WebSocket `signatureSubscribe` for transaction confirmation, which fails with Solana's RPC nodes returning malformed responses
+- **Impact**: Terrible UX - users see UI frozen for 60 seconds before getting an error, even when the transaction succeeds
+
+**Solution**: Bypass `kit.bridge()` for Solana sources. Use the adapter's `prepareAction("cctp.v2.depositForBurn", ...)` directly - same pattern as existing `useDirectMintSolana.ts`.
+
+**Benefits:**
+- Immediate UI feedback after signing (no 60s hang)
+- Full control over transaction flow
+- Consistent with existing direct mint pattern
+- Bridge Kit only used for chain definitions (which works reliably)
+
+**Files changed:**
+
+**`lib/hooks/useDirectBurnSolana.ts` (NEW):**
+- New hook for direct Solana burn using `prepareAction("cctp.v2.depositForBurn", ...)`
+- `formatMintRecipient()` helper: pads EVM addresses to 32 bytes, converts Solana pubkeys to hex
+- `executeBurn(sourceChainId, destinationChainId, amount, destinationAddress, transferSpeed)` function
+- Returns immediately after transaction is signed (no confirmation waiting)
+- Transfer speed parameters: fast (maxFee=1000000, minFinality=3) vs standard (maxFee=0, minFinality=32)
+
+**`lib/hooks/useCrossEcosystemBridge.ts`:**
+- Added Solana source path that uses `executeDirectBurn` instead of `kit.bridge()`
+- For Solana sources: immediate `onPendingHash` callback, builds result with burn step complete, returns immediately
+- EVM sources continue using `kit.bridge()` (works reliably)
+- Removed debug logging that was added during investigation
+- Simplified destination adapter creation logic for cleaner TypeScript types
+
+**`components/crypto.tsx`:**
+- Added BigInt serialization polyfill (`BigInt.prototype.toJSON`) to fix "Do not know how to serialize a BigInt" error from Solana/Bridge Kit SDK
+
+**Testing plan:**
+1. Bridge Solana Mainnet → Arbitrum (fast transfer)
+2. Bridge Solana Mainnet → Arbitrum (standard transfer)
+3. Verify UI transitions immediately after signing
+4. Verify transaction appears in history
+5. Verify claim flow works on destination
+6. Test user rejection (cancel in wallet)
+7. Verify EVM → EVM bridging still works (regression)
+
+---
+
+### Step 32: Bypass Bridge Kit SDK for Solana Burns (In Progress)
+- **Issue**: Bridge Kit SDK's `prepareAction().execute()` also waits for WebSocket confirmation internally, causing 60s hangs
+- **Root Cause**: The SDK's `execute()` method always calls `sendAndConfirmTransaction()` which uses WebSocket confirmation
+- **Solution**: Build CCTP transaction ourselves using @coral-xyz/anchor, send without confirmation
+
+**Implementation:**
+
+**`lib/solana/cctpBurn.ts` (NEW):**
+- Direct CCTP v2 transaction builder bypassing Bridge Kit
+- Uses Anchor to load Token Messenger program IDL from chain
+- Derives all required PDAs (senderAuthority, tokenMessenger, tokenMinter, etc.)
+- Builds `depositForBurn` instruction with proper accounts
+- `sendTransactionNoConfirm()` - sends via `sendRawTransaction()` which returns immediately
+- `getCctpDomain()` - maps chain IDs to CCTP domain IDs
+- `formatMintRecipient()` - formats EVM/Solana addresses as 32-byte PublicKey
+
+**`lib/hooks/useDirectBurnSolana.ts` (REWRITTEN):**
+- No longer uses Bridge Kit's `prepareAction` or `execute`
+- Uses our own `buildDepositForBurnTransaction()` and `sendTransactionNoConfirm()`
+- Signs with wallet, partial signs with generated messageAccount keypair
+- Returns immediately after sending - no 60s hang
+
+**Key changes:**
+- Transaction building: Anchor `program.methods.depositForBurn(...).accounts(...).instruction()`
+- Sending: `connection.sendRawTransaction()` instead of `sendAndConfirmTransaction()`
+- No WebSocket dependency for confirmation
+
+**Testing plan:**
+1. Test Solana → EVM bridge (mainnet or devnet)
+2. Verify transaction appears on Solana Explorer immediately
+3. Verify UI transitions to progress view
+4. Verify attestation appears on Iris
+5. Complete claim on destination chain
+
+---
+
+## Step 31: Fix Attestation Polling for Solana Sources
+
+**Problem:** After implementing direct CCTP burn for Solana sources, the attestation polling wasn't triggering. Bridge Kit SDK normally handles attestation polling internally, but since we bypass it for Solana burns, no polling occurred. The existing polling in `bridging-state.tsx` had a 5-minute delay (`POLL_START_DELAY_MS`) before starting.
+
+**Solution:** Modified polling logic to start immediately for Solana sources while keeping the 5-minute delay for EVM sources (where Bridge Kit handles initial polling).
+
+**`components/bridging-state.tsx` changes:**
+1. Added `isSourceSolana` memoized check to detect Solana source chains
+2. Modified `shouldPoll` to skip the 5-minute delay for Solana sources:
+   - Solana sources: Start polling immediately (we bypass Bridge Kit)
+   - EVM sources: Wait 5 minutes (Bridge Kit handles initial polling)
+3. Added attestation step update when attestation becomes ready (before mint)
+
+**`lib/simulation.ts` changes:**
+1. Updated `checkMintReadiness` to accept `number | string` for sourceChainId
+2. Changed from `fetchAttestation` (EVM-only) to `fetchAttestationUniversal` (supports both)
+3. Now correctly fetches attestation for Solana source transactions
+
+**Flow for Solana → EVM bridges:**
+1. User submits burn → Direct CCTP transaction sent
+2. UI immediately transitions to progress view
+3. Polling starts immediately (no 5-min wait)
+4. Iris API queried for attestation status
+5. When attestation ready → Attestation step updated to success
+6. Claim button appears
+7. User clicks claim → EVM mint executed
+
+---
+
+## Step 32: Direct EVM Approval and Burn
+
+**Goal:** Bypass Bridge Kit SDK for EVM source chains to match the Solana direct burn pattern for consistency.
+
+**Design decisions:**
+- **Approval strategy**: Exact amount (safer, requires approval tx each bridge)
+- **Contract data source**: Import from `@circle-fin/bridge-kit/chains` (no hardcoding)
+
+### Files Created
+
+**`lib/evm/cctpBurn.ts` (NEW):**
+- `getTokenMessengerAddress(chainId)` - Get TokenMessenger v2 address from Bridge Kit chain definitions
+- `getUsdcAddress(chainId)` - Get USDC address from Bridge Kit chain definitions
+- `getCctpDomain(chainId)` - Get CCTP domain ID for any chain (EVM or Solana)
+- `checkAllowance(client, usdc, owner, spender)` - Read current USDC allowance
+- `buildApprovalData(usdc, spender, amount)` - Build ERC20 approve calldata
+- `buildDepositForBurnData(tokenMessenger, params)` - Build TokenMessenger.depositForBurn calldata
+- `formatMintRecipient(address, destChainId)` - Format address as 32-byte bytes32 (handles EVM and Solana)
+
+**`lib/hooks/useDirectBurnEvm.ts` (NEW):**
+- `useDirectBurnEvm()` hook with `executeBurn()` function
+- Flow: Check allowance → Approve if needed (wait for receipt) → Send burn (return immediately)
+- Returns `{ success, approvalTxHash?, burnTxHash?, error? }`
+
+### Files Modified
+
+**`lib/hooks/useCrossEcosystemBridge.ts`:**
+- Replaced `kit.bridge()` for EVM sources with `executeDirectBurnEvm()`
+- Same pattern as Solana: return immediately after burn tx sent
+- Steps include approval step only if approval was needed
+
+### Contract Details (from circle-fin packages)
+
+**TokenMessenger v2 addresses:**
+- Mainnet (all chains): `0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d`
+- Testnet (all chains): `0x8fe6b999dc680ccfdd5bf7eb0974218be2542daa`
+
+**ABIs:**
+```typescript
+// ERC20 (minimal)
+- approve(spender, amount) → bool
+- allowance(owner, spender) → uint256
+
+// TokenMessenger
+- depositForBurn(amount, destinationDomain, mintRecipient, burnToken) → nonce
+```
+
+### Flow for EVM → EVM/Solana bridges
+
+1. User submits bridge
+2. **Always** send approval tx for exact amount (wait for confirmation)
+3. Build depositForBurn calldata
+4. Send burn tx (return immediately, don't wait)
+5. UI transitions to progress view
+6. Polling starts for attestation (same as Solana sources)
+7. Claim button appears when attestation ready
+
+**Note:** We always send approval rather than checking allowance first. This avoids stale allowance issues where the burn tx would fail simulation.
+
+### Step 32 Fix: CCTP v2 ABI Mismatch
+
+**Issue discovered:** Burn transactions were reverting even with successful approval because we were using CCTP v1 ABI but calling CCTP v2 contracts.
+
+**Root cause:** CCTP v2 `depositForBurn` has 3 additional required parameters that v1 didn't have:
+- `destinationCaller` (bytes32) - Who can complete the mint (zeros = any caller)
+- `maxFee` (uint256) - Fee for Circle fast liquidity
+- `minFinalityThreshold` (uint32) - 1000 for FAST, 2000 for SLOW
+
+**Fix applied:**
+1. Updated `TOKEN_MESSENGER_ABI` with all 7 parameters
+2. Added `CCTP_V2_FINALITY` and `ZERO_BYTES32` constants
+3. Updated `buildDepositForBurnData` to include new params with sensible defaults
+4. Updated hook to pass `minFinalityThreshold` based on transfer speed
+
+### Step 32 Additional Fix: Polling for EVM Sources
+
+**Issue:** After fixing the v2 ABI, burns succeeded but attestation polling wasn't starting. The polling logic still had a 5-minute delay for EVM sources (assuming Bridge Kit handles internal polling).
+
+**Fix:** Updated `shouldPoll` in `bridging-state.tsx` to start polling immediately for ALL sources (both Solana and EVM), since we now use direct burn for both.
+
+### Step 32 Fix: Fast Transfer Fee (maxFee)
+
+**Issue:** Fast transfers were completing as standard transfers. The burn succeeded but LPs didn't fulfill.
+
+**Root cause:** We were setting `maxFee: 0n` by default. With zero fee, no liquidity provider will fulfill the fast transfer (no incentive).
+
+**Fix:**
+1. Added `fetchFastBurnFee()` - fetches fee from Circle's IRIS API
+2. Added `calculateMaxFee()` - calculates fee with 10% buffer for FAST, 0n for SLOW
+3. Updated `useDirectBurnEvm.ts` to calculate and pass `maxFee` before burn
+
+**IRIS API:** `https://iris-api.circle.com/v2/burn/USDC/fees/{sourceDomain}/{destDomain}`
+
+**Fee formula (from Bridge Kit):**
+```typescript
+baseFee = ceiling((baseFeeInBps * amount) / 10000)
+maxFee = baseFee + baseFee / 10  // 10% buffer
+```
+
+### Step 32 Fix: EVM → Solana UI Transition
+
+**Issue:** When bridging from EVM to Solana, the UI didn't transition to the pending BridgingState view like EVM→EVM.
+
+**Root cause:** The render condition `(bridgeTargetChain || targetChain) && amount && bridgeTransactionHash` failed for Solana destinations because:
+- `bridgeTargetChain` is a wagmi `Chain` object - only exists for EVM chains
+- For Solana destinations, this was `null`
+
+**Fix:**
+1. Added `bridgeTargetChainId` state to track target chain ID directly (works for both EVM and Solana)
+2. Updated render condition to `(bridgeTargetChain || bridgeTargetChainId || targetChain)`
+3. Updated `targetId` calculation to use `bridgeTargetChainId` first
+4. Get chain label from `chainOptionById` (works for both EVM and Solana)
+
+### Step 32 Status: ✅ Completed
+
+Testing results:
+- EVM → EVM bridging: Working with correct CCTP v2 ABI
+- EVM → Solana bridging: Now shows pending UI correctly
+- Approval tx followed by burn tx in sequence
+- Attestation polling starts immediately after burn
+- Fast transfers now calculate correct maxFee from IRIS API
+
+---
+
+### Step 33: Direct Solana Mint (EVM → Solana Claim) (Completed)
+
+**Issue:** EVM → Solana claim flow had two problems:
+1. Attestation step stayed "pending" even when attestation was complete
+2. Solana wallet didn't launch when clicking claim - Bridge Kit SDK adapter issues
+
+**Root cause:** The `useDirectMintSolana` hook was using Bridge Kit SDK's `prepareAction` and `execute`, which:
+1. Uses `connection.confirmTransaction()` internally - can use WebSocket subscriptions
+2. Had adapter compatibility issues with wallet provider types
+3. Waited for confirmation before returning (same 60s hang issue as burns)
+
+**Solution:** Bypass Bridge Kit SDK entirely for Solana mints. Build the CCTP `receiveMessage` transaction directly using Anchor, matching the exact implementation from `@circle-fin/adapter-solana`.
+
+**Investigation finding:** We explored whether to use `@circle-fin/adapter-solana` directly:
+- The adapter CAN be used independently without full Bridge Kit
+- BUT its `execute()` method still waits for confirmation via `confirmTransaction()`
+- `confirmTransaction()` can use WebSocket subscriptions (depends on RPC node)
+- **Decision:** Keep our direct implementation that returns immediately after `sendRawTransaction()`
+
+**Files created/modified:**
+
+**`lib/solana/cctpMint.ts` (NEW):**
+- Direct CCTP v2 receiveMessage transaction builder
+- Matches exact implementation from `@circle-fin/adapter-solana`
+- Key functions:
+  - `buildReceiveMessageTransaction()` - builds the receiveMessage instruction using Anchor
+  - `sendTransactionNoConfirm()` - sends without waiting for confirmation
+  - `checkSolanaNonceUsed()` - checks if mint already executed
+  - `deriveMintPdas()` - derives all required PDAs for receiveMessage
+  - `deriveUsedNoncePda()` - derives usedNonce PDA from eventNonce
+  - `extractEventNonceFromMessage()` - extracts 32-byte nonce from CCTP message
+
+**Key implementation details (matching Bridge Kit):**
+```typescript
+// usedNonce PDA derivation - uses raw 32-byte nonce buffer
+const [usedNoncePda] = PublicKey.findProgramAddressSync(
+  [Buffer.from("used_nonce"), nonceBuf],  // NOT "used_nonces"
+  MESSAGE_TRANSMITTER_PROGRAM_ID
+);
+
+// feeRecipient - fetched from on-chain tokenMessenger state
+const tokenMessengerState = await tokenMessengerProgram.account.tokenMessenger.fetch(pdas.tokenMessengerPda);
+const feeRecipient = tokenMessengerState.feeRecipient;
+
+// Remaining accounts include event authority + program ID
+remainingAccounts: [
+  ...standardAccounts,
+  { pubkey: pdas.eventAuthorityPda, ... },       // __event_authority PDA
+  { pubkey: TOKEN_MESSENGER_PROGRAM_ID, ... },   // program itself
+]
+```
+
+**`lib/hooks/useDirectMintSolana.ts` (REWRITTEN):**
+- Removed Bridge Kit SDK `createSolanaAdapter` and `prepareAction` usage
+- Uses `useConnection` hook from `@solana/wallet-adapter-react`
+- Builds transaction using `buildReceiveMessageTransaction()`
+- Signs with `solanaWallet.signTransaction()`
+- Sends with `sendTransactionNoConfirm()` - returns immediately
+- Pre-checks nonce to detect already-minted transfers
+
+**`components/bridging-state.tsx`:**
+- Added dedicated Solana attestation polling (separate from EVM simulation polling)
+- `shouldPollSolanaAttestation` memo - determines when to poll for Solana destinations
+- Polls `fetchAttestationUniversal()` and updates attestation step when complete
+- Stops polling when attestation is ready
+
+**Browser compatibility fixes:**
+- Added `writeBigUInt64LE()` helper - Node's Buffer methods not available in browser
+- Added `readBigUInt64LE()` helper for nonce bitmap reading
+- Added `writeUInt32LE()` helper for domain buffer
+
+**Benefits of direct implementation:**
+1. No WebSocket confirmation hangs - returns immediately after send
+2. No Bridge Kit SDK dependency for transactions
+3. Consistent with Solana burn implementation pattern
+4. Better error handling and debugging
+5. Full control over transaction flow
+
+---
+
+### Step 34: Fix InvalidMintRecipient Error for Solana Destinations (Completed)
+
+**Issue:** EVM → Solana claim failed with `InvalidMintRecipient` error:
+```
+Error Number: 6009. Error Message: Invalid mint recipient.
+Left: 7AF7sorSW6YAMgiD3etWuZVidDQKyGj8mwDdELbht2FR  (from message)
+Right: JAPgVAJQ6v6Vb2o5Uhx6GPdzhERPAWYRzQowCAM11LY8 (what we passed)
+```
+
+**Root cause:** When burning USDC on EVM to bridge to Solana, the `mintRecipient` encoded in the CCTP message must be the **Associated Token Account (ATA)**, not the wallet pubkey.
+
+Circle's SDK uses `getMintRecipientAccount()` which:
+- For EVM destinations: returns the wallet address directly
+- For Solana destinations: computes `getAssociatedTokenAddressSync(USDC_MINT, wallet_pubkey)`
+
+Our `formatMintRecipient()` was passing the wallet pubkey directly, causing a mismatch when the Solana CCTP program validated the mintRecipient.
+
+**Fix applied:**
+
+**`lib/evm/cctpBurn.ts`:**
+- Added imports for `@solana/web3.js` and `@solana/spl-token`
+- Added `SOLANA_USDC_MINT` constant with mainnet/devnet addresses
+- Updated `formatMintRecipient()` to compute ATA for Solana destinations:
+```typescript
+if (isSolanaChain(destinationChainId)) {
+  const ownerPubkey = new PublicKey(address);
+  const usdcMint = new PublicKey(SOLANA_USDC_MINT[destinationChainId]);
+  const ata = getAssociatedTokenAddressSync(usdcMint, ownerPubkey);
+  return `0x${Buffer.from(ata.toBytes()).toString("hex")}`;
+}
+```
+
+**`lib/solana/cctpBurn.ts`:**
+- Added `getAssociatedTokenAddressSync` import
+- Updated `formatMintRecipient()` to compute ATA for Solana destinations (for Solana→Solana case):
+```typescript
+if (isSolanaChain(destinationChainId)) {
+  const ownerPubkey = new PublicKey(address);
+  const usdcMint = USDC_MINT[destinationChainId];
+  const ata = getAssociatedTokenAddressSync(usdcMint, ownerPubkey);
+  return ata;
+}
+```
+
+**Key learning:** CCTP v2 on Solana requires the token account (ATA) as mintRecipient, matching how Circle's SDK handles this via `getMintRecipientAccount()`.
+
+---
+
+### Step 35: Fix MaxFeeMustBeLessThanAmount Error for Solana Burns (Completed)
+
+**Issue:** Solana → EVM burn failed with simulation error:
+```
+Error Code: MaxFeeMustBeLessThanAmount. Error Number: 6027.
+Program log: Left: 1000000 (maxFee)
+Program log: Right: 1000000 (amount)
+```
+
+**Root cause:** `useDirectBurnSolana.ts` hardcoded `maxFee = 1,000,000` (1 USDC) for fast transfers. When bridging exactly 1 USDC, this fails because CCTP requires `maxFee < amount`.
+
+**Fix applied to `lib/hooks/useDirectBurnSolana.ts`:**
+- Imported `calculateMaxFee` from `lib/evm/cctpBurn.ts` (reuse EVM logic)
+- Replaced hardcoded `maxFee` with dynamic calculation via IRIS API
+- Added safety check: `if (maxFee >= amount) maxFee = amount - 1n`
+
+```typescript
+let maxFee = 0n;
+if (transferSpeed === "fast") {
+  const sourceDomain = getCctpDomain(sourceChainId);
+  const destDomain = getCctpDomain(destinationChainId);
+  maxFee = await calculateMaxFee(sourceDomain, destDomain, amount, "fast", isTestnet);
+
+  // Safety check: CCTP requires maxFee < amount
+  if (maxFee >= amount) {
+    maxFee = amount - 1n;
+  }
+}
+```
+
+---
+
 ### Known Limitations
 - Solana adapter requires browser wallet extension (no readonly mode)
+- Solana→Solana bridging not supported (CCTP doesn't support same-chain bridging)
+
+---
+
+## 🎉 Task Completion Summary
+
+**Status: ✅ COMPLETE** (2025-01-05)
+
+All three bridging directions are fully functional:
+
+| Direction | Status | Implementation |
+|-----------|--------|----------------|
+| EVM → EVM | ✅ Working | Direct CCTP v2 burn via `useDirectBurnEvm` |
+| EVM → Solana | ✅ Working | Direct burn + Solana mint via `useDirectMintSolana` |
+| Solana → EVM | ✅ Working | Direct burn via `useDirectBurnSolana` + EVM claim |
+
+### Key Architectural Decisions
+
+1. **Bypass Bridge Kit SDK for all transactions** - The SDK's internal `sendAndConfirmTransaction()` and WebSocket confirmations caused 60s hangs. We build and send transactions directly using Anchor (Solana) and Viem (EVM).
+
+2. **CCTP v2 ABI with all 7 parameters** - `depositForBurn(amount, destinationDomain, mintRecipient, burnToken, destinationCaller, maxFee, minFinalityThreshold)`
+
+3. **Dynamic fee calculation via IRIS API** - Fast transfers require calculating `maxFee` from Circle's fee endpoint to incentivize liquidity providers.
+
+4. **ATA for Solana destinations** - `mintRecipient` must be the Associated Token Account, not the wallet pubkey.
+
+5. **Immediate return after send** - All burn hooks return immediately after `sendRawTransaction()` without waiting for confirmation. Attestation polling handles status updates.
+
+### Files Created
+- `lib/solana/cctpBurn.ts` - Direct Solana CCTP burn builder
+- `lib/solana/cctpMint.ts` - Direct Solana CCTP mint builder
+- `lib/evm/cctpBurn.ts` - Direct EVM CCTP burn builder
+- `lib/hooks/useDirectBurnSolana.ts` - Solana burn hook
+- `lib/hooks/useDirectBurnEvm.ts` - EVM burn hook
+- `lib/hooks/useDirectMintSolana.ts` - Solana mint hook (for EVM→Solana claims)
