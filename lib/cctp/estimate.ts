@@ -84,6 +84,10 @@ async function fetchFeeTiers(
  * Fee is in BPS (basis points) from API response.
  */
 function calculateFee(amount: bigint, feeInBps: bigint): bigint {
+  // Guard: fee cannot exceed 100% (10000 bps)
+  if (feeInBps > 10000n) {
+    throw new Error(`Invalid fee rate: ${feeInBps} bps exceeds 100%`);
+  }
   // Fee = (amount * bps) / 10000, with ceiling division
   return (amount * feeInBps + 9999n) / 10000n;
 }

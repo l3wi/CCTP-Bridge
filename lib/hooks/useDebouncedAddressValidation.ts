@@ -5,6 +5,7 @@ import type { ChainType } from "@/lib/types";
 interface AddressValidationState {
   isValid: boolean;
   error?: string;
+  warning?: string;
   isValidating: boolean;
 }
 
@@ -66,6 +67,10 @@ export function useDebouncedAddressValidation(
       setValidation({
         isValid: result.isValid,
         error: result.error,
+        warning:
+          "warning" in result
+            ? (result as { warning?: string }).warning
+            : undefined,
         isValidating: false,
       });
     }, debounceMs);

@@ -15,12 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowRight, Loader2 } from "lucide-react";
 import { BridgingState } from "@/components/bridging-state";
 import { ChainIcon } from "@/components/chain-icon";
-import {
-  useAccount,
-  useChains,
-  useSwitchChain,
-  useWalletClient,
-} from "wagmi";
+import { useAccount, useChains, useSwitchChain } from "wagmi";
 import { Chain } from "viem";
 import {
   validateBridgeParams,
@@ -56,7 +51,6 @@ import {
   getCctpConfirmationsUniversal,
   resolveBridgeChainUniversal,
   getAllSupportedChains,
-  getProviderFromWalletClient,
 } from "@/lib/bridgeKit";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
@@ -81,8 +75,6 @@ export function BridgeCard({
   const { usdcBalance: evmUsdcBalance, usdcFormatted: evmUsdcFormatted, isUsdcLoading: evmIsUsdcLoading } = useBalance();
   const solanaWallet = useWallet();
   const { usdcBalance: solanaUsdcBalance, usdcFormatted: solanaUsdcFormatted, isLoading: solanaIsUsdcLoading } = useSolanaBalance();
-  const { data: walletClient } = useWalletClient();
-  const provider = getProviderFromWalletClient(walletClient);
 
   // State
   const [sourceChainId, setSourceChainId] = useState<ChainId | null>(
@@ -530,7 +522,8 @@ export function BridgeCard({
     queryFn: () => estimateBridge(TransferSpeed.SLOW),
     enabled: canEstimate,
     staleTime: 300_000,
-    retry: 1,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   });
 
   const {
@@ -549,7 +542,8 @@ export function BridgeCard({
     queryFn: () => estimateBridge(TransferSpeed.FAST),
     enabled: canEstimate && fastTransferSupported,
     staleTime: 300_000,
-    retry: 1,
+    retry: 3,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
   });
 
   useEffect(() => {
@@ -1426,6 +1420,9 @@ export function BridgeCard({
                     {addressValidation.error && !addressValidation.isValidating && (
                       <span className="text-xs text-red-400">{addressValidation.error}</span>
                     )}
+                    {addressValidation.warning && !addressValidation.error && !addressValidation.isValidating && (
+                      <span className="text-xs text-yellow-400">{addressValidation.warning}</span>
+                    )}
                   </div>
                   <Input
                     placeholder={targetChainType === "solana" ? "Solana address..." : "0x..."}
@@ -1434,6 +1431,8 @@ export function BridgeCard({
                     className={`bg-slate-700/50 border-slate-600 text-white ${
                       addressValidation.error && !addressValidation.isValidating
                         ? "border-red-500 focus:border-red-500"
+                        : addressValidation.warning && !addressValidation.isValidating
+                        ? "border-yellow-500 focus:border-yellow-500"
                         : ""
                     }`}
                     disabled={isLoading}

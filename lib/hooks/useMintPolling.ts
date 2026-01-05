@@ -64,12 +64,22 @@ export function useMintPolling({
   const solanaPollingRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
 
+  // Refs to avoid stale closures in polling intervals
+  const displayStepsRef = useRef<BridgeResult["steps"]>(displaySteps);
+  const onStepsUpdateRef = useRef(onStepsUpdate);
+
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
     };
   }, []);
+
+  // Keep refs in sync with latest values
+  useEffect(() => {
+    displayStepsRef.current = displaySteps;
+    onStepsUpdateRef.current = onStepsUpdate;
+  }, [displaySteps, onStepsUpdate]);
 
   // Check if we should poll EVM destinations
   const shouldPollEvm = useMemo(() => {
@@ -139,8 +149,6 @@ export function useMintPolling({
       return;
     }
 
-    const currentSteps = displaySteps;
-
     const checkMint = async () => {
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
       if (!isMountedRef.current) return;
@@ -169,6 +177,9 @@ export function useMintPolling({
           error: result.error,
         });
 
+        // Read latest steps from ref to avoid stale closure
+        const currentSteps = displayStepsRef.current ?? [];
+
         // Handle already minted case
         if (result.alreadyMinted && burnTxHash) {
           const updatedSteps = currentSteps.map((step) => {
@@ -192,7 +203,7 @@ export function useMintPolling({
             steps: updatedSteps,
           });
 
-          onStepsUpdate(updatedSteps);
+          onStepsUpdateRef.current?.(updatedSteps);
         } else if (result.attestationReady && burnTxHash) {
           // Attestation ready but not minted
           const updatedSteps = currentSteps.map((step) => {
@@ -203,7 +214,7 @@ export function useMintPolling({
           });
 
           updateTransaction(burnTxHash, { steps: updatedSteps });
-          onStepsUpdate(updatedSteps);
+          onStepsUpdateRef.current?.(updatedSteps);
         }
       } catch (error) {
         console.error("Mint readiness check failed:", error);
@@ -225,7 +236,6 @@ export function useMintPolling({
         pollingRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPollEvm, burnTxHash, sourceChainId, destinationChainId, updateTransaction]);
 
   // Solana attestation polling effect
@@ -238,8 +248,6 @@ export function useMintPolling({
       return;
     }
 
-    const currentSteps = displaySteps;
-
     const checkAttestation = async () => {
       if (!burnTxHash || !sourceChainId) return;
       if (!isMountedRef.current) return;
@@ -250,6 +258,9 @@ export function useMintPolling({
         if (!isMountedRef.current) return;
 
         if (result?.status === "complete") {
+          // Read latest steps from ref to avoid stale closure
+          const currentSteps = displayStepsRef.current ?? [];
+
           // Update attestation step to success
           const updatedSteps = currentSteps.map((step) => {
             if (/attestation|attest/i.test(step.name)) {
@@ -269,7 +280,7 @@ export function useMintPolling({
           }
 
           updateTransaction(burnTxHash, { steps: updatedSteps });
-          onStepsUpdate(updatedSteps);
+          onStepsUpdateRef.current?.(updatedSteps);
 
           // Update local state
           setMintSimulation((prev) => ({
@@ -297,7 +308,6 @@ export function useMintPolling({
         solanaPollingRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldPollSolana, burnTxHash, sourceChainId, updateTransaction]);
 
   // Setter for external updates (e.g., from claim handler)

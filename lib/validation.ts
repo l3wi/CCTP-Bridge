@@ -103,13 +103,20 @@ export const validateAddress = (
   return { isValid: true };
 };
 
+/** Validation result with optional warning for soft errors */
+export interface AddressValidationResult {
+  isValid: boolean;
+  error?: string;
+  warning?: string;
+}
+
 /**
  * Validate an address based on the target chain type (EVM or Solana)
  */
 export const validateUniversalAddress = (
   address: string,
   chainType: ChainType
-): { isValid: boolean; error?: string } => {
+): AddressValidationResult => {
   if (!address || address.trim() === "") {
     return { isValid: false, error: "Please enter a wallet address" };
   }
@@ -121,16 +128,21 @@ export const validateUniversalAddress = (
       return { isValid: false, error: "Invalid EVM address format" };
     }
   } else if (chainType === "solana") {
-    // Two-step validation for Solana addresses:
-    // 1. Length check: require 44 chars (catches single-char typos)
-    //    - 94% of wallets are 44 chars, 6% are 43 chars
-    //    - A typo removing 1 char from 44 → 43 chars could still be valid but wrong address
-    // 2. On-curve check: ensures it's a real wallet (not a PDA)
-    if (trimmed.length !== 44) {
-      return { isValid: false, error: "Solana address must be 44 characters" };
+    // Solana addresses are Base58-encoded 32 bytes (32-44 chars)
+    // 94% of wallets are 44 chars, 6% are 43 chars
+    if (trimmed.length < 32 || trimmed.length > 44) {
+      return { isValid: false, error: "Invalid Solana address length" };
     }
+    // On-curve check: ensures it's a real wallet (not a PDA)
     if (!isValidSolanaAddress(trimmed)) {
       return { isValid: false, error: "Invalid Solana wallet address" };
+    }
+    // Soft warning for non-standard length (most wallets are 44 chars)
+    if (trimmed.length !== 44) {
+      return {
+        isValid: true,
+        warning: "Address length is unusual — please double-check",
+      };
     }
   }
 
@@ -143,7 +155,7 @@ export const validateUniversalAddress = (
 export const validateAddressForChain = (
   address: string,
   chainId: ChainId
-): { isValid: boolean; error?: string } => {
+): AddressValidationResult => {
   const chainType = getChainType(chainId);
   return validateUniversalAddress(address, chainType);
 };
