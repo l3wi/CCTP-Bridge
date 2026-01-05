@@ -724,6 +724,33 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 - [ ] Test with Phantom wallet
 - [ ] Test with Solflare wallet
 
+### Step 28: Handle WebSocket Malformed Response Error (Completed)
+- **Issue**: `signatureSubscribe` fails with "Server response malformed. Response must include either 'result' or 'error', but not both"
+- **Root cause**: Some Solana RPC providers return invalid JSON-RPC WebSocket responses during confirmation polling
+- **Fix**: Extended error detection in `useDirectMintSolana.ts` to catch malformed response errors
+- Added patterns: `/response malformed/i` and `/must include either.*result.*or.*error/i`
+- Uses existing recovery logic via `checkSolanaMintStatus()` to verify actual transaction state
+- If simulation fails with "already in use" → mint succeeded despite WebSocket error
+- If simulation succeeds → mint didn't complete, suggests retry
+
+**File modified:**
+- `lib/hooks/useDirectMintSolana.ts`: Extended error handling block (lines 237-243)
+
+### Step 29: Fix CCTP Custom:0 Error Detection (Completed)
+- **Issue**: Clicking claim on already-minted transaction shows generic simulation error instead of "Already Claimed"
+- **Root cause**: CCTP program returns `{"InstructionError":[0,{"Custom":0}]}` for nonce already used, but our detection patterns only checked for text like "nonce already used"
+- **Fix**: Added `/"Custom":\s*0\b/` regex pattern to detect Solana CCTP program's nonce-consumed error code
+
+**Files modified:**
+- `lib/hooks/useDirectMintSolana.ts`: Added Custom:0 detection + logs inspection to nonce check
+- `lib/simulation.ts`: Added Custom:0 detection + logs inspection to `checkSolanaMintStatus()`
+
+**Error detection sources:**
+1. `error.message` - text patterns like "already in use", "nonce already used"
+2. `error.logs` - Solana simulation logs containing "Allocate: account Address {...} already in use"
+3. `"Custom": 0` - CCTP program error code in JSON response
+
+---
+
 ### Known Limitations
 - Solana adapter requires browser wallet extension (no readonly mode)
-- Solana RPC WebSocket subscriptions may fail with malformed responses (affects confirmation polling)

@@ -199,6 +199,10 @@ export function useDirectMintSolana() {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
 
+        // Extract logs from Solana simulation errors if available
+        const errorLogs = (error as { logs?: string[] })?.logs ?? [];
+        const logsText = errorLogs.join("\n");
+
         // Check for user rejection
         if (
           /user rejected/i.test(errorMessage) ||
@@ -209,10 +213,14 @@ export function useDirectMintSolana() {
         }
 
         // Check for nonce already used (already minted)
+        // CCTP logs "Allocate: account Address {...} already in use" when nonce consumed
+        // Also check Custom:0 error code as fallback
         if (
           /nonce already used/i.test(errorMessage) ||
           /already been processed/i.test(errorMessage) ||
-          /already in use/i.test(errorMessage)
+          /already in use/i.test(errorMessage) ||
+          /already in use/i.test(logsText) ||
+          /"Custom":\s*0\b/.test(errorMessage)
         ) {
           const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
           updateTransaction(burnTxHash as `0x${string}`, {
@@ -231,13 +239,15 @@ export function useDirectMintSolana() {
           return { success: true, alreadyMinted: true };
         }
 
-        // Handle block height exceeded / transaction expiration
-        // This happens when transaction was sent but confirmation polling timed out
+        // Handle block height exceeded / transaction expiration / WebSocket malformed response
+        // These errors indicate confirmation polling failed, but transaction may have succeeded
         // Use simulation to verify if the mint actually succeeded
         if (
           /block height exceeded/i.test(errorMessage) ||
           /has expired/i.test(errorMessage) ||
-          /transaction expired/i.test(errorMessage)
+          /transaction expired/i.test(errorMessage) ||
+          /response malformed/i.test(errorMessage) ||
+          /must include either.*result.*or.*error/i.test(errorMessage)
         ) {
           toast({
             title: "Verifying transaction",

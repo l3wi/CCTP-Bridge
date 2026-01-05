@@ -364,12 +364,17 @@ export async function checkSolanaMintStatus(
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
-    // Check for "already in use" - means nonce account exists, mint happened
-    // This error occurs when the CCTP program tries to allocate an account
-    // that was already created by a previous receiveMessage call
+    // Extract logs from Solana simulation errors if available
+    const errorLogs = (error as { logs?: string[] })?.logs ?? [];
+    const logsText = errorLogs.join("\n");
+
+    // Check for "already in use" or CCTP Custom:0 error - means nonce consumed, mint happened
+    // CCTP logs "Allocate: account Address {...} already in use" when nonce consumed
     if (
       /already in use/i.test(errorMessage) ||
-      /account.*already.*use/i.test(errorMessage)
+      /already in use/i.test(logsText) ||
+      /account.*already.*use/i.test(errorMessage) ||
+      /"Custom":\s*0\b/.test(errorMessage)
     ) {
       return {
         success: true,
