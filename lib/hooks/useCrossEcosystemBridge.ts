@@ -239,7 +239,8 @@ export const useCrossEcosystemBridge = () => {
         const errorMessage = values?.errorMessage as string | undefined;
         const errorVal = values?.error;
 
-        if (!approveToastShownRef.current && name.toLowerCase().includes("approve")) {
+        // Only show approval toast for EVM sources (Solana doesn't need USDC approval)
+        if (sourceChainType === "evm" && !approveToastShownRef.current && name.toLowerCase().includes("approve")) {
           toast({
             title: "Approval submitted",
             description: "USDC approval transaction sent.",
@@ -450,16 +451,38 @@ export const useCrossEcosystemBridge = () => {
           }
         }
 
-        toast({
-          title:
-            finalResult.state === "success"
-              ? "Bridge completed"
-              : "Bridge submitted",
-          description:
-            finalResult.state === "success"
-              ? "USDC mint executed on destination chain."
-              : "Processing bridge steps with Circle Bridge Kit.",
-        });
+        // Only show success/pending toast if bridge didn't error
+        // Check for user rejection in steps
+        const hasUserRejection = currentStepsRef.current.some(
+          (step) =>
+            /user rejected|user denied|rejected the request/i.test(step.errorMessage ?? "") ||
+            /user rejected|user denied|rejected the request/i.test(String(step.error ?? ""))
+        );
+
+        if (hasUserRejection) {
+          toast({
+            title: "Transaction cancelled",
+            description: "Transaction was cancelled by user",
+            variant: "destructive",
+          });
+        } else if (finalResult.state === "error") {
+          toast({
+            title: "Bridge failed",
+            description: "An error occurred during the bridge.",
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title:
+              finalResult.state === "success"
+                ? "Bridge completed"
+                : "Bridge submitted",
+            description:
+              finalResult.state === "success"
+                ? "USDC mint executed on destination chain."
+                : "Processing bridge steps with Circle Bridge Kit.",
+          });
+        }
 
         return finalResult;
       } catch (err) {

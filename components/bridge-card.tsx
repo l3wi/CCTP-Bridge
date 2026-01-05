@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useEffect } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -305,14 +305,22 @@ export function BridgeCard({
     });
   }, [chainOptions, isChainConnected]);
 
-  // Sync source chain to wallet chain when wallet connects or changes chain
+  // Track the previous wallet chain to detect actual wallet chain changes
+  const prevWalletChainRef = useRef<number | undefined>(walletChainId);
+
+  // Sync source chain to wallet chain ONLY when wallet chain actually changes
+  // Don't override if user explicitly selected a different chain (like Solana)
   useEffect(() => {
-    if (walletChainId && evmChainIds.has(walletChainId)) {
+    const prevWalletChain = prevWalletChainRef.current;
+    prevWalletChainRef.current = walletChainId;
+
+    // Only sync if wallet chain changed (not on every sourceChainId change)
+    if (walletChainId && walletChainId !== prevWalletChain && evmChainIds.has(walletChainId)) {
       setSourceChainId(walletChainId);
       return;
     }
 
-    // Fallback: set first supported chain if no wallet or unsupported chain
+    // Fallback: set first supported chain if no source chain selected
     if (sourceChainId == null && chainOptions.length > 0) {
       setSourceChainId(chainOptions[0].id);
     }
@@ -1181,7 +1189,7 @@ export function BridgeCard({
                 <Select
                   value={sourceChainId != null ? sourceChainId.toString() : ""}
                   onValueChange={handleSwitchChain}
-                  disabled={isLoading || isSwitchingChain || !address}
+                  disabled={isLoading || isSwitchingChain || (!address && !solanaWallet.connected)}
                 >
                   <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
                     <SelectValue placeholder="Select Chain...">

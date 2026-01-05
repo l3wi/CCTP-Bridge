@@ -197,12 +197,22 @@ export function BridgingState({
     const burnStep = existingSteps.find((s) => s.id === "burn");
     const burnSucceeded = burnStep?.state === "success" || burnStep?.state === "noop";
 
+    // Solana sources don't have an approval step - skip it
+    const sourceChainDef = displayResult?.source?.chain as { chainId?: number; chain?: string } | undefined;
+    const srcChainId = sourceChainDef?.chainId ?? sourceChainDef?.chain;
+    const isSourceSolana = srcChainId && isSolanaChain(srcChainId as ChainId);
+
     let previousCompleted = true;
     const filled: Array<
       (typeof existingSteps)[number] & { id: (typeof STEP_ORDER)[number]["id"]; label: string }
     > = [];
 
     for (const entry of STEP_ORDER) {
+      // Skip approve step for Solana sources (no approval needed)
+      if (entry.id === "approve" && isSourceSolana) {
+        continue;
+      }
+
       const existing = existingSteps.find((s) => s.id === entry.id);
       if (existing) {
         filled.push(existing as any);
@@ -230,7 +240,7 @@ export function BridgingState({
     }
 
     return filled;
-  }, [displayResult?.steps]);
+  }, [displayResult?.steps, displayResult?.source?.chain]);
 
   const completedAtDate = useMemo(() => {
     if (mintCompletedAt) return mintCompletedAt;
