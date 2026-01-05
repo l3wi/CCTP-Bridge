@@ -250,16 +250,25 @@ export async function simulateMint(
 /**
  * Full check: fetch attestation from Iris and simulate mint.
  * This is the main function used by the UI for polling.
+ * Supports both EVM and Solana source chains.
+ *
+ * @param skipSimulation - If true, skip EVM simulation and return success once attestation is ready.
+ *                         Use for Solana sources to avoid RPC spam (user must click Claim anyway).
  */
 export async function checkMintReadiness(
-  sourceChainId: number,
+  sourceChainId: number | string, // EVM chain ID or Solana chain string
   destinationChainId: number,
-  burnTxHash: string
+  burnTxHash: string,
+  skipSimulation: boolean = false
 ): Promise<SimulationResult & { attestationReady: boolean }> {
   // Import dynamically to avoid circular deps
-  const { fetchAttestation } = await import("./iris");
+  const { fetchAttestationUniversal } = await import("./iris");
 
-  const attestationData = await fetchAttestation(sourceChainId, burnTxHash);
+  // fetchAttestationUniversal accepts ChainId (number | string)
+  const attestationData = await fetchAttestationUniversal(
+    sourceChainId as import("./types").ChainId,
+    burnTxHash
+  );
 
   if (!attestationData) {
     return {
@@ -278,6 +287,17 @@ export async function checkMintReadiness(
       alreadyMinted: false,
       attestationReady: false,
       error: "Attestation pending",
+    };
+  }
+
+  // Skip RPC simulation if requested (for Solana sources)
+  // Once attestation is ready, we know the user can mint - they just need to click Claim
+  if (skipSimulation) {
+    return {
+      success: true,
+      canMint: true,
+      alreadyMinted: false,
+      attestationReady: true,
     };
   }
 

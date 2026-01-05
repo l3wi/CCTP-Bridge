@@ -16,11 +16,12 @@ import { useDirectMint } from "@/lib/hooks/useDirectMint";
 import { useDirectMintSolana } from "@/lib/hooks/useDirectMintSolana";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { checkMintReadiness } from "@/lib/simulation";
+import { fetchAttestationUniversal } from "@/lib/iris";
 import { asTxHash, asUniversalTxHash, ChainId, isSolanaChain } from "@/lib/types";
 
 // Polling configuration constants
 const POLL_START_DELAY_MS = 5 * 60 * 1000; // Start polling after 5 minutes
-const POLL_INTERVAL_MS = 10_000; // Poll every 10 seconds
+const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
 const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour of total poll time
 
 const STEP_ORDER = [
@@ -409,7 +410,14 @@ export function BridgingState({
     return asUniversalTxHash(firstWithHash?.txHash) ?? null;
   }, [displayResult?.steps]);
 
-  // Check if we should poll for mint readiness (>5 min old, not completed, within time limit)
+  // Check if source is Solana (used for filtering approve step in UI)
+  const isSourceSolana = useMemo(() => {
+    return sourceChainId && isSolanaChain(sourceChainId);
+  }, [sourceChainId]);
+
+  // Check if we should poll for mint readiness
+  // We now use direct burn for both Solana AND EVM sources (bypassing Bridge Kit)
+  // So we start polling immediately for all sources
   // Note: Polling only works for EVM destinations (uses contract simulation)
   const shouldPoll = useMemo(() => {
     // Don't poll if already successful
@@ -428,12 +436,10 @@ export function BridgingState({
 
     const ageMs = Date.now() - referenceTime.getTime();
 
-    // Don't poll if not yet old enough
-    if (ageMs < POLL_START_DELAY_MS) return false;
-
-    // Stop polling after max duration (1 hour after poll start time)
-    const pollDurationMs = ageMs - POLL_START_DELAY_MS;
-    if (pollDurationMs >= MAX_POLL_DURATION_MS) return false;
+    // Start polling immediately (no delay) for all sources
+    // We use direct burn for both Solana and EVM, bypassing Bridge Kit
+    // Still enforce max duration (1 hour total)
+    if (ageMs >= MAX_POLL_DURATION_MS) return false;
 
     return true;
   }, [
@@ -469,10 +475,15 @@ export function BridgingState({
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
       try {
+        // sourceChainId can be number (EVM) or string (Solana)
+        // destinationChainId is always number (EVM only - Solana destinations are skipped)
+        // Skip EVM simulation for Solana sources to avoid RPC spam
+        const skipSimulation = isSolanaChain(sourceChainId);
         const result = await checkMintReadiness(
-          sourceChainId as number,
+          sourceChainId,
           destinationChainId as number,
-          burnTxHash
+          burnTxHash,
+          skipSimulation
         );
 
         // Check if still mounted after async operation
@@ -487,7 +498,7 @@ export function BridgingState({
           error: result.error,
         });
 
-        // If already minted, update the transaction
+        // If already minted, update the transaction with full success
         if (result.alreadyMinted && burnTxHash) {
           const updatedSteps = currentSteps.map((step) => {
             if (/attestation|attest/i.test(step.name)) {
@@ -515,6 +526,24 @@ export function BridgingState({
               prev ? { ...prev, state: "success", steps: updatedSteps } : prev
             );
           }
+        } else if (result.attestationReady && burnTxHash) {
+          // Attestation ready but not yet minted - update attestation step to success
+          const updatedSteps = currentSteps.map((step) => {
+            if (/attestation|attest/i.test(step.name)) {
+              return { ...step, state: "success" as const };
+            }
+            return step;
+          });
+
+          updateTransaction(burnTxHash, {
+            steps: updatedSteps,
+          });
+
+          if (isMountedRef.current) {
+            setLocalBridgeResult((prev) =>
+              prev ? { ...prev, steps: updatedSteps } : prev
+            );
+          }
         }
       } catch (error) {
         console.error("Mint readiness check failed:", error);
@@ -539,12 +568,14 @@ export function BridgingState({
         pollingRef.current = null;
       }
     };
+  // Note: displayResult?.steps intentionally excluded from deps to prevent
+  // effect restart on step updates (we capture currentSteps at effect start)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     shouldPoll,
     burnTxHash,
     sourceChainId,
     destinationChainId,
-    displayResult?.steps,
     updateTransaction,
   ]);
 
@@ -855,6 +886,127 @@ export function BridgingState({
     hasBurnCompleted,
     hasFetchAttestation,
     destinationChainId,
+  ]);
+
+  // Check if we should poll attestation for Solana destinations
+  // For Solana destinations, we poll Iris API directly since EVM simulation doesn't work
+  const shouldPollSolanaAttestation = useMemo(() => {
+    // Don't poll if already successful
+    if (displayResult?.state === "success") return false;
+
+    // Don't poll if we don't have required data
+    if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
+
+    // Only poll for Solana destinations
+    if (!isSolanaChain(destinationChainId)) return false;
+
+    // Don't poll if burn hasn't completed
+    if (!hasBurnCompleted) return false;
+
+    // Don't poll if attestation already fetched
+    if (hasFetchAttestation) return false;
+
+    // Check time limits
+    const referenceTime = burnCompletedAt ?? startedAt;
+    if (!referenceTime) return false;
+
+    const ageMs = Date.now() - referenceTime.getTime();
+    if (ageMs >= MAX_POLL_DURATION_MS) return false;
+
+    return true;
+  }, [
+    displayResult?.state,
+    burnTxHash,
+    sourceChainId,
+    destinationChainId,
+    hasBurnCompleted,
+    hasFetchAttestation,
+    burnCompletedAt,
+    startedAt,
+  ]);
+
+  // Poll for attestation status for Solana destinations
+  const solanaAttestationPollingRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!shouldPollSolanaAttestation) {
+      if (solanaAttestationPollingRef.current) {
+        clearInterval(solanaAttestationPollingRef.current);
+        solanaAttestationPollingRef.current = null;
+      }
+      return;
+    }
+
+    // Capture steps at effect start
+    const currentSteps = displayResult?.steps || [];
+
+    const checkAttestation = async () => {
+      if (!burnTxHash || !sourceChainId) return;
+      if (!isMountedRef.current) return;
+
+      try {
+        const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
+
+        if (!isMountedRef.current) return;
+
+        if (result?.status === "complete") {
+          // Attestation is ready - update the attestation step to success
+          const updatedSteps = currentSteps.map((step) => {
+            if (/attestation|attest/i.test(step.name)) {
+              return { ...step, state: "success" as const };
+            }
+            return step;
+          });
+
+          // Add attestation step if it doesn't exist
+          if (!updatedSteps.some((s) => /attestation|attest/i.test(s.name))) {
+            const burnIndex = updatedSteps.findIndex((s) => /burn/i.test(s.name));
+            const insertIndex = burnIndex >= 0 ? burnIndex + 1 : updatedSteps.length;
+            updatedSteps.splice(insertIndex, 0, {
+              name: "Fetch Attestation",
+              state: "success" as const,
+            });
+          }
+
+          updateTransaction(burnTxHash, {
+            steps: updatedSteps,
+          });
+
+          if (isMountedRef.current) {
+            setLocalBridgeResult((prev) =>
+              prev ? { ...prev, steps: updatedSteps } : prev
+            );
+          }
+
+          // Stop polling since attestation is ready
+          if (solanaAttestationPollingRef.current) {
+            clearInterval(solanaAttestationPollingRef.current);
+            solanaAttestationPollingRef.current = null;
+          }
+        }
+      } catch (error) {
+        console.error("Solana attestation check failed:", error);
+      }
+    };
+
+    // Check immediately
+    checkAttestation();
+
+    // Then poll at configured interval
+    solanaAttestationPollingRef.current = setInterval(checkAttestation, POLL_INTERVAL_MS);
+
+    return () => {
+      if (solanaAttestationPollingRef.current) {
+        clearInterval(solanaAttestationPollingRef.current);
+        solanaAttestationPollingRef.current = null;
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    shouldPollSolanaAttestation,
+    burnTxHash,
+    sourceChainId,
+    updateTransaction,
   ]);
 
   if (displayResult) {
