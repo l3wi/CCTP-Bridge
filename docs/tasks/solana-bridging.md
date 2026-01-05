@@ -714,15 +714,17 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 ## Remaining Work
 
 ### Testing Checklist
-- [ ] EVM to EVM bridging still works (regression test)
+- [x] EVM to EVM bridging still works (regression test)
 - [x] EVM → Solana: Shows "Claim X USDC" when Solana wallet connected (not "Switch chain")
 - [x] EVM → Solana: Clicking "Claim" executes mint via `useDirectMintSolana`
 - [ ] EVM → Solana: Block height timeout correctly verifies mint status
-- [ ] Solana → EVM bridging flow end-to-end
-- [ ] Balance display switches correctly when changing source chain
-- [ ] Verify transaction history displays Solana transactions correctly
+- [x] Solana → EVM: Add transaction modal accepts Solana source chains
+- [x] Solana → EVM: Claim flow works with Solana source and EVM destination
+- [x] Solana → EVM: History badge updates correctly after claiming
+- [x] Balance display switches correctly when changing source chain
+- [x] Verify transaction history displays Solana transactions correctly
 - [ ] Test with Phantom wallet
-- [ ] Test with Solflare wallet
+- [x] Test with Solflare wallet
 
 ### Step 28: Handle WebSocket Malformed Response Error (Completed)
 - **Issue**: `signatureSubscribe` fails with "Server response malformed. Response must include either 'result' or 'error', but not both"
@@ -749,6 +751,50 @@ Cross-ecosystem estimation (EVM↔Solana) is complex because:
 1. `error.message` - text patterns like "already in use", "nonce already used"
 2. `error.logs` - Solana simulation logs containing "Allocate: account Address {...} already in use"
 3. `"Custom": 0` - CCTP program error code in JSON response
+
+### Step 30: Solana Source in Add Transaction Modal + Claim Flow (Completed)
+- **Issue 1**: Add Transaction modal only showed EVM chains, couldn't add Solana source transactions
+- **Issue 2**: Claiming Solana→EVM transactions showed "Cannot claim - Missing transaction details"
+- **Issue 3**: History badge showed "1 Pending" even after claiming
+
+**Root causes:**
+1. Modal used `getSupportedEvmChains()` instead of `getAllSupportedChains()`
+2. `burnTxHash` extraction used `asTxHash()` which only validates EVM hashes (`0x...`), not Solana signatures (Base58)
+3. `useDirectMint` hook only accepted EVM types: `burnTxHash: \`0x${string}\``, `sourceChainId: number`
+4. `pendingCount` checked `tx.bridgeResult?.state` without first checking if `tx.status === "claimed"`
+
+**Fixes applied:**
+
+**`components/history-modal.tsx`:**
+- Changed from `getSupportedEvmChains()` to `getAllSupportedChains()` for chain dropdown
+- Added helper functions `getChainSelectId()` and `parseChainSelectId()` for universal chain ID handling
+- Added `isSolanaSelected` state for dynamic UI hints
+- Updated hash validation to use `isValidTxHash()` which accepts both EVM and Solana formats
+- Updated placeholder text to change based on selected chain type
+- Used `fetchAttestationUniversal()` for attestation lookup
+- Added `originChainType` and `targetChainType` to saved transactions
+- Fixed `pendingCount` to exclude `tx.status === "claimed"` transactions
+- Fixed `claimableCount` to exclude `tx.status === "claimed"` transactions
+
+**`components/bridging-state.tsx`:**
+- Added `asUniversalTxHash` import
+- Changed `burnTxHash` extraction from `asTxHash()` to `asUniversalTxHash()` for Solana signature support
+- Removed `as number` cast on `sourceChainId` when calling `executeMint()`
+
+**`lib/hooks/useDirectMint.ts`:**
+- Changed `burnTxHash` type from `` `0x${string}` `` to `UniversalTxHash`
+- Changed `sourceChainId` type from `number` to `ChainId`
+- Changed import from `fetchAttestation` to `fetchAttestationUniversal`
+- Now supports claiming from Solana sources to EVM destinations
+
+**`lib/iris.ts`:**
+- Added `fetchAttestationUniversal()` function that accepts `ChainId` (EVM or Solana)
+- Uses `getCctpDomainIdUniversal()` and `isTestnetChainUniversal()` for domain lookup
+- Validates hash format based on chain type (EVM hex vs Solana Base58)
+
+**`lib/contracts.ts`:**
+- Added `getCctpDomainIdUniversal()` for universal chain ID to CCTP domain mapping
+- Added `isTestnetChainUniversal()` for universal testnet detection
 
 ---
 
