@@ -2,9 +2,16 @@
 
 ## Project Structure & Module Organization
 - Next.js App Router lives in `app/` (`layout.tsx`, `page.tsx`, `og/`), with global styles in `app/globals.css`.
-- UI is split between `components/` (shadcn/Radix-based atoms, wallet/bridge widgets, guards, loading states) and `public/` assets (chain icons, OG image).
-- Feature logic and data plumbing sit in `lib/` (`bridgeKit.ts`, `cctpFinality.ts`, Zustand store in `lib/store/`, React hooks in `lib/hooks/`, shared types/utils).
-- Architecture notes and tasks belong in `docs/` (e.g., `docs/tasks/bridge-kit-cutover.md`). Keep README aligned when behavior changes.
+- UI is split between `components/` (shadcn/Radix-based atoms, wallet/bridge widgets) and `public/` assets (chain icons).
+- **`lib/cctp/`** — Custom CCTP v2 library supporting EVM and Solana bridging:
+  - `types.ts`, `shared.ts`, `errors.ts`, `steps.ts`, `nonce.ts` — Core utilities
+  - `evm/burn.ts` — EVM depositForBurn builder
+  - `solana/burn.ts`, `solana/mint.ts` — Solana transaction builders with PDA derivation
+  - `hooks/useBurn.ts`, `hooks/useMint.ts` — Unified React hooks (auto-route to EVM or Solana)
+- **`lib/hooks/`** — UI-level hooks (`useBridgeSteps`, `useMintPolling`, `useClaimHandler`, `useCrossEcosystemBridge`)
+- **`lib/store/`** — Zustand transaction store with localStorage persistence
+- **`lib/bridgeKit.ts`** — Circle Bridge Kit singleton for EVM-only routes and chain metadata
+- Architecture notes and tasks belong in `docs/tasks/`. Keep README aligned when behavior changes.
 
 ## Build, Test, and Development Commands
 - Install: `bun install` (pref) or your package manager.
