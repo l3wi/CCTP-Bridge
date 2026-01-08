@@ -15,8 +15,8 @@ import {
 import {
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
 } from "@solana/spl-token";
-import { Program, AnchorProvider, utils } from "@coral-xyz/anchor";
 import { getSolanaUsdcMint } from "../shared";
 import type { SolanaChainId } from "../types";
 
@@ -33,6 +33,207 @@ export const MESSAGE_TRANSMITTER_PROGRAM_ID = new PublicKey(
 export const TOKEN_MESSENGER_PROGRAM_ID = new PublicKey(
   "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe"
 );
+
+/**
+ * Anchor instruction discriminator for "receive_message".
+ *
+ * Computation: SHA256("global:receive_message").slice(0, 8)
+ * Pre-computed to avoid crypto dependency and Anchor method builder issues.
+ *
+ * Verification (Node.js):
+ *   const crypto = require("crypto");
+ *   const hash = crypto.createHash("sha256").update("global:receive_message").digest();
+ *   console.log(Array.from(hash.slice(0, 8)).map(b => "0x" + b.toString(16).padStart(2, "0")).join(", "));
+ *   // Output: 0x26, 0x90, 0x7f, 0xe1, 0x1f, 0xe1, 0xee, 0x19
+ *
+ * Source: Circle CCTP v2 Solana contracts - MessageTransmitter program
+ * @see https://github.com/circlefin/solana-cctp-contracts
+ */
+const RECEIVE_MESSAGE_DISCRIMINATOR = Buffer.from([
+  0x26, 0x90, 0x7f, 0xe1, 0x1f, 0xe1, 0xee, 0x19,
+]);
+
+/**
+ * Verify the discriminator matches the expected SHA256 hash in development mode.
+ * This catches silent failures if the program is upgraded with a new discriminator.
+ * Only runs once on module load in development.
+ */
+async function verifyDiscriminatorInDev(): Promise<void> {
+  if (process.env.NODE_ENV === "production") return;
+
+  try {
+    // Use Web Crypto API (available in Node.js 15+ and browsers)
+    const encoder = new TextEncoder();
+    const data = encoder.encode("global:receive_message");
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = new Uint8Array(hashBuffer);
+    const expected = hashArray.slice(0, 8);
+
+    const matches = RECEIVE_MESSAGE_DISCRIMINATOR.every(
+      (byte, i) => byte === expected[i]
+    );
+
+    if (!matches) {
+      console.warn(
+        "[CCTP] WARNING: receive_message discriminator mismatch!\n" +
+        `Expected: ${Array.from(expected).map(b => "0x" + b.toString(16).padStart(2, "0")).join(", ")}\n` +
+        `Got: ${Array.from(RECEIVE_MESSAGE_DISCRIMINATOR).map(b => "0x" + b.toString(16).padStart(2, "0")).join(", ")}\n` +
+        "The CCTP program may have been upgraded. Update RECEIVE_MESSAGE_DISCRIMINATOR."
+      );
+    }
+  } catch {
+    // Silently ignore if crypto.subtle is not available (e.g., non-secure context)
+  }
+}
+
+// Run verification on module load in development
+verifyDiscriminatorInDev();
+
+// =============================================================================
+// Instruction Data Serialization
+// =============================================================================
+
+/**
+ * Expected CCTP message size ranges.
+ * CCTP v2 messages contain: version(4) + sourceDomain(4) + destinationDomain(4) +
+ * nonce(32) + sender(32) + recipient(32) + destinationCaller(32) + messageBody(~100+)
+ */
+const CCTP_MESSAGE_MIN_SIZE = 140; // Minimum structure without body
+const CCTP_MESSAGE_MAX_SIZE = 500; // Maximum with large message body
+
+/**
+ * Expected attestation size ranges.
+ * CCTP attestations are ECDSA signatures (65 bytes) with optional metadata.
+ */
+const ATTESTATION_MIN_SIZE = 65; // Single ECDSA signature
+const ATTESTATION_MAX_SIZE = 300; // Multiple signatures with overhead
+
+/**
+ * Serialize receiveMessage instruction data manually using Borsh format.
+ * This avoids Anchor's method builder which has buffer size issues with large Vec<u8>.
+ *
+ * Format: [8-byte discriminator][4-byte msg len][msg bytes][4-byte att len][att bytes]
+ *
+ * @throws Error if message or attestation sizes are outside expected ranges
+ */
+function serializeReceiveMessageData(
+  message: Buffer,
+  attestation: Buffer
+): Buffer {
+  // Validate message size
+  if (message.length < CCTP_MESSAGE_MIN_SIZE || message.length > CCTP_MESSAGE_MAX_SIZE) {
+    throw new Error(
+      `Invalid CCTP message size: ${message.length} bytes. ` +
+      `Expected ${CCTP_MESSAGE_MIN_SIZE}-${CCTP_MESSAGE_MAX_SIZE} bytes.`
+    );
+  }
+
+  // Validate attestation size
+  if (attestation.length < ATTESTATION_MIN_SIZE || attestation.length > ATTESTATION_MAX_SIZE) {
+    throw new Error(
+      `Invalid attestation size: ${attestation.length} bytes. ` +
+      `Expected ${ATTESTATION_MIN_SIZE}-${ATTESTATION_MAX_SIZE} bytes.`
+    );
+  }
+
+  // Calculate total size: discriminator + length prefixes + data
+  const totalSize = 8 + 4 + message.length + 4 + attestation.length;
+  const data = Buffer.alloc(totalSize);
+  let offset = 0;
+
+  // Write discriminator (8 bytes)
+  RECEIVE_MESSAGE_DISCRIMINATOR.copy(data, offset);
+  offset += 8;
+
+  // Write message as Vec<u8>: length (u32 LE) + bytes
+  data.writeUInt32LE(message.length, offset);
+  offset += 4;
+  message.copy(data, offset);
+  offset += message.length;
+
+  // Write attestation as Vec<u8>: length (u32 LE) + bytes
+  data.writeUInt32LE(attestation.length, offset);
+  offset += 4;
+  attestation.copy(data, offset);
+
+  return data;
+}
+
+// =============================================================================
+// On-Chain State Fetching
+// =============================================================================
+
+/**
+ * Fetch the feeRecipient from the on-chain TokenMessenger state.
+ * Uses Anchor for account deserialization (only account reading, not instruction building).
+ *
+ * @throws Error with descriptive message on network errors or invalid account data
+ */
+async function fetchFeeRecipient(
+  connection: Connection,
+  tokenMessengerPda: PublicKey
+): Promise<PublicKey> {
+  try {
+    // Dynamic import to avoid Anchor in the main instruction path
+    const { Program, AnchorProvider } = await import("@coral-xyz/anchor");
+
+    // Create minimal wallet wrapper (only used for provider, no signing)
+    const wallet = {
+      publicKey: PublicKey.default,
+      signTransaction: async <T>(tx: T): Promise<T> => tx,
+      signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
+    };
+
+    const provider = new AnchorProvider(connection, wallet, {
+      commitment: "confirmed",
+    });
+
+    // Load TokenMessenger program to read account state
+    const tokenMessengerProgram = await Program.at(
+      TOKEN_MESSENGER_PROGRAM_ID,
+      provider
+    );
+
+    // Fetch TokenMessenger state from chain
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const accounts = tokenMessengerProgram.account as any;
+    if (!accounts?.tokenMessenger?.fetch) {
+      throw new Error(
+        "TokenMessenger account type not found in program IDL. " +
+        "The program may have been upgraded or the IDL is outdated."
+      );
+    }
+
+    const tokenMessengerState = await accounts.tokenMessenger.fetch(tokenMessengerPda);
+
+    // Validate the returned state has feeRecipient
+    if (!tokenMessengerState || typeof tokenMessengerState !== "object") {
+      throw new Error(
+        "Invalid TokenMessenger state: received null or non-object response"
+      );
+    }
+
+    const feeRecipient = tokenMessengerState.feeRecipient;
+    if (!feeRecipient || !(feeRecipient instanceof PublicKey)) {
+      throw new Error(
+        "Invalid feeRecipient in TokenMessenger state: expected PublicKey"
+      );
+    }
+
+    return feeRecipient;
+  } catch (error) {
+    // Re-throw our validation errors as-is
+    if (error instanceof Error && error.message.includes("TokenMessenger")) {
+      throw error;
+    }
+
+    // Wrap network/RPC errors with context
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Failed to fetch feeRecipient from TokenMessenger: ${message}`
+    );
+  }
+}
 
 // =============================================================================
 // Source USDC Addresses (EVM)
@@ -247,7 +448,8 @@ export interface SolanaMintParams {
 
 /**
  * Build a CCTP receiveMessage transaction.
- * Matches the exact implementation from @circle-fin/adapter-solana.
+ * Uses manual instruction serialization to avoid Anchor's buffer size limits
+ * with large Vec<u8> parameters (message ~285 bytes, attestation ~130 bytes).
  */
 export async function buildReceiveMessageTransaction(
   params: SolanaMintParams
@@ -271,37 +473,11 @@ export async function buildReceiveMessageTransaction(
   const eventNonce = extractEventNonceFromMessage(message);
   const usedNoncePda = deriveUsedNoncePda(eventNonce);
 
-  // Create minimal wallet wrapper for Anchor
-  const wallet = {
-    publicKey: user,
-    signTransaction: async <T>(tx: T): Promise<T> => tx,
-    signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
-  };
-
-  const provider = new AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
-  });
-
-  // Load programs from chain
-  const [tokenMessengerProgram, messageTransmitterProgram] = await Promise.all([
-    Program.at(TOKEN_MESSENGER_PROGRAM_ID, provider),
-    Program.at(MESSAGE_TRANSMITTER_PROGRAM_ID, provider),
-  ]);
-
   // Fetch feeRecipient from on-chain tokenMessenger state
-  const tokenMessengerState = await (
-    tokenMessengerProgram.account as Record<
-      string,
-      { fetch: (key: PublicKey) => Promise<{ feeRecipient: PublicKey }> }
-    >
-  ).tokenMessenger.fetch(pdas.tokenMessengerPda);
-  const feeRecipient = tokenMessengerState.feeRecipient;
+  const feeRecipient = await fetchFeeRecipient(connection, pdas.tokenMessengerPda);
 
   // Get fee recipient's USDC ATA
-  const feeRecipientAta = utils.token.associatedAddress({
-    mint: usdcMint,
-    owner: feeRecipient,
-  });
+  const feeRecipientAta = await getAssociatedTokenAddress(usdcMint, feeRecipient);
 
   // Determine the mint recipient (token receiver)
   const mintRecipientOwner = destinationAddress
@@ -309,65 +485,52 @@ export async function buildReceiveMessageTransaction(
     : user;
 
   // Get user's USDC ATA
-  const userUsdcAta = utils.token.associatedAddress({
-    mint: usdcMint,
-    owner: mintRecipientOwner,
-  });
+  const userUsdcAta = await getAssociatedTokenAddress(usdcMint, mintRecipientOwner);
 
   // Convert message and attestation to buffers
   const messageBuffer = Buffer.from(message.replace(/^0x/, ""), "hex");
   const attestationBuffer = Buffer.from(attestation.replace(/^0x/, ""), "hex");
 
-  // Build remaining accounts (matches Bridge Kit exactly)
-  const remainingAccounts: AccountMeta[] = [
-    { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },
-    {
-      pubkey: pdas.remoteTokenMessengerPda,
-      isSigner: false,
-      isWritable: false,
-    },
-    { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },
-    { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },
-    { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },
-    { pubkey: feeRecipientAta, isSigner: false, isWritable: true },
-    { pubkey: userUsdcAta, isSigner: false, isWritable: true },
-    { pubkey: pdas.custodyPda, isSigner: false, isWritable: true },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: pdas.eventAuthorityPda, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },
+  // Serialize instruction data manually to avoid Anchor's buffer size limits
+  const instructionData = serializeReceiveMessageData(messageBuffer, attestationBuffer);
+
+  // Build account keys for receiveMessage instruction.
+  // CRITICAL: Order MUST match the MessageTransmitter program's receive_message instruction layout.
+  // Reference: Circle CCTP v2 Solana program (MessageTransmitter)
+  // See: https://github.com/circlefin/solana-cctp-contracts
+  //
+  // Accounts [0-6]: Core MessageTransmitter accounts
+  // Accounts [7-17]: Remaining accounts passed via CPI to TokenMessengerMinter
+  const keys: AccountMeta[] = [
+    // === Core MessageTransmitter accounts (indices 0-6) ===
+    { pubkey: user, isSigner: true, isWritable: true },                              // [0] payer - pays for tx fees and rent
+    { pubkey: user, isSigner: true, isWritable: false },                             // [1] caller - authorized message caller
+    { pubkey: pdas.messageTransmitterAuthorityPda, isSigner: false, isWritable: false }, // [2] authority_pda - program authority
+    { pubkey: pdas.messageTransmitterPda, isSigner: false, isWritable: false },      // [3] message_transmitter - program state
+    { pubkey: usedNoncePda, isSigner: false, isWritable: true },                     // [4] used_nonces - tracks used nonces (writable)
+    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },      // [5] receiver - TokenMessenger program
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },         // [6] system_program - Solana System Program
+
+    // === Remaining accounts for CPI to TokenMessengerMinter (indices 7-17) ===
+    { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },          // [7] token_messenger - TokenMessenger state
+    { pubkey: pdas.remoteTokenMessengerPda, isSigner: false, isWritable: false },    // [8] remote_token_messenger - source chain config
+    { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },              // [9] token_minter - minting authority (writable)
+    { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },               // [10] local_token - USDC token config (writable)
+    { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },               // [11] token_pair - source/dest token mapping
+    { pubkey: feeRecipientAta, isSigner: false, isWritable: true },                  // [12] fee_recipient_ata - receives fees (writable)
+    { pubkey: userUsdcAta, isSigner: false, isWritable: true },                      // [13] user_token_account - receives USDC (writable)
+    { pubkey: pdas.custodyPda, isSigner: false, isWritable: true },                  // [14] custody - USDC custody account (writable)
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },                // [15] token_program - SPL Token Program
+    { pubkey: pdas.eventAuthorityPda, isSigner: false, isWritable: false },          // [16] event_authority - event emission authority
+    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },      // [17] token_messenger_minter_program - for CPI
   ];
 
-  // Build receiveMessage instruction using Anchor
-  const receiveMessageIx = await (
-    messageTransmitterProgram.methods as Record<
-      string,
-      (params: {
-        message: Buffer;
-        attestation: Buffer;
-      }) => {
-        accounts: (accounts: Record<string, PublicKey>) => {
-          remainingAccounts: (
-            accounts: AccountMeta[]
-          ) => { instruction: () => Promise<unknown> };
-        };
-      }
-    >
-  )
-    .receiveMessage({
-      message: messageBuffer,
-      attestation: attestationBuffer,
-    })
-    .accounts({
-      payer: user,
-      caller: user,
-      authorityPda: pdas.messageTransmitterAuthorityPda,
-      messageTransmitter: pdas.messageTransmitterPda,
-      usedNonce: usedNoncePda,
-      receiver: TOKEN_MESSENGER_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-    })
-    .remainingAccounts(remainingAccounts)
-    .instruction();
+  // Create receiveMessage instruction manually
+  const receiveMessageIx = new TransactionInstruction({
+    programId: MESSAGE_TRANSMITTER_PROGRAM_ID,
+    keys,
+    data: instructionData,
+  });
 
   // Build transaction
   const transaction = new Transaction();
@@ -384,7 +547,7 @@ export async function buildReceiveMessageTransaction(
     transaction.add(createAtaIx);
   }
 
-  transaction.add(receiveMessageIx as TransactionInstruction);
+  transaction.add(receiveMessageIx);
 
   // Get recent blockhash
   const { blockhash, lastValidBlockHeight } =
