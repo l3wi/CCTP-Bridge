@@ -9,6 +9,9 @@ import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+  AddressLookupTableAccount,
   SystemProgram,
   AccountMeta,
 } from "@solana/web3.js";
@@ -17,7 +20,7 @@ import {
   createAssociatedTokenAccountInstruction,
   getAssociatedTokenAddress,
 } from "@solana/spl-token";
-import { getSolanaUsdcMint } from "../shared";
+import { getSolanaUsdcMint, getCctpAltAddress } from "../shared";
 import type { SolanaChainId } from "../types";
 
 // =============================================================================
@@ -94,19 +97,32 @@ verifyDiscriminatorInDev();
 // =============================================================================
 
 /**
- * Expected CCTP message size ranges.
- * CCTP v2 messages contain: version(4) + sourceDomain(4) + destinationDomain(4) +
- * nonce(32) + sender(32) + recipient(32) + destinationCaller(32) + messageBody(~100+)
+ * Expected CCTP message size ranges for CCTP v2.
+ *
+ * Message structure:
+ *   Header (148 bytes fixed):
+ *     - version(4) + sourceDomain(4) + destinationDomain(4) + nonce(32)
+ *     - sender(32) + recipient(32) + destinationCaller(32)
+ *     - minFinalityThreshold(4) + finalityThresholdExecuted(4)
+ *
+ *   BurnMessage body (228+ bytes):
+ *     - version(4) + burnToken(32) + mintRecipient(32) + amount(32)
+ *     - messageSender(32) + maxFee(32) + feeExecuted(32) + expirationBlock(32)
+ *     - hookData (variable length)
+ *
+ * With Address Lookup Tables (ALTs), we have ~600 bytes of headroom
+ * for message + attestation by reducing account key overhead.
  */
 const CCTP_MESSAGE_MIN_SIZE = 140; // Minimum structure without body
-const CCTP_MESSAGE_MAX_SIZE = 500; // Maximum with large message body
+const CCTP_MESSAGE_MAX_SIZE = 800; // Allow for hookData with ALT headroom
 
 /**
  * Expected attestation size ranges.
- * CCTP attestations are ECDSA signatures (65 bytes) with optional metadata.
+ * CCTP v2 attestations contain ECDSA signatures (65 bytes each) with metadata.
+ * Multiple attesters may sign for higher finality thresholds.
  */
 const ATTESTATION_MIN_SIZE = 65; // Single ECDSA signature
-const ATTESTATION_MAX_SIZE = 300; // Multiple signatures with overhead
+const ATTESTATION_MAX_SIZE = 400; // Multiple signatures with overhead
 
 /**
  * Serialize receiveMessage instruction data manually using Borsh format.
@@ -447,13 +463,40 @@ export interface SolanaMintParams {
 }
 
 /**
+ * Fetch Address Lookup Table account from chain.
+ * Returns null if ALT is not configured or doesn't exist.
+ */
+async function fetchAddressLookupTable(
+  connection: Connection,
+  destinationChainId: SolanaChainId
+): Promise<AddressLookupTableAccount | null> {
+  const altAddress = getCctpAltAddress(destinationChainId);
+  if (!altAddress) {
+    return null;
+  }
+
+  try {
+    const altAccountInfo = await connection.getAddressLookupTable(altAddress);
+    return altAccountInfo.value;
+  } catch (error) {
+    console.warn(
+      `[CCTP] Failed to fetch ALT ${altAddress.toBase58()}:`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
+
+/**
  * Build a CCTP receiveMessage transaction.
- * Uses manual instruction serialization to avoid Anchor's buffer size limits
- * with large Vec<u8> parameters (message ~285 bytes, attestation ~130 bytes).
+ * Uses VersionedTransaction with Address Lookup Tables (ALTs) to reduce transaction size,
+ * allowing larger CCTP messages that would exceed the 1232-byte limit with legacy transactions.
+ *
+ * If ALT is not available, falls back to legacy Transaction (may fail for large messages).
  */
 export async function buildReceiveMessageTransaction(
   params: SolanaMintParams
-): Promise<Transaction> {
+): Promise<VersionedTransaction | Transaction> {
   const {
     connection,
     user,
@@ -532,8 +575,8 @@ export async function buildReceiveMessageTransaction(
     data: instructionData,
   });
 
-  // Build transaction
-  const transaction = new Transaction();
+  // Build instructions array
+  const instructions: TransactionInstruction[] = [];
 
   // Check if user's ATA exists, create if needed
   const userAtaInfo = await connection.getAccountInfo(userUsdcAta);
@@ -544,19 +587,41 @@ export async function buildReceiveMessageTransaction(
       mintRecipientOwner, // owner
       usdcMint // mint
     );
-    transaction.add(createAtaIx);
+    instructions.push(createAtaIx);
   }
 
-  transaction.add(receiveMessageIx);
+  instructions.push(receiveMessageIx);
 
   // Get recent blockhash
   const { blockhash, lastValidBlockHeight } =
     await connection.getLatestBlockhash("confirmed");
-  transaction.recentBlockhash = blockhash;
-  transaction.lastValidBlockHeight = lastValidBlockHeight;
-  transaction.feePayer = user;
 
-  return transaction;
+  // Try to use ALT for smaller transaction size
+  const addressLookupTable = await fetchAddressLookupTable(connection, destinationChainId);
+
+  if (addressLookupTable) {
+    // Use VersionedTransaction with ALT for smaller size
+    const messageV0 = new TransactionMessage({
+      payerKey: user,
+      recentBlockhash: blockhash,
+      instructions,
+    }).compileToV0Message([addressLookupTable]);
+
+    const versionedTx = new VersionedTransaction(messageV0);
+    return versionedTx;
+  } else {
+    // Fallback to legacy Transaction (may fail for large messages)
+    console.warn(
+      "[CCTP] No ALT available, using legacy transaction. " +
+      "Large messages may exceed the 1232-byte limit."
+    );
+    const transaction = new Transaction();
+    instructions.forEach((ix) => transaction.add(ix));
+    transaction.recentBlockhash = blockhash;
+    transaction.lastValidBlockHeight = lastValidBlockHeight;
+    transaction.feePayer = user;
+    return transaction;
+  }
 }
 
 // =============================================================================
@@ -567,10 +632,12 @@ export async function buildReceiveMessageTransaction(
  * Send a signed transaction WITHOUT waiting for confirmation.
  * Returns the signature immediately after sending.
  * This avoids WebSocket confirmation hangs in the browser.
+ *
+ * Supports both legacy Transaction and VersionedTransaction.
  */
 export async function sendTransactionNoConfirm(
   connection: Connection,
-  signedTransaction: Transaction
+  signedTransaction: Transaction | VersionedTransaction
 ): Promise<string> {
   const rawTransaction = signedTransaction.serialize();
 
@@ -580,4 +647,13 @@ export async function sendTransactionNoConfirm(
   });
 
   return signature;
+}
+
+/**
+ * Type guard to check if transaction is a VersionedTransaction.
+ */
+export function isVersionedTransaction(
+  tx: Transaction | VersionedTransaction
+): tx is VersionedTransaction {
+  return "version" in tx;
 }
