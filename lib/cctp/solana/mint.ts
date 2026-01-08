@@ -15,8 +15,8 @@ import {
 import {
   TOKEN_PROGRAM_ID,
   createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddress,
 } from "@solana/spl-token";
-import { Program, AnchorProvider, utils } from "@coral-xyz/anchor";
 import { getSolanaUsdcMint } from "../shared";
 import type { SolanaChainId } from "../types";
 
@@ -33,6 +33,95 @@ export const MESSAGE_TRANSMITTER_PROGRAM_ID = new PublicKey(
 export const TOKEN_MESSENGER_PROGRAM_ID = new PublicKey(
   "CCTPV2vPZJS2u2BBsUoscuikbYjnpFmbFsvVuJdgUMQe"
 );
+
+/**
+ * Anchor instruction discriminator for "receive_message".
+ * Computed as first 8 bytes of SHA256("global:receive_message").
+ * Pre-computed to avoid crypto dependency and Anchor method builder issues.
+ */
+const RECEIVE_MESSAGE_DISCRIMINATOR = Buffer.from([
+  0x26, 0x90, 0x7f, 0xe1, 0x1f, 0xe1, 0xee, 0x19,
+]);
+
+// =============================================================================
+// Instruction Data Serialization
+// =============================================================================
+
+/**
+ * Serialize receiveMessage instruction data manually using Borsh format.
+ * This avoids Anchor's method builder which has buffer size issues with large Vec<u8>.
+ *
+ * Format: [8-byte discriminator][4-byte msg len][msg bytes][4-byte att len][att bytes]
+ */
+function serializeReceiveMessageData(
+  message: Buffer,
+  attestation: Buffer
+): Buffer {
+  // Calculate total size: discriminator + length prefixes + data
+  const totalSize = 8 + 4 + message.length + 4 + attestation.length;
+  const data = Buffer.alloc(totalSize);
+  let offset = 0;
+
+  // Write discriminator (8 bytes)
+  RECEIVE_MESSAGE_DISCRIMINATOR.copy(data, offset);
+  offset += 8;
+
+  // Write message as Vec<u8>: length (u32 LE) + bytes
+  data.writeUInt32LE(message.length, offset);
+  offset += 4;
+  message.copy(data, offset);
+  offset += message.length;
+
+  // Write attestation as Vec<u8>: length (u32 LE) + bytes
+  data.writeUInt32LE(attestation.length, offset);
+  offset += 4;
+  attestation.copy(data, offset);
+
+  return data;
+}
+
+// =============================================================================
+// On-Chain State Fetching
+// =============================================================================
+
+/**
+ * Fetch the feeRecipient from the on-chain TokenMessenger state.
+ * Uses Anchor for account deserialization (only account reading, not instruction building).
+ */
+async function fetchFeeRecipient(
+  connection: Connection,
+  tokenMessengerPda: PublicKey
+): Promise<PublicKey> {
+  // Dynamic import to avoid Anchor in the main instruction path
+  const { Program, AnchorProvider } = await import("@coral-xyz/anchor");
+
+  // Create minimal wallet wrapper (only used for provider, no signing)
+  const wallet = {
+    publicKey: PublicKey.default,
+    signTransaction: async <T>(tx: T): Promise<T> => tx,
+    signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
+  };
+
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+
+  // Load TokenMessenger program to read account state
+  const tokenMessengerProgram = await Program.at(
+    TOKEN_MESSENGER_PROGRAM_ID,
+    provider
+  );
+
+  // Fetch feeRecipient from on-chain state
+  const tokenMessengerState = await (
+    tokenMessengerProgram.account as Record<
+      string,
+      { fetch: (key: PublicKey) => Promise<{ feeRecipient: PublicKey }> }
+    >
+  ).tokenMessenger.fetch(tokenMessengerPda);
+
+  return tokenMessengerState.feeRecipient;
+}
 
 // =============================================================================
 // Source USDC Addresses (EVM)
@@ -247,7 +336,8 @@ export interface SolanaMintParams {
 
 /**
  * Build a CCTP receiveMessage transaction.
- * Matches the exact implementation from @circle-fin/adapter-solana.
+ * Uses manual instruction serialization to avoid Anchor's buffer size limits
+ * with large Vec<u8> parameters (message ~285 bytes, attestation ~130 bytes).
  */
 export async function buildReceiveMessageTransaction(
   params: SolanaMintParams
@@ -271,37 +361,11 @@ export async function buildReceiveMessageTransaction(
   const eventNonce = extractEventNonceFromMessage(message);
   const usedNoncePda = deriveUsedNoncePda(eventNonce);
 
-  // Create minimal wallet wrapper for Anchor
-  const wallet = {
-    publicKey: user,
-    signTransaction: async <T>(tx: T): Promise<T> => tx,
-    signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
-  };
-
-  const provider = new AnchorProvider(connection, wallet, {
-    commitment: "confirmed",
-  });
-
-  // Load programs from chain
-  const [tokenMessengerProgram, messageTransmitterProgram] = await Promise.all([
-    Program.at(TOKEN_MESSENGER_PROGRAM_ID, provider),
-    Program.at(MESSAGE_TRANSMITTER_PROGRAM_ID, provider),
-  ]);
-
   // Fetch feeRecipient from on-chain tokenMessenger state
-  const tokenMessengerState = await (
-    tokenMessengerProgram.account as Record<
-      string,
-      { fetch: (key: PublicKey) => Promise<{ feeRecipient: PublicKey }> }
-    >
-  ).tokenMessenger.fetch(pdas.tokenMessengerPda);
-  const feeRecipient = tokenMessengerState.feeRecipient;
+  const feeRecipient = await fetchFeeRecipient(connection, pdas.tokenMessengerPda);
 
   // Get fee recipient's USDC ATA
-  const feeRecipientAta = utils.token.associatedAddress({
-    mint: usdcMint,
-    owner: feeRecipient,
-  });
+  const feeRecipientAta = await getAssociatedTokenAddress(usdcMint, feeRecipient);
 
   // Determine the mint recipient (token receiver)
   const mintRecipientOwner = destinationAddress
@@ -309,23 +373,28 @@ export async function buildReceiveMessageTransaction(
     : user;
 
   // Get user's USDC ATA
-  const userUsdcAta = utils.token.associatedAddress({
-    mint: usdcMint,
-    owner: mintRecipientOwner,
-  });
+  const userUsdcAta = await getAssociatedTokenAddress(usdcMint, mintRecipientOwner);
 
   // Convert message and attestation to buffers
   const messageBuffer = Buffer.from(message.replace(/^0x/, ""), "hex");
   const attestationBuffer = Buffer.from(attestation.replace(/^0x/, ""), "hex");
 
-  // Build remaining accounts (matches Bridge Kit exactly)
-  const remainingAccounts: AccountMeta[] = [
+  // Serialize instruction data manually to avoid Anchor's buffer size limits
+  const instructionData = serializeReceiveMessageData(messageBuffer, attestationBuffer);
+
+  // Build account keys for receiveMessage instruction
+  // Order must match the program's instruction account layout exactly
+  const keys: AccountMeta[] = [
+    { pubkey: user, isSigner: true, isWritable: true }, // payer
+    { pubkey: user, isSigner: true, isWritable: false }, // caller
+    { pubkey: pdas.messageTransmitterAuthorityPda, isSigner: false, isWritable: false }, // authority_pda
+    { pubkey: pdas.messageTransmitterPda, isSigner: false, isWritable: false }, // message_transmitter
+    { pubkey: usedNoncePda, isSigner: false, isWritable: true }, // used_nonces
+    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false }, // receiver
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false }, // system_program
+    // Remaining accounts for CPI to TokenMessengerMinter
     { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },
-    {
-      pubkey: pdas.remoteTokenMessengerPda,
-      isSigner: false,
-      isWritable: false,
-    },
+    { pubkey: pdas.remoteTokenMessengerPda, isSigner: false, isWritable: false },
     { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },
     { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },
     { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },
@@ -337,37 +406,12 @@ export async function buildReceiveMessageTransaction(
     { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },
   ];
 
-  // Build receiveMessage instruction using Anchor
-  const receiveMessageIx = await (
-    messageTransmitterProgram.methods as Record<
-      string,
-      (params: {
-        message: Buffer;
-        attestation: Buffer;
-      }) => {
-        accounts: (accounts: Record<string, PublicKey>) => {
-          remainingAccounts: (
-            accounts: AccountMeta[]
-          ) => { instruction: () => Promise<unknown> };
-        };
-      }
-    >
-  )
-    .receiveMessage({
-      message: messageBuffer,
-      attestation: attestationBuffer,
-    })
-    .accounts({
-      payer: user,
-      caller: user,
-      authorityPda: pdas.messageTransmitterAuthorityPda,
-      messageTransmitter: pdas.messageTransmitterPda,
-      usedNonce: usedNoncePda,
-      receiver: TOKEN_MESSENGER_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-    })
-    .remainingAccounts(remainingAccounts)
-    .instruction();
+  // Create receiveMessage instruction manually
+  const receiveMessageIx = new TransactionInstruction({
+    programId: MESSAGE_TRANSMITTER_PROGRAM_ID,
+    keys,
+    data: instructionData,
+  });
 
   // Build transaction
   const transaction = new Transaction();
@@ -384,7 +428,7 @@ export async function buildReceiveMessageTransaction(
     transaction.add(createAtaIx);
   }
 
-  transaction.add(receiveMessageIx as TransactionInstruction);
+  transaction.add(receiveMessageIx);
 
   // Get recent blockhash
   const { blockhash, lastValidBlockHeight } =
