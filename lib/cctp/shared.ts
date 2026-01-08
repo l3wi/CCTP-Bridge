@@ -276,6 +276,34 @@ export function asUniversalTxHash(value: unknown): UniversalTxHash | undefined {
 }
 
 // =============================================================================
+// Address Lookup Tables (ALTs)
+// =============================================================================
+
+/**
+ * CCTP Address Lookup Tables for Solana receiveMessage transactions.
+ * ALTs reduce transaction size by replacing 32-byte addresses with 1-byte indices.
+ *
+ * Deploy with: bun run scripts/create-cctp-alt.ts <mainnet|devnet>
+ */
+export const CCTP_ALT_ADDRESSES: Record<SolanaChainId, string | null> = {
+  // TODO: Deploy ALT and update this address
+  // Run: bun run scripts/create-cctp-alt.ts mainnet
+  Solana: null,
+  // TODO: Deploy ALT and update this address
+  // Run: bun run scripts/create-cctp-alt.ts devnet
+  Solana_Devnet: null,
+};
+
+/**
+ * Get CCTP ALT PublicKey for a Solana chain.
+ * Returns null if not configured.
+ */
+export function getCctpAltAddress(chainId: SolanaChainId): PublicKey | null {
+  const address = CCTP_ALT_ADDRESSES[chainId];
+  return address ? new PublicKey(address) : null;
+}
+
+// =============================================================================
 // Iris API Configuration
 // =============================================================================
 

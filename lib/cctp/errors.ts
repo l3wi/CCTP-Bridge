@@ -19,6 +19,7 @@ export type BridgeErrorCode =
   | "ATTESTATION_PENDING"
   | "ATTESTATION_FAILED"
   | "NONCE_ALREADY_USED"
+  | "MESSAGE_EXPIRED"
   | "SIMULATION_FAILED"
   | "NETWORK_ERROR"
   | "UNKNOWN_ERROR";
@@ -92,6 +93,27 @@ export function isNonceAlreadyUsed(error: unknown): boolean {
 }
 
 /**
+ * Detect if error indicates CCTP message has expired.
+ * Solana CCTP v2 error code 6016 (0x1780) = MessageExpired
+ *
+ * This happens when Fast Transfer messages are not claimed within the validity window.
+ * Recovery: Call the re-attestation API to get a fresh attestation.
+ */
+export function isMessageExpired(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const lowerMessage = message.toLowerCase();
+
+  return (
+    lowerMessage.includes("messageexpired") ||
+    lowerMessage.includes("message has expired") ||
+    lowerMessage.includes("message expired") ||
+    // Solana error code 6016 (0x1780)
+    message.includes("0x1780") ||
+    /"custom":\s*6016/i.test(message)
+  );
+}
+
+/**
  * Get appropriate error code from error
  */
 export function getErrorCode(error: unknown): BridgeErrorCode {
@@ -99,6 +121,7 @@ export function getErrorCode(error: unknown): BridgeErrorCode {
   if (isInsufficientBalance(error)) return "INSUFFICIENT_BALANCE";
   if (isInsufficientGas(error)) return "INSUFFICIENT_GAS";
   if (isNonceAlreadyUsed(error)) return "NONCE_ALREADY_USED";
+  if (isMessageExpired(error)) return "MESSAGE_EXPIRED";
   return "UNKNOWN_ERROR";
 }
 
@@ -171,6 +194,10 @@ export function formatErrorForToast(error: unknown): string {
 
   if (isNonceAlreadyUsed(error)) {
     return "Already claimed";
+  }
+
+  if (isMessageExpired(error)) {
+    return "Message expired - refreshing attestation";
   }
 
   // For unknown errors, extract a short message

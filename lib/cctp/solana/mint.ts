@@ -9,6 +9,9 @@ import {
   PublicKey,
   Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+  AddressLookupTableAccount,
   SystemProgram,
   AccountMeta,
 } from "@solana/web3.js";
@@ -17,7 +20,7 @@ import {
   createAssociatedTokenAccountInstruction,
 } from "@solana/spl-token";
 import { Program, AnchorProvider, utils } from "@coral-xyz/anchor";
-import { getSolanaUsdcMint } from "../shared";
+import { getSolanaUsdcMint, getCctpAltAddress } from "../shared";
 import type { SolanaChainId } from "../types";
 
 // =============================================================================
@@ -229,7 +232,7 @@ export function extractEventNonceFromMessage(message: string): string {
 
 export interface SolanaMintParams {
   connection: Connection;
-  /** User wallet pubkey */
+  /** User wallet pubkey (payer/signer) */
   user: PublicKey;
   /** CCTP message hex string */
   message: string;
@@ -241,17 +244,23 @@ export interface SolanaMintParams {
   destinationChainId: SolanaChainId;
   /** Whether using testnet */
   isTestnet: boolean;
-  /** Optional recipient address (defaults to user) */
-  destinationAddress?: string;
+  /**
+   * The mintRecipient from attestation data (token account where USDC is minted).
+   * This is the ATA that was encoded during burn - MUST match what's in the message.
+   * If not provided, will compute from user's wallet (may cause "Invalid mint recipient" error).
+   */
+  mintRecipient?: string;
 }
 
 /**
  * Build a CCTP receiveMessage transaction.
- * Matches the exact implementation from @circle-fin/adapter-solana.
+ * Uses VersionedTransaction with Address Lookup Tables to reduce transaction size.
+ *
+ * Returns VersionedTransaction which must be signed with wallet.signTransaction().
  */
 export async function buildReceiveMessageTransaction(
   params: SolanaMintParams
-): Promise<Transaction> {
+): Promise<VersionedTransaction> {
   const {
     connection,
     user,
@@ -260,7 +269,7 @@ export async function buildReceiveMessageTransaction(
     sourceDomain,
     destinationChainId,
     isTestnet,
-    destinationAddress,
+    mintRecipient,
   } = params;
 
   const usdcMint = getSolanaUsdcMint(destinationChainId);
@@ -270,6 +279,35 @@ export async function buildReceiveMessageTransaction(
   // Extract eventNonce from message (32 bytes at offset 12)
   const eventNonce = extractEventNonceFromMessage(message);
   const usedNoncePda = deriveUsedNoncePda(eventNonce);
+
+  // Compute the connected user's ATA
+  const computedUserAta = utils.token.associatedAddress({
+    mint: usdcMint,
+    owner: user,
+  });
+
+  // If mintRecipient is provided from attestation, verify it matches user's ATA
+  // This ensures the user connected with the same wallet they specified during burn
+  let userUsdcAta: PublicKey;
+  let ataOwner: PublicKey;
+
+  if (mintRecipient) {
+    const attestationAta = new PublicKey(mintRecipient);
+    // Check if the attestation's mintRecipient matches user's computed ATA
+    if (!computedUserAta.equals(attestationAta)) {
+      const expectedTrunc = attestationAta.toBase58().slice(0, 15) + "...";
+      const yourTrunc = computedUserAta.toBase58().slice(0, 15) + "...";
+      throw new Error(
+        `Connect the recipient wallet to claim USDC. Your ATA: ${yourTrunc} Expected: ${expectedTrunc}`
+      );
+    }
+    userUsdcAta = attestationAta;
+    ataOwner = user; // We verified user's ATA matches, so user is the owner
+  } else {
+    // No mintRecipient from attestation, use computed ATA
+    userUsdcAta = computedUserAta;
+    ataOwner = user;
+  }
 
   // Create minimal wallet wrapper for Anchor
   const wallet = {
@@ -301,17 +339,6 @@ export async function buildReceiveMessageTransaction(
   const feeRecipientAta = utils.token.associatedAddress({
     mint: usdcMint,
     owner: feeRecipient,
-  });
-
-  // Determine the mint recipient (token receiver)
-  const mintRecipientOwner = destinationAddress
-    ? new PublicKey(destinationAddress)
-    : user;
-
-  // Get user's USDC ATA
-  const userUsdcAta = utils.token.associatedAddress({
-    mint: usdcMint,
-    owner: mintRecipientOwner,
   });
 
   // Convert message and attestation to buffers
@@ -369,31 +396,46 @@ export async function buildReceiveMessageTransaction(
     .remainingAccounts(remainingAccounts)
     .instruction();
 
-  // Build transaction
-  const transaction = new Transaction();
+  // Build instructions array
+  const instructions: TransactionInstruction[] = [];
 
-  // Check if user's ATA exists, create if needed
+  // Check if ATA exists, create if needed
   const userAtaInfo = await connection.getAccountInfo(userUsdcAta);
   if (!userAtaInfo) {
+    // We verified the user's wallet matches the mintRecipient's owner, so we can create the ATA
     const createAtaIx = createAssociatedTokenAccountInstruction(
       user, // payer
       userUsdcAta, // ata
-      mintRecipientOwner, // owner
+      ataOwner, // owner (verified to be the correct owner)
       usdcMint // mint
     );
-    transaction.add(createAtaIx);
+    instructions.push(createAtaIx);
   }
 
-  transaction.add(receiveMessageIx as TransactionInstruction);
+  instructions.push(receiveMessageIx as TransactionInstruction);
 
   // Get recent blockhash
-  const { blockhash, lastValidBlockHeight } =
-    await connection.getLatestBlockhash("confirmed");
-  transaction.recentBlockhash = blockhash;
-  transaction.lastValidBlockHeight = lastValidBlockHeight;
-  transaction.feePayer = user;
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
 
-  return transaction;
+  // Fetch Address Lookup Table if configured (reduces transaction size)
+  const lookupTables: AddressLookupTableAccount[] = [];
+  const altAddress = getCctpAltAddress(destinationChainId);
+  if (altAddress) {
+    const altAccountInfo = await connection.getAddressLookupTable(altAddress);
+    if (altAccountInfo.value) {
+      lookupTables.push(altAccountInfo.value);
+    }
+  }
+
+  // Build versioned transaction message
+  const messageV0 = new TransactionMessage({
+    payerKey: user,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message(lookupTables.length > 0 ? lookupTables : undefined);
+
+  // Return versioned transaction (unsigned - wallet will sign)
+  return new VersionedTransaction(messageV0);
 }
 
 // =============================================================================
@@ -401,13 +443,13 @@ export async function buildReceiveMessageTransaction(
 // =============================================================================
 
 /**
- * Send a signed transaction WITHOUT waiting for confirmation.
+ * Send a signed versioned transaction WITHOUT waiting for confirmation.
  * Returns the signature immediately after sending.
  * This avoids WebSocket confirmation hangs in the browser.
  */
 export async function sendTransactionNoConfirm(
   connection: Connection,
-  signedTransaction: Transaction
+  signedTransaction: VersionedTransaction
 ): Promise<string> {
   const rawTransaction = signedTransaction.serialize();
 
@@ -417,4 +459,164 @@ export async function sendTransactionNoConfirm(
   });
 
   return signature;
+}
+
+// =============================================================================
+// Legacy Transaction Support (for backward compatibility)
+// =============================================================================
+
+/**
+ * Build a legacy Transaction for cases where VersionedTransaction isn't supported.
+ * @deprecated Use buildReceiveMessageTransaction instead
+ */
+export async function buildReceiveMessageLegacyTransaction(
+  params: SolanaMintParams
+): Promise<Transaction> {
+  const {
+    connection,
+    user,
+    message,
+    attestation,
+    sourceDomain,
+    destinationChainId,
+    isTestnet,
+    mintRecipient,
+  } = params;
+
+  const usdcMint = getSolanaUsdcMint(destinationChainId);
+  const sourceUsdcPubkey = getSourceUsdcPubkey(sourceDomain, isTestnet);
+  const pdas = deriveMintPdas(sourceDomain, sourceUsdcPubkey, usdcMint);
+
+  const eventNonce = extractEventNonceFromMessage(message);
+  const usedNoncePda = deriveUsedNoncePda(eventNonce);
+
+  // Compute the connected user's ATA
+  const computedUserAta = utils.token.associatedAddress({
+    mint: usdcMint,
+    owner: user,
+  });
+
+  // Verify mintRecipient matches user's ATA (if provided)
+  let userUsdcAta: PublicKey;
+  let ataOwner: PublicKey;
+
+  if (mintRecipient) {
+    const attestationAta = new PublicKey(mintRecipient);
+    if (!computedUserAta.equals(attestationAta)) {
+      const expectedTrunc = attestationAta.toBase58().slice(0, 15) + "...";
+      const yourTrunc = computedUserAta.toBase58().slice(0, 15) + "...";
+      throw new Error(
+        `Connect the recipient wallet to claim USDC. Your ATA: ${yourTrunc} Expected: ${expectedTrunc}`
+      );
+    }
+    userUsdcAta = attestationAta;
+    ataOwner = user;
+  } else {
+    userUsdcAta = computedUserAta;
+    ataOwner = user;
+  }
+
+  const wallet = {
+    publicKey: user,
+    signTransaction: async <T>(tx: T): Promise<T> => tx,
+    signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
+  };
+
+  const provider = new AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+
+  const [tokenMessengerProgram, messageTransmitterProgram] = await Promise.all([
+    Program.at(TOKEN_MESSENGER_PROGRAM_ID, provider),
+    Program.at(MESSAGE_TRANSMITTER_PROGRAM_ID, provider),
+  ]);
+
+  const tokenMessengerState = await (
+    tokenMessengerProgram.account as Record<
+      string,
+      { fetch: (key: PublicKey) => Promise<{ feeRecipient: PublicKey }> }
+    >
+  ).tokenMessenger.fetch(pdas.tokenMessengerPda);
+  const feeRecipient = tokenMessengerState.feeRecipient;
+
+  const feeRecipientAta = utils.token.associatedAddress({
+    mint: usdcMint,
+    owner: feeRecipient,
+  });
+
+  const messageBuffer = Buffer.from(message.replace(/^0x/, ""), "hex");
+  const attestationBuffer = Buffer.from(attestation.replace(/^0x/, ""), "hex");
+
+  const remainingAccounts: AccountMeta[] = [
+    { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },
+    { pubkey: pdas.remoteTokenMessengerPda, isSigner: false, isWritable: false },
+    { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },
+    { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },
+    { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },
+    { pubkey: feeRecipientAta, isSigner: false, isWritable: true },
+    { pubkey: userUsdcAta, isSigner: false, isWritable: true },
+    { pubkey: pdas.custodyPda, isSigner: false, isWritable: true },
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    { pubkey: pdas.eventAuthorityPda, isSigner: false, isWritable: false },
+    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },
+  ];
+
+  const receiveMessageIx = await (
+    messageTransmitterProgram.methods as Record<
+      string,
+      (params: { message: Buffer; attestation: Buffer }) => {
+        accounts: (accounts: Record<string, PublicKey>) => {
+          remainingAccounts: (accounts: AccountMeta[]) => {
+            instruction: () => Promise<unknown>;
+          };
+        };
+      }
+    >
+  )
+    .receiveMessage({ message: messageBuffer, attestation: attestationBuffer })
+    .accounts({
+      payer: user,
+      caller: user,
+      authorityPda: pdas.messageTransmitterAuthorityPda,
+      messageTransmitter: pdas.messageTransmitterPda,
+      usedNonce: usedNoncePda,
+      receiver: TOKEN_MESSENGER_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(remainingAccounts)
+    .instruction();
+
+  const transaction = new Transaction();
+
+  const userAtaInfo = await connection.getAccountInfo(userUsdcAta);
+  if (!userAtaInfo) {
+    // Create ATA if it doesn't exist (we verified ownership above)
+    transaction.add(
+      createAssociatedTokenAccountInstruction(user, userUsdcAta, ataOwner, usdcMint)
+    );
+  }
+
+  transaction.add(receiveMessageIx as TransactionInstruction);
+
+  const { blockhash, lastValidBlockHeight } =
+    await connection.getLatestBlockhash("confirmed");
+  transaction.recentBlockhash = blockhash;
+  transaction.lastValidBlockHeight = lastValidBlockHeight;
+  transaction.feePayer = user;
+
+  return transaction;
+}
+
+/**
+ * Send a signed legacy transaction WITHOUT waiting for confirmation.
+ */
+export async function sendLegacyTransactionNoConfirm(
+  connection: Connection,
+  signedTransaction: Transaction
+): Promise<string> {
+  const rawTransaction = signedTransaction.serialize();
+  return connection.sendRawTransaction(rawTransaction, {
+    skipPreflight: false,
+    preflightCommitment: "confirmed",
+  });
 }

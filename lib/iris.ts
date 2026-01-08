@@ -33,6 +33,7 @@ export interface IrisAttestationResponse {
         mintRecipient: string;
         amount: string;
         messageSender: string;
+        expirationBlock?: string;
       };
     };
   }>;
@@ -47,6 +48,8 @@ export interface AttestationData {
   nonce: string;
   amount?: string;
   mintRecipient?: string;
+  /** Block number after which the Fast Transfer message expires (CCTP v2 only) */
+  expirationBlock?: number;
 }
 
 /**
@@ -120,6 +123,12 @@ export async function fetchAttestation(
       msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
     ) as `0x${string}`;
 
+    // Parse expirationBlock if present (CCTP v2 Fast Transfers)
+    // Note: "0" means no expiration (re-attested messages), treat as undefined
+    const expirationBlockStr = msg.decodedMessage.decodedMessageBody?.expirationBlock;
+    const parsedExpiration = expirationBlockStr ? parseInt(expirationBlockStr, 10) : 0;
+    const expirationBlock = parsedExpiration > 0 ? parsedExpiration : undefined;
+
     return {
       message,
       attestation,
@@ -129,6 +138,7 @@ export async function fetchAttestation(
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      expirationBlock,
     };
   } catch (error) {
     console.error("Failed to fetch attestation from Iris:", error);
@@ -220,6 +230,12 @@ export async function fetchAttestationUniversal(
       msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
     ) as `0x${string}`;
 
+    // Parse expirationBlock if present (CCTP v2 Fast Transfers)
+    // Note: "0" means no expiration (re-attested messages), treat as undefined
+    const expirationBlockStr = msg.decodedMessage.decodedMessageBody?.expirationBlock;
+    const parsedExpiration = expirationBlockStr ? parseInt(expirationBlockStr, 10) : 0;
+    const expirationBlock = parsedExpiration > 0 ? parsedExpiration : undefined;
+
     return {
       message,
       attestation,
@@ -229,6 +245,7 @@ export async function fetchAttestationUniversal(
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      expirationBlock,
     };
   } catch (error) {
     console.error("Failed to fetch attestation from Iris:", error);
@@ -250,4 +267,171 @@ export async function isAttestationReady(
 ): Promise<boolean> {
   const data = await fetchAttestation(sourceChainId, burnTxHash);
   return data?.status === "complete";
+}
+
+// =============================================================================
+// Re-Attestation API
+// =============================================================================
+
+export interface ReattestationResult {
+  success: boolean;
+  error?: string;
+}
+
+/**
+ * Request re-attestation for an expired Fast Transfer message.
+ * This endpoint revives expired CCTP v2 messages by generating a new attestation.
+ *
+ * Use case: When a mint fails with "MessageExpired" error (6016), call this
+ * to get a fresh attestation, then retry the mint.
+ *
+ * @param nonce - The eventNonce from the attestation data
+ * @param isTestnet - Whether to use testnet or mainnet endpoint
+ * @returns Result indicating success or failure
+ */
+export async function requestReattestation(
+  nonce: string,
+  isTestnet: boolean
+): Promise<ReattestationResult> {
+  const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
+  const url = `${baseUrl}/v2/reattest/${nonce}`;
+
+  try {
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const errorMessage = (data as { message?: string }).message;
+      return {
+        success: false,
+        error: errorMessage || `Re-attestation failed: ${response.status} ${response.statusText}`,
+      };
+    }
+
+    // 200 OK means re-attestation was requested successfully
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Re-attestation request failed:", error);
+    return {
+      success: false,
+      error: `Re-attestation request failed: ${message}`,
+    };
+  }
+}
+
+/**
+ * Fetch attestation data by nonce instead of transaction hash.
+ * This is required after re-attestation because the new attestation
+ * is indexed by nonce, not the original transaction hash.
+ *
+ * @param sourceDomain - The CCTP source domain ID (not chain ID)
+ * @param nonce - The message nonce (eventNonce from original attestation)
+ * @param isTestnet - Whether to use testnet or mainnet endpoint
+ * @returns Attestation data if found, null otherwise
+ */
+export async function fetchAttestationByNonce(
+  sourceDomain: number,
+  nonce: string,
+  isTestnet: boolean
+): Promise<AttestationData | null> {
+  const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
+  const url = `${baseUrl}/v2/messages/${sourceDomain}?nonce=${nonce}`;
+
+  try {
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+        },
+      })
+    );
+
+    if (!response.ok) {
+      if (response.status !== 404) {
+        console.error(`Iris API error: ${response.status} ${response.statusText}`);
+      }
+      return null;
+    }
+
+    const data: IrisAttestationResponse = await response.json();
+
+    if (!data.messages || data.messages.length === 0) {
+      return null;
+    }
+
+    const msg = data.messages[0];
+
+    if (!msg.decodedMessage) {
+      return null;
+    }
+
+    const message = (
+      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
+    ) as `0x${string}`;
+    const attestation = (
+      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
+    ) as `0x${string}`;
+
+    // Parse expirationBlock if present (CCTP v2 Fast Transfers)
+    // Note: "0" means no expiration (re-attested messages), treat as undefined
+    const expirationBlockStr = msg.decodedMessage.decodedMessageBody?.expirationBlock;
+    const parsedExpiration = expirationBlockStr ? parseInt(expirationBlockStr, 10) : 0;
+    const expirationBlock = parsedExpiration > 0 ? parsedExpiration : undefined;
+
+    return {
+      message,
+      attestation,
+      status: msg.status,
+      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
+      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+      nonce: msg.eventNonce,
+      amount: msg.decodedMessage.decodedMessageBody?.amount,
+      mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      expirationBlock,
+    };
+  } catch (error) {
+    console.error("Failed to fetch attestation by nonce:", error);
+    return null;
+  }
+}
+
+/**
+ * Poll for updated attestation after re-attestation request.
+ * Uses nonce-based endpoint since new attestation is indexed by nonce.
+ *
+ * @param sourceDomain - The CCTP source domain ID
+ * @param nonce - The message nonce from original attestation
+ * @param isTestnet - Whether to use testnet or mainnet endpoint
+ * @param maxAttempts - Maximum polling attempts (default: 10)
+ * @param intervalMs - Polling interval in ms (default: 3000)
+ * @returns Updated attestation data or null if polling failed
+ */
+export async function pollForReattestatedData(
+  sourceDomain: number,
+  nonce: string,
+  isTestnet: boolean,
+  maxAttempts = 10,
+  intervalMs = 3000
+): Promise<AttestationData | null> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const data = await fetchAttestationByNonce(sourceDomain, nonce, isTestnet);
+
+    if (data?.status === "complete") {
+      return data;
+    }
+
+    // Wait before next attempt
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+
+  return null;
 }

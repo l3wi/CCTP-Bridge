@@ -9,7 +9,12 @@ import { useWalletClient, usePublicClient } from "wagmi";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchAttestationUniversal } from "@/lib/iris";
+import {
+  fetchAttestationUniversal,
+  requestReattestation,
+  pollForReattestatedData,
+} from "@/lib/iris";
+import { isMessageExpired } from "../errors";
 import { simulateMint } from "@/lib/simulation";
 import {
   getMessageTransmitterAddress,
@@ -225,12 +230,14 @@ export function useMint() {
 
   /**
    * Execute mint on Solana destination chain.
+   * Supports automatic re-attestation if message has expired.
    */
   async function executeSolanaMint(
     burnTxHash: UniversalTxHash,
     sourceChainId: ChainId,
     destinationChainId: SolanaChainId,
-    existingSteps?: MintParams["existingSteps"]
+    existingSteps?: MintParams["existingSteps"],
+    isRetry = false
   ): Promise<MintResult> {
     // Validate Solana wallet connection
     if (
@@ -255,7 +262,7 @@ export function useMint() {
     try {
       // 1. Fetch attestation
       toast({
-        title: "Fetching attestation",
+        title: isRetry ? "Fetching new attestation" : "Fetching attestation",
         description: "Retrieving Circle attestation for your transfer...",
       });
 
@@ -278,7 +285,25 @@ export function useMint() {
         };
       }
 
-      // 2. Check if already minted using nonce check
+      // 2. Proactively check if message has expired (Fast Transfers only)
+      if (attestationData.expirationBlock && !isRetry) {
+        const currentSlot = await connection.getSlot("confirmed");
+        if (currentSlot > attestationData.expirationBlock) {
+          console.log(
+            `Message expired: current slot ${currentSlot} > expiration ${attestationData.expirationBlock}`
+          );
+          // Trigger re-attestation flow proactively
+          return await handleMessageExpiredWithRetry(
+            new Error("Message expired (proactive check)"),
+            burnTxHash,
+            sourceChainId,
+            destinationChainId,
+            existingSteps
+          );
+        }
+      }
+
+      // 3. Check if already minted using nonce check
       const nonceResult = await checkNonceUsed(
         destinationChainId,
         attestationData.message
@@ -301,7 +326,7 @@ export function useMint() {
         return { success: true, alreadyMinted: true };
       }
 
-      // 3. Build the receiveMessage transaction
+      // 4. Build the receiveMessage transaction
       toast({
         title: "Preparing mint transaction",
         description: "Building transaction...",
@@ -317,9 +342,11 @@ export function useMint() {
         sourceDomain,
         destinationChainId,
         isTestnet,
+        // Use mintRecipient from attestation - MUST match what's encoded in the message
+        mintRecipient: attestationData.mintRecipient,
       });
 
-      // 4. Sign transaction with wallet
+      // 5. Sign transaction with wallet
       toast({
         title: "Sign transaction",
         description: "Please approve the transaction in your wallet...",
@@ -327,7 +354,7 @@ export function useMint() {
 
       const signedTransaction = await solanaWallet.signTransaction(transaction);
 
-      // 5. Send transaction without waiting for confirmation
+      // 6. Send transaction without waiting for confirmation
       toast({
         title: "Sending transaction",
         description: "Submitting transaction to the network...",
@@ -335,7 +362,7 @@ export function useMint() {
 
       const txSignature = await sendTransactionNoConfirm(connection, signedTransaction);
 
-      // 6. Update transaction store
+      // 7. Update transaction store
       const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
       const explorerUrl = getExplorerTxUrlUniversal(
         destinationChainId,
@@ -360,8 +387,88 @@ export function useMint() {
 
       return { success: true, mintTxHash: txSignature };
     } catch (error: unknown) {
+      // Check if message expired and we haven't retried yet
+      if (isMessageExpired(error) && !isRetry) {
+        return await handleMessageExpiredWithRetry(
+          error,
+          burnTxHash,
+          sourceChainId,
+          destinationChainId,
+          existingSteps
+        );
+      }
+
       return handleSolanaMintError(error, burnTxHash, existingSteps, updateTransaction, toast);
     }
+  }
+
+  /**
+   * Handle MessageExpired error by requesting re-attestation and retrying.
+   */
+  async function handleMessageExpiredWithRetry(
+    originalError: unknown,
+    burnTxHash: UniversalTxHash,
+    sourceChainId: ChainId,
+    destinationChainId: SolanaChainId,
+    existingSteps?: MintParams["existingSteps"]
+  ): Promise<MintResult> {
+    // Get nonce and sourceDomain from attestation for re-attestation request
+    const attestationData = await fetchAttestationUniversal(sourceChainId, burnTxHash);
+    if (!attestationData?.nonce || attestationData.sourceDomain === undefined) {
+      console.error("Cannot re-attest: no nonce/sourceDomain found in attestation data");
+      return handleSolanaMintError(originalError, burnTxHash, existingSteps, updateTransaction, toast);
+    }
+
+    toast({
+      title: "Refreshing attestation",
+      description: "Message expired. Requesting new attestation from Circle...",
+    });
+
+    const isTestnet = BRIDGEKIT_ENV === "testnet";
+    const reattestResult = await requestReattestation(attestationData.nonce, isTestnet);
+
+    if (!reattestResult.success) {
+      console.error("Re-attestation failed:", reattestResult.error);
+      return {
+        success: false,
+        error: reattestResult.error || "Failed to refresh attestation. Please try again later.",
+      };
+    }
+
+    toast({
+      title: "Waiting for new attestation",
+      description: "Circle is generating a new attestation...",
+    });
+
+    // Poll for updated attestation using NONCE endpoint (not txHash)
+    const newAttestation = await pollForReattestatedData(
+      attestationData.sourceDomain,
+      attestationData.nonce,
+      isTestnet,
+      10,
+      3000
+    );
+
+    if (!newAttestation) {
+      return {
+        success: false,
+        error: "Timed out waiting for new attestation. Please try again.",
+      };
+    }
+
+    toast({
+      title: "Attestation refreshed",
+      description: "Retrying mint with new attestation...",
+    });
+
+    // Retry mint with new attestation (isRetry=true to prevent infinite loop)
+    return executeSolanaMint(
+      burnTxHash,
+      sourceChainId,
+      destinationChainId,
+      existingSteps,
+      true // isRetry
+    );
   }
 
   return {
