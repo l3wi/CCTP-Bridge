@@ -383,10 +383,10 @@ function deriveMintPdas(
     MESSAGE_TRANSMITTER_PROGRAM_ID
   );
 
-  // Event authority PDA for remaining accounts
+  // Event authority PDA for remaining accounts (derived from MessageTransmitter, not TokenMessenger)
   const [eventAuthorityPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("__event_authority")],
-    TOKEN_MESSENGER_PROGRAM_ID
+    MESSAGE_TRANSMITTER_PROGRAM_ID
   );
 
   return {

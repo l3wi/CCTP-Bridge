@@ -61,7 +61,7 @@ export const SOLANA_USDC_MINT: Record<SolanaChainId, string> = {
  * Deploy with: bun run scripts/deploy-cctp-alt.ts <mainnet|devnet>
  */
 export const CCTP_ALT_ADDRESSES: Record<SolanaChainId, string | null> = {
-  Solana: "HKxj9RU7yzzTpiufNEoPUGfvzMQYKw2V9kNTp2PPK5b7",
+  Solana: "Gu4J1cXuZMe4R7Mqpph62uwQL7XyvkqtFXLk8eR6tMgf",
   // TODO: Deploy ALT and update this address
   // Run: bun run scripts/deploy-cctp-alt.ts devnet
   Solana_Devnet: null,

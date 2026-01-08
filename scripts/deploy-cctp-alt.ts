@@ -95,9 +95,10 @@ function deriveCctpPdas(network: Network) {
     MESSAGE_TRANSMITTER_PROGRAM_ID
   );
 
+  // Event authority PDA (derived from MessageTransmitter, not TokenMessenger)
   const [eventAuthorityPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("__event_authority")],
-    TOKEN_MESSENGER_PROGRAM_ID
+    MESSAGE_TRANSMITTER_PROGRAM_ID
   );
 
   return {
