@@ -37,6 +37,45 @@ export const SOLANA_USDC_MINT: Record<SolanaChainId, string> = {
   Solana_Devnet: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
 } as const;
 
+// =============================================================================
+// CCTP Address Lookup Tables (Solana)
+// =============================================================================
+
+/**
+ * CCTP Address Lookup Tables for Solana receiveMessage transactions.
+ * ALTs reduce transaction size by replacing 32-byte addresses with 1-byte indices.
+ *
+ * Each ALT contains the static CCTP program accounts:
+ * - MESSAGE_TRANSMITTER_PROGRAM_ID
+ * - TOKEN_MESSENGER_PROGRAM_ID
+ * - TOKEN_PROGRAM_ID
+ * - SystemProgram
+ * - tokenMessengerPda
+ * - messageTransmitterPda
+ * - tokenMinterPda
+ * - localTokenPda
+ * - custodyPda
+ * - messageTransmitterAuthorityPda
+ * - eventAuthorityPda
+ *
+ * Deploy with: bun run scripts/deploy-cctp-alt.ts <mainnet|devnet>
+ */
+export const CCTP_ALT_ADDRESSES: Record<SolanaChainId, string | null> = {
+  Solana: "Gu4J1cXuZMe4R7Mqpph62uwQL7XyvkqtFXLk8eR6tMgf",
+  // TODO: Deploy ALT and update this address
+  // Run: bun run scripts/deploy-cctp-alt.ts devnet
+  Solana_Devnet: null,
+};
+
+/**
+ * Get CCTP ALT PublicKey for a Solana chain.
+ * Returns null if not configured (will fall back to legacy transaction).
+ */
+export function getCctpAltAddress(chainId: SolanaChainId): PublicKey | null {
+  const address = CCTP_ALT_ADDRESSES[chainId];
+  return address ? new PublicKey(address) : null;
+}
+
 /**
  * Get Solana USDC mint as PublicKey
  */
