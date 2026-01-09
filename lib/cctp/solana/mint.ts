@@ -323,7 +323,10 @@ interface MintPdas {
   tokenPairPda: PublicKey;
   custodyPda: PublicKey;
   messageTransmitterAuthorityPda: PublicKey;
-  eventAuthorityPda: PublicKey;
+  /** TokenMessenger's event authority for CPI event emission */
+  tokenMessengerEventAuthorityPda: PublicKey;
+  /** MessageTransmitter's event authority for #[event_cpi] macro */
+  messageTransmitterEventAuthorityPda: PublicKey;
 }
 
 /**
@@ -383,8 +386,14 @@ function deriveMintPdas(
     MESSAGE_TRANSMITTER_PROGRAM_ID
   );
 
-  // Event authority PDA for remaining accounts (derived from MessageTransmitter, not TokenMessenger)
-  const [eventAuthorityPda] = PublicKey.findProgramAddressSync(
+  // TokenMessenger's event authority (for CPI into TokenMessenger)
+  const [tokenMessengerEventAuthorityPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("__event_authority")],
+    TOKEN_MESSENGER_PROGRAM_ID
+  );
+
+  // MessageTransmitter's event authority (for #[event_cpi] on receive_message)
+  const [messageTransmitterEventAuthorityPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("__event_authority")],
     MESSAGE_TRANSMITTER_PROGRAM_ID
   );
@@ -398,7 +407,8 @@ function deriveMintPdas(
     tokenPairPda,
     custodyPda,
     messageTransmitterAuthorityPda,
-    eventAuthorityPda,
+    tokenMessengerEventAuthorityPda,
+    messageTransmitterEventAuthorityPda,
   };
 }
 
@@ -464,7 +474,8 @@ export interface SolanaMintParams {
 
 /**
  * Fetch Address Lookup Table account from chain.
- * Returns null if ALT is not configured or doesn't exist.
+ * Returns null if ALT is not configured, doesn't exist, or isn't fully populated.
+ * Gracefully falls back to legacy transaction if ALT is unavailable.
  */
 async function fetchAddressLookupTable(
   connection: Connection,
@@ -477,10 +488,29 @@ async function fetchAddressLookupTable(
 
   try {
     const altAccountInfo = await connection.getAddressLookupTable(altAddress);
+
+    // Validate ALT exists on chain
+    if (!altAccountInfo.value) {
+      console.warn(
+        `[CCTP] ALT ${altAddress.toBase58()} not found. Falling back to legacy tx.`
+      );
+      return null;
+    }
+
+    // Validate ALT has expected 11 static CCTP accounts
+    const addressCount = altAccountInfo.value.state.addresses.length;
+    if (addressCount < 11) {
+      console.warn(
+        `[CCTP] ALT has ${addressCount}/11 addresses. Falling back to legacy tx.`
+      );
+      return null;
+    }
+
+    console.log(`[CCTP] Using ALT with ${addressCount} addresses`);
     return altAccountInfo.value;
   } catch (error) {
     console.warn(
-      `[CCTP] Failed to fetch ALT ${altAddress.toBase58()}:`,
+      `[CCTP] ALT fetch failed:`,
       error instanceof Error ? error.message : error
     );
     return null;
@@ -554,18 +584,24 @@ export async function buildReceiveMessageTransaction(
     { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },      // [5] receiver - TokenMessenger program
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },         // [6] system_program - Solana System Program
 
-    // === Remaining accounts for CPI to TokenMessengerMinter (indices 7-17) ===
-    { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },          // [7] token_messenger - TokenMessenger state
-    { pubkey: pdas.remoteTokenMessengerPda, isSigner: false, isWritable: false },    // [8] remote_token_messenger - source chain config
-    { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },              // [9] token_minter - minting authority (writable)
-    { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },               // [10] local_token - USDC token config (writable)
-    { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },               // [11] token_pair - source/dest token mapping
-    { pubkey: feeRecipientAta, isSigner: false, isWritable: true },                  // [12] fee_recipient_ata - receives fees (writable)
-    { pubkey: userUsdcAta, isSigner: false, isWritable: true },                      // [13] user_token_account - receives USDC (writable)
-    { pubkey: pdas.custodyPda, isSigner: false, isWritable: true },                  // [14] custody - USDC custody account (writable)
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },                // [15] token_program - SPL Token Program
-    { pubkey: pdas.eventAuthorityPda, isSigner: false, isWritable: false },          // [16] event_authority - event emission authority
-    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },      // [17] token_messenger_minter_program - for CPI
+    // === MessageTransmitter event_cpi accounts (required by #[event_cpi] macro) ===
+    // These MUST come immediately after main accounts, before remaining_accounts
+    { pubkey: pdas.messageTransmitterEventAuthorityPda, isSigner: false, isWritable: false }, // [7] MT event_authority
+    { pubkey: MESSAGE_TRANSMITTER_PROGRAM_ID, isSigner: false, isWritable: false },  // [8] MT program
+
+    // === Remaining accounts for CPI to TokenMessengerMinter (indices 9-19) ===
+    { pubkey: pdas.tokenMessengerPda, isSigner: false, isWritable: false },          // [9] token_messenger - TokenMessenger state
+    { pubkey: pdas.remoteTokenMessengerPda, isSigner: false, isWritable: false },    // [10] remote_token_messenger - source chain config
+    { pubkey: pdas.tokenMinterPda, isSigner: false, isWritable: true },              // [11] token_minter - minting authority (writable)
+    { pubkey: pdas.localTokenPda, isSigner: false, isWritable: true },               // [12] local_token - USDC token config (writable)
+    { pubkey: pdas.tokenPairPda, isSigner: false, isWritable: false },               // [13] token_pair - source/dest token mapping
+    { pubkey: feeRecipientAta, isSigner: false, isWritable: true },                  // [14] fee_recipient_ata - receives fees (writable)
+    { pubkey: userUsdcAta, isSigner: false, isWritable: true },                      // [15] user_token_account - receives USDC (writable)
+    { pubkey: pdas.custodyPda, isSigner: false, isWritable: true },                  // [16] custody - USDC custody account (writable)
+    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },                // [17] token_program - SPL Token Program
+    // TokenMessenger event_cpi accounts (for CPI into TokenMessenger)
+    { pubkey: pdas.tokenMessengerEventAuthorityPda, isSigner: false, isWritable: false }, // [18] TM event_authority
+    { pubkey: TOKEN_MESSENGER_PROGRAM_ID, isSigner: false, isWritable: false },      // [19] TM program
   ];
 
   // Create receiveMessage instruction manually
