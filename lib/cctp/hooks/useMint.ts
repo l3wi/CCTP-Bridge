@@ -320,10 +320,6 @@ export function useMint() {
         isTestnet,
       });
 
-      // Log transaction type for debugging
-      const txType = isVersionedTransaction(transaction) ? "VersionedTransaction (v0)" : "Legacy Transaction";
-      console.log(`[CCTP] Built ${txType} for Solana mint`);
-
       // 4. Sign transaction with wallet
       // Note: signTransaction handles both legacy and versioned transactions
       toast({

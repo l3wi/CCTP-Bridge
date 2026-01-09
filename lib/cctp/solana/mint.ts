@@ -506,7 +506,6 @@ async function fetchAddressLookupTable(
       return null;
     }
 
-    console.log(`[CCTP] Using ALT with ${addressCount} addresses`);
     return altAccountInfo.value;
   } catch (error) {
     console.warn(
