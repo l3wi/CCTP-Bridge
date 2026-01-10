@@ -21,6 +21,7 @@ import {
   getAssociatedTokenAddress,
 } from "@solana/spl-token";
 import { getSolanaUsdcMint, getCctpAltAddress } from "../shared";
+import { getUsdcAddressByDomain, type BridgeEnvironment, BRIDGEKIT_ENV } from "../../bridgeKit";
 import type { SolanaChainId } from "../types";
 
 // =============================================================================
@@ -252,32 +253,20 @@ async function fetchFeeRecipient(
 }
 
 // =============================================================================
-// Source USDC Addresses (EVM)
+// Source USDC Address Resolution
 // =============================================================================
 
 /**
- * Source USDC addresses by CCTP domain (EVM addresses as hex).
- * Used for token pair PDA derivation.
+ * Get source EVM USDC address for a CCTP domain.
+ * Dynamically pulls from Bridge Kit SDK so new chains are automatically supported.
  */
-const SOURCE_USDC_BY_DOMAIN: Record<number, string> = {
-  // Mainnet domains
-  0: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // Ethereum Mainnet USDC
-  1: "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", // Avalanche USDC
-  2: "0x0b2c639c533813f4aa9d7837caf62653d097ff85", // Optimism USDC
-  3: "0xaf88d065e77c8cc2239327c5edb3a432268e5831", // Arbitrum USDC
-  6: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", // Base USDC
-  7: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", // Polygon USDC
-};
-
-/** Testnet source USDC addresses by CCTP domain */
-const SOURCE_USDC_BY_DOMAIN_TESTNET: Record<number, string> = {
-  0: "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238", // Ethereum Sepolia USDC
-  1: "0x5425890298aed601595a70AB815c96711a31Bc65", // Avalanche Fuji USDC
-  2: "0x5fd84259d66Cd46123540766Be93DFE6D43130D7", // Optimism Sepolia USDC
-  3: "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", // Arbitrum Sepolia USDC
-  6: "0x036CbD53842c5426634e7929541eC2318f3dCF7e", // Base Sepolia USDC
-  7: "0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582", // Polygon Amoy USDC
-};
+function getSourceUsdcAddress(
+  sourceDomain: number,
+  isTestnet: boolean
+): string | null {
+  const env: BridgeEnvironment = isTestnet ? "testnet" : "mainnet";
+  return getUsdcAddressByDomain(sourceDomain, env);
+}
 
 // =============================================================================
 // Address Conversion
@@ -295,17 +284,18 @@ function evmAddressToSolanaPubkey(evmAddress: string): PublicKey {
 
 /**
  * Get source USDC address as Solana pubkey for a CCTP domain.
+ * Dynamically resolves from Bridge Kit SDK.
  */
 function getSourceUsdcPubkey(
   sourceDomain: number,
   isTestnet: boolean
 ): PublicKey {
-  const addresses = isTestnet
-    ? SOURCE_USDC_BY_DOMAIN_TESTNET
-    : SOURCE_USDC_BY_DOMAIN;
-  const address = addresses[sourceDomain];
+  const address = getSourceUsdcAddress(sourceDomain, isTestnet);
   if (!address) {
-    throw new Error(`Unknown source USDC address for domain ${sourceDomain}`);
+    throw new Error(
+      `Unknown source USDC address for domain ${sourceDomain}. ` +
+      `This chain may not be supported by Bridge Kit SDK yet.`
+    );
   }
   return evmAddressToSolanaPubkey(address);
 }
