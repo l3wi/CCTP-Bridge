@@ -579,3 +579,17 @@ export const getCctpConfirmationsUniversal = (
   return getCctpConfirmations(chainId, env);
 };
 
+/**
+ * Get USDC address for an EVM chain by its CCTP domain.
+ * Used for Solana mint token pair PDA derivation.
+ * Dynamically pulls from Bridge Kit so new chains are automatically supported.
+ */
+export const getUsdcAddressByDomain = (
+  domain: number,
+  env: BridgeEnvironment = DEFAULT_ENV
+): string | null => {
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.cctp?.domain === domain);
+  return chain?.usdcAddress ?? null;
+};
+
