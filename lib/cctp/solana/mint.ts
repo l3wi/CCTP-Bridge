@@ -14,6 +14,7 @@ import {
   AddressLookupTableAccount,
   SystemProgram,
   AccountMeta,
+  ComputeBudgetProgram,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -612,6 +613,16 @@ export async function buildReceiveMessageTransaction(
 
   // Build instructions array
   const instructions: TransactionInstruction[] = [];
+
+  // Add ComputeBudget instructions for CCTP's high compute requirements
+  // CCTP receiveMessage with CPI to TokenMessenger can exceed 200k default limit
+  const computeUnitLimitIx = ComputeBudgetProgram.setComputeUnitLimit({
+    units: 400_000, // Request 400k CU (CCTP needs ~200k+ with CPIs)
+  });
+  const computeUnitPriceIx = ComputeBudgetProgram.setComputeUnitPrice({
+    microLamports: 50_000, // Priority fee: 50k microlamports per CU
+  });
+  instructions.push(computeUnitLimitIx, computeUnitPriceIx);
 
   // Check if user's ATA exists, create if needed
   const userAtaInfo = await connection.getAccountInfo(userUsdcAta);
