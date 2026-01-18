@@ -54,6 +54,17 @@ export interface AttestationData {
 }
 
 /**
+ * Log attestation delay reason if present.
+ */
+function logDelayReason(delayReason: string | undefined): void {
+  if (delayReason) {
+    console.warn(
+      `[CCTP] Attestation delayed: ${delayReason}. Transfer will proceed at standard speed.`
+    );
+  }
+}
+
+/**
  * Fetch attestation data from Iris API by source chain and burn transaction hash.
  *
  * @param sourceChainId - The chain ID where the burn occurred
@@ -111,11 +122,7 @@ export async function fetchAttestation(
     const msg = data.messages[0];
 
     // Log delay reason if present (insufficient fee means fallback to standard speed)
-    if (msg.delayReason) {
-      console.warn(
-        `[CCTP] Attestation delayed: ${msg.delayReason}. Transfer will proceed at standard speed.`
-      );
-    }
+    logDelayReason(msg.delayReason);
 
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
@@ -233,11 +240,7 @@ export async function fetchAttestationUniversal(
     const msg = data.messages[0];
 
     // Log delay reason if present (insufficient fee means fallback to standard speed)
-    if (msg.delayReason) {
-      console.warn(
-        `[CCTP] Attestation delayed: ${msg.delayReason}. Transfer will proceed at standard speed.`
-      );
-    }
+    logDelayReason(msg.delayReason);
 
     if (!msg.decodedMessage) {
       // Attestation still in progress - expected during attestation window

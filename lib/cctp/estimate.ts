@@ -90,6 +90,9 @@ async function fetchFeeTiers(
 function parseMinimumFee(minimumFee: string | number): bigint {
   const feeAsNumber =
     typeof minimumFee === "string" ? parseFloat(minimumFee) : minimumFee;
+  if (Number.isNaN(feeAsNumber)) {
+    throw new Error(`Invalid minimumFee value: ${minimumFee}`);
+  }
   return BigInt(Math.round(feeAsNumber * Number(BPS_PRECISION)));
 }
 

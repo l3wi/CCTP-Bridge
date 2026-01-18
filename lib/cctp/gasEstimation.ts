@@ -24,12 +24,23 @@ import type { SolanaChainId } from "./types";
 const ATA_RENT_LAMPORTS = BigInt(2_039_280); // ~0.00204 SOL
 
 /**
- * Gas buffer multipliers to account for price fluctuation between estimate and execution.
- * - EVM: 20% buffer (gas prices can fluctuate)
- * - Solana: 50% buffer (priority fees and computation units can vary)
+ * Gas buffer ratios to account for price fluctuation between estimate and execution.
+ * Uses BigInt fractions to avoid precision loss with large values.
+ * - EVM: 20% buffer (6/5 = 1.2x) - gas prices can fluctuate
+ * - Solana: 50% buffer (3/2 = 1.5x) - priority fees and computation units can vary
  */
-const EVM_GAS_BUFFER = 1.2;
-const SOL_FEE_BUFFER = 1.5;
+const EVM_BUFFER_NUMERATOR = 6n;
+const EVM_BUFFER_DENOMINATOR = 5n; // 6/5 = 1.2x
+const SOL_BUFFER_NUMERATOR = 3n;
+const SOL_BUFFER_DENOMINATOR = 2n; // 3/2 = 1.5x
+
+/**
+ * Apply buffer to a bigint value using ceiling division.
+ * Formula: ceil(value * numerator / denominator) = (value * numerator + denominator - 1) / denominator
+ */
+function applyBuffer(value: bigint, numerator: bigint, denominator: bigint): bigint {
+  return (value * numerator + denominator - 1n) / denominator;
+}
 
 /**
  * Fallback fee values when estimation fails.
@@ -111,7 +122,7 @@ export async function estimateSolanaMintGas(params: {
   // Calculate total cost
   const ataCreation = needsAtaCreation ? ATA_RENT_LAMPORTS : BigInt(0);
   const baseCost = txFee + ataCreation;
-  const requiredWithBuffer = BigInt(Math.ceil(Number(baseCost) * SOL_FEE_BUFFER));
+  const requiredWithBuffer = applyBuffer(baseCost, SOL_BUFFER_NUMERATOR, SOL_BUFFER_DENOMINATOR);
 
   return {
     required: requiredWithBuffer,
@@ -195,7 +206,7 @@ export async function estimateEvmMintGas(params: {
 
   // Calculate total cost with buffer
   const baseCost = gasEstimate * gasPrice;
-  const requiredWithBuffer = BigInt(Math.ceil(Number(baseCost) * EVM_GAS_BUFFER));
+  const requiredWithBuffer = applyBuffer(baseCost, EVM_BUFFER_NUMERATOR, EVM_BUFFER_DENOMINATOR);
 
   return {
     required: requiredWithBuffer,

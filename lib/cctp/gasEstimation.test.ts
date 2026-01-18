@@ -222,6 +222,38 @@ describe("estimateSolanaMintGas", () => {
     expect(result.sufficient).toBe(true);
     expect(mockLegacyTx.compileMessage).toHaveBeenCalled();
   });
+
+  it("uses fallback fee when getFeeForMessage returns null value", async () => {
+    mockConnection.getFeeForMessage.mockResolvedValue({ value: null });
+    mockConnection.getAccountInfo.mockResolvedValue({ data: Buffer.alloc(165) });
+
+    const result = await estimateSolanaMintGas({
+      connection: mockConnection as any,
+      userPubkey: mockUserPubkey,
+      transaction: mockVersionedTx,
+      destinationChainId: "Solana",
+      userBalance: BigInt(1_000_000_000),
+    });
+
+    // Should use fallback of 5000 lamports
+    expect(result.breakdown.txFee).toBe(BigInt(5000));
+  });
+
+  it("uses fallback fee when getFeeForMessage returns zero", async () => {
+    mockConnection.getFeeForMessage.mockResolvedValue({ value: 0 });
+    mockConnection.getAccountInfo.mockResolvedValue({ data: Buffer.alloc(165) });
+
+    const result = await estimateSolanaMintGas({
+      connection: mockConnection as any,
+      userPubkey: mockUserPubkey,
+      transaction: mockVersionedTx,
+      destinationChainId: "Solana",
+      userBalance: BigInt(1_000_000_000),
+    });
+
+    // Should use fallback of 5000 lamports
+    expect(result.breakdown.txFee).toBe(BigInt(5000));
+  });
 });
 
 // =============================================================================
@@ -295,9 +327,10 @@ describe("estimateEvmMintGas", () => {
     });
 
     // Base cost = 100,000 * 10 gwei = 1e15 wei
-    // With 1.2x buffer = 1.2e15 wei
+    // With 1.2x buffer (6/5) using ceiling division = ceil(1e15 * 6 / 5)
     const baseCost = BigInt(100_000) * BigInt(10e9);
-    const expectedWithBuffer = BigInt(Math.ceil(Number(baseCost) * 1.2));
+    // Ceiling division: (baseCost * 6 + 5 - 1) / 5
+    const expectedWithBuffer = (baseCost * 6n + 4n) / 5n;
     expect(result.required).toBe(expectedWithBuffer);
   });
 
