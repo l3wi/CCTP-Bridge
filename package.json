@@ -6,7 +6,9 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "dependencies": {
     "@circle-fin/adapter-solana": "^1.2.0",
@@ -28,7 +30,7 @@
     "@solana/web3.js": "^1.98.4",
     "@tailwindcss/postcss": "^4.1.18",
     "@tanstack/react-query": "^5.90.16",
-    "@types/node": "24.0.0",
+    "@types/node": "^25.0.9",
     "@types/react": "19.1.7",
     "@types/react-dom": "19.1.6",
     "@vercel/analytics": "^1.6.1",
@@ -50,6 +52,7 @@
     "zustand": "^5.0.9"
   },
   "devDependencies": {
-    "postcss": "^8.5.6"
+    "postcss": "^8.5.6",
+    "vitest": "^4.0.17"
   }
 }

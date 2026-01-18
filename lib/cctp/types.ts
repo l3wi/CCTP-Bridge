@@ -158,7 +158,7 @@ export interface AttestationData {
   /** Attestation signature bytes */
   attestation: `0x${string}`;
   /** Attestation status */
-  status: "pending" | "complete";
+  status: "pending" | "pending_confirmations" | "complete";
   /** CCTP source domain */
   sourceDomain: number;
   /** CCTP destination domain */
@@ -169,6 +169,8 @@ export interface AttestationData {
   amount?: string;
   /** Mint recipient address (from decoded message) */
   mintRecipient?: string;
+  /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
+  delayReason?: string;
 }
 
 /** Raw Iris API response shape */
@@ -177,8 +179,10 @@ export interface IrisAttestationResponse {
     attestation: string;
     message: string;
     eventNonce: string;
-    status: "pending" | "complete";
+    status: "pending" | "pending_confirmations" | "complete";
     cctpVersion: number;
+    /** Reason for delayed attestation (e.g., "insufficient_fee" for fast transfers without proper fee) */
+    delayReason?: string;
     decodedMessage?: {
       sourceDomain: string;
       destinationDomain: string;

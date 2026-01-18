@@ -5,7 +5,7 @@
  */
 
 import { useCallback, useState } from "react";
-import { useWalletClient, usePublicClient } from "wagmi";
+import { useWalletClient, usePublicClient, useBalance } from "wagmi";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
@@ -34,6 +34,12 @@ import {
   type UniversalTxHash,
 } from "../types";
 import { isUserRejection, extractErrorMessage } from "../shared";
+import {
+  estimateSolanaMintGas,
+  estimateEvmMintGas,
+  formatSol,
+  formatNative,
+} from "../gasEstimation";
 
 // =============================================================================
 // Hook
@@ -43,6 +49,14 @@ export function useMint() {
   // EVM wallet state
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient();
+
+  // EVM native balance for gas checks
+  const { data: evmNativeBalance } = useBalance({
+    address: walletClient?.account?.address,
+    query: {
+      enabled: !!walletClient?.account?.address,
+    },
+  });
 
   // Solana wallet state
   const solanaWallet = useWallet();
@@ -78,14 +92,15 @@ export function useMint() {
             burnTxHash,
             sourceChainId,
             destinationChainId,
-            existingSteps
+            existingSteps,
+            evmNativeBalance?.value
           );
         }
       } finally {
         setIsMinting(false);
       }
     },
-    [walletClient, publicClient, solanaWallet, connection, updateTransaction, toast]
+    [walletClient, publicClient, solanaWallet, connection, updateTransaction, toast, evmNativeBalance?.value]
   );
 
   /**
@@ -95,7 +110,8 @@ export function useMint() {
     burnTxHash: UniversalTxHash,
     sourceChainId: ChainId,
     destinationChainId: number,
-    existingSteps?: MintParams["existingSteps"]
+    existingSteps?: MintParams["existingSteps"],
+    userNativeBalance?: bigint
   ): Promise<MintResult> {
     // Validate EVM wallet connection
     if (!walletClient) {
@@ -167,7 +183,32 @@ export function useMint() {
         };
       }
 
-      // 3. Execute the mint transaction
+      // 3. Check gas balance before prompting user to sign
+      if (publicClient && walletClient?.account?.address && userNativeBalance !== undefined) {
+        try {
+          const gasEstimate = await estimateEvmMintGas({
+            publicClient,
+            userAddress: walletClient.account.address,
+            messageTransmitter,
+            message: attestationData.message,
+            attestation: attestationData.attestation,
+            userBalance: userNativeBalance,
+          });
+
+          if (!gasEstimate.sufficient) {
+            const nativeSymbol = walletClient.chain?.nativeCurrency?.symbol || "ETH";
+            return {
+              success: false,
+              error: `Insufficient ${nativeSymbol} for gas. You need ~${formatNative(gasEstimate.required)} ${nativeSymbol} but have ${formatNative(gasEstimate.current)} ${nativeSymbol}.`,
+            };
+          }
+        } catch (gasError) {
+          // Log but don't block - let the wallet handle it if estimation fails
+          console.warn("Gas estimation failed, proceeding anyway:", gasError);
+        }
+      }
+
+      // 4. Execute the mint transaction
       toast({
         title: "Claiming USDC",
         description: "Please confirm the transaction in your wallet.",
@@ -186,7 +227,7 @@ export function useMint() {
         description: "Waiting for confirmation...",
       });
 
-      // 4. Wait for confirmation
+      // 5. Wait for confirmation
       const receipt = await publicClient.waitForTransactionReceipt({
         hash,
         confirmations: 1,
@@ -199,7 +240,7 @@ export function useMint() {
         };
       }
 
-      // 5. Update the existing transaction in store
+      // 6. Update the existing transaction in store
       const updatedSteps = updateStepsWithMint(existingSteps, hash, false);
       const explorerUrl = getExplorerTxUrl(destinationChainId, hash);
 
@@ -320,11 +361,37 @@ export function useMint() {
         isTestnet,
       });
 
-      // Log transaction type for debugging
-      const txType = isVersionedTransaction(transaction) ? "VersionedTransaction (v0)" : "Legacy Transaction";
-      console.log(`[CCTP] Built ${txType} for Solana mint`);
+      // 4. Check gas balance before prompting user to sign
+      if (solanaWallet.publicKey) {
+        try {
+          // Fetch current SOL balance
+          const solBalance = await connection.getBalance(solanaWallet.publicKey);
+          const userBalance = BigInt(solBalance);
 
-      // 4. Sign transaction with wallet
+          const gasEstimate = await estimateSolanaMintGas({
+            connection,
+            userPubkey: solanaWallet.publicKey,
+            transaction,
+            destinationChainId,
+            userBalance,
+          });
+
+          if (!gasEstimate.sufficient) {
+            const reason = gasEstimate.breakdown.ataCreation
+              ? "creating your USDC account and transaction fees"
+              : "transaction fees";
+            return {
+              success: false,
+              error: `Insufficient SOL for gas. You need ~${formatSol(gasEstimate.required)} SOL for ${reason}. Current: ${formatSol(gasEstimate.current)} SOL.`,
+            };
+          }
+        } catch (gasError) {
+          // Log but don't block - let the wallet handle it if estimation fails
+          console.warn("Solana gas estimation failed, proceeding anyway:", gasError);
+        }
+      }
+
+      // 5. Sign transaction with wallet
       // Note: signTransaction handles both legacy and versioned transactions
       toast({
         title: "Sign transaction",
@@ -333,7 +400,7 @@ export function useMint() {
 
       const signedTransaction = await solanaWallet.signTransaction(transaction);
 
-      // 5. Send transaction without waiting for confirmation
+      // 6. Send transaction without waiting for confirmation
       toast({
         title: "Sending transaction",
         description: "Submitting transaction to the network...",
@@ -341,7 +408,7 @@ export function useMint() {
 
       const txSignature = await sendTransactionNoConfirm(connection, signedTransaction);
 
-      // 6. Update transaction store
+      // 7. Update transaction store
       const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
       const explorerUrl = getExplorerTxUrlUniversal(
         destinationChainId,
