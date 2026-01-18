@@ -260,7 +260,7 @@ export async function checkMintReadiness(
   destinationChainId: number,
   burnTxHash: string,
   skipSimulation: boolean = false
-): Promise<SimulationResult & { attestationReady: boolean }> {
+): Promise<SimulationResult & { attestationReady: boolean; delayReason?: string }> {
   // Import dynamically to avoid circular deps
   const { fetchAttestationUniversal } = await import("./iris");
 
@@ -287,6 +287,7 @@ export async function checkMintReadiness(
       alreadyMinted: false,
       attestationReady: false,
       error: "Attestation pending",
+      delayReason: attestationData.delayReason,
     };
   }
 
@@ -298,6 +299,7 @@ export async function checkMintReadiness(
       canMint: true,
       alreadyMinted: false,
       attestationReady: true,
+      delayReason: attestationData.delayReason,
     };
   }
 
@@ -310,6 +312,7 @@ export async function checkMintReadiness(
   return {
     ...simResult,
     attestationReady: true,
+    delayReason: attestationData.delayReason,
   };
 }
 

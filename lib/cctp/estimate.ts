@@ -51,6 +51,10 @@ function formatAmount(amount: bigint): string {
 // Fee Fetching
 // =============================================================================
 
+// Precision multiplier for handling decimal bps values (supports up to 4 decimal places)
+const BPS_PRECISION = 10000n;
+const BPS_DIVISOR = 10000n * BPS_PRECISION; // 100_000_000n
+
 /**
  * Fetch all fee tiers from IRIS API.
  * Returns fee info for both fast and standard transfers.
@@ -80,16 +84,29 @@ async function fetchFeeTiers(
 }
 
 /**
- * Calculate fee for a given amount and fee tier.
- * Fee is in BPS (basis points) from API response.
+ * Convert minimumFee from API (which can be decimal like 1.3) to scaled bigint.
+ * Multiplies by BPS_PRECISION to preserve decimal places.
  */
-function calculateFee(amount: bigint, feeInBps: bigint): bigint {
-  // Guard: fee cannot exceed 100% (10000 bps)
-  if (feeInBps > 10000n) {
-    throw new Error(`Invalid fee rate: ${feeInBps} bps exceeds 100%`);
+function parseMinimumFee(minimumFee: string | number): bigint {
+  const feeAsNumber =
+    typeof minimumFee === "string" ? parseFloat(minimumFee) : minimumFee;
+  return BigInt(Math.round(feeAsNumber * Number(BPS_PRECISION)));
+}
+
+/**
+ * Calculate fee for a given amount and scaled fee tier.
+ * Fee is in scaled BPS (bps * BPS_PRECISION) to handle decimals.
+ */
+function calculateFee(amount: bigint, scaledFeeInBps: bigint): bigint {
+  // Guard: fee cannot exceed 100% (10000 * BPS_PRECISION scaled bps)
+  const maxScaledBps = 10000n * BPS_PRECISION;
+  if (scaledFeeInBps > maxScaledBps) {
+    throw new Error(
+      `Invalid fee rate: ${scaledFeeInBps / BPS_PRECISION} bps exceeds 100%`
+    );
   }
-  // Fee = (amount * bps) / 10000, with ceiling division
-  return (amount * feeInBps + 9999n) / 10000n;
+  // Fee = (amount * scaledBps + divisor - 1) / divisor, ceiling division
+  return (amount * scaledFeeInBps + BPS_DIVISOR - 1n) / BPS_DIVISOR;
 }
 
 // =============================================================================
@@ -179,8 +196,8 @@ export async function estimateBridgeFee(
       };
     }
 
-    const feeInBps = BigInt(fastTier.minimumFee);
-    const baseFee = calculateFee(amountBigInt, feeInBps);
+    const scaledFeeInBps = parseMinimumFee(fastTier.minimumFee);
+    const baseFee = calculateFee(amountBigInt, scaledFeeInBps);
 
     // Validate fee doesn't exceed amount
     if (baseFee >= amountBigInt) {

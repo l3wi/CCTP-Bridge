@@ -187,9 +187,14 @@ interface FeeResponse {
   minimumFee: string | number;
 }
 
+// Precision multiplier for handling decimal bps values (supports up to 4 decimal places)
+const BPS_PRECISION = 10000n;
+const BPS_DIVISOR = 10000n * BPS_PRECISION; // 100_000_000n
+
 /**
  * Fetch the fast burn fee from Circle's IRIS API.
- * Returns fee in basis points (bps).
+ * Returns fee in scaled basis points (bps * 10000) to handle decimals.
+ * E.g., 1.3 bps becomes 13000n
  */
 export async function fetchFastBurnFee(
   sourceDomain: number,
@@ -219,7 +224,15 @@ export async function fetchFastBurnFee(
     throw new Error("Fast tier (finalityThreshold: 1000) not found");
   }
 
-  return BigInt(fastTier.minimumFee);
+  // Convert to number first to handle decimals (e.g., 1.3 bps)
+  // Scale by BPS_PRECISION to preserve decimal places
+  const feeAsNumber =
+    typeof fastTier.minimumFee === "string"
+      ? parseFloat(fastTier.minimumFee)
+      : fastTier.minimumFee;
+
+  // Round to avoid floating point issues and convert to BigInt
+  return BigInt(Math.round(feeAsNumber * Number(BPS_PRECISION)));
 }
 
 /**
@@ -238,15 +251,16 @@ export async function calculateMaxFee(
     return 0n;
   }
 
-  // Fetch base fee in bps
-  const baseFeeInBps = await fetchFastBurnFee(
+  // Fetch scaled fee in bps (already multiplied by BPS_PRECISION)
+  const scaledFeeInBps = await fetchFastBurnFee(
     sourceDomain,
     destinationDomain,
     isTestnet
   );
 
-  // Calculate fee: (baseFeeInBps * amount + 9999) / 10000 (ceiling division)
-  const baseFee = (baseFeeInBps * amount + 9999n) / 10000n;
+  // Calculate fee with ceiling division using the scaled divisor
+  // fee = (scaledBps * amount + divisor - 1) / divisor
+  const baseFee = (scaledFeeInBps * amount + BPS_DIVISOR - 1n) / BPS_DIVISOR;
 
   // Safety check BEFORE adding buffer - prevents unexpected failures for small amounts
   // Check if fee with 10% buffer would exceed amount

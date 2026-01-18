@@ -19,8 +19,10 @@ export interface IrisAttestationResponse {
     attestation: string;
     message: string;
     eventNonce: string;
-    status: "pending" | "complete";
+    status: "pending" | "pending_confirmations" | "complete";
     cctpVersion: number;
+    /** Reason for delayed attestation (e.g., "insufficient_fee" for fast transfers without proper fee) */
+    delayReason?: string;
     decodedMessage?: {
       sourceDomain: string;
       destinationDomain: string;
@@ -41,12 +43,14 @@ export interface IrisAttestationResponse {
 export interface AttestationData {
   message: `0x${string}`;
   attestation: `0x${string}`;
-  status: "pending" | "complete";
+  status: "pending" | "pending_confirmations" | "complete";
   sourceDomain: number;
   destinationDomain: number;
   nonce: string;
   amount?: string;
   mintRecipient?: string;
+  /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
+  delayReason?: string;
 }
 
 /**
@@ -106,9 +110,28 @@ export async function fetchAttestation(
     // Get the first (and usually only) message
     const msg = data.messages[0];
 
+    // Log delay reason if present (insufficient fee means fallback to standard speed)
+    if (msg.delayReason) {
+      console.warn(
+        `[CCTP] Attestation delayed: ${msg.delayReason}. Transfer will proceed at standard speed.`
+      );
+    }
+
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
       // Attestation still in progress - expected during attestation window
+      // Return partial data with delayReason if available
+      if (msg.delayReason) {
+        return {
+          message: "0x" as `0x${string}`,
+          attestation: "0x" as `0x${string}`,
+          status: msg.status,
+          sourceDomain: 0,
+          destinationDomain: 0,
+          nonce: msg.eventNonce,
+          delayReason: msg.delayReason,
+        };
+      }
       return null;
     }
 
@@ -129,6 +152,7 @@ export async function fetchAttestation(
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      delayReason: msg.delayReason,
     };
   } catch (error) {
     console.error("Failed to fetch attestation from Iris:", error);
@@ -208,8 +232,27 @@ export async function fetchAttestationUniversal(
 
     const msg = data.messages[0];
 
+    // Log delay reason if present (insufficient fee means fallback to standard speed)
+    if (msg.delayReason) {
+      console.warn(
+        `[CCTP] Attestation delayed: ${msg.delayReason}. Transfer will proceed at standard speed.`
+      );
+    }
+
     if (!msg.decodedMessage) {
       // Attestation still in progress - expected during attestation window
+      // Return partial data with delayReason if available
+      if (msg.delayReason) {
+        return {
+          message: "0x" as `0x${string}`,
+          attestation: "0x" as `0x${string}`,
+          status: msg.status,
+          sourceDomain: 0,
+          destinationDomain: 0,
+          nonce: msg.eventNonce,
+          delayReason: msg.delayReason,
+        };
+      }
       return null;
     }
 
@@ -229,6 +272,7 @@ export async function fetchAttestationUniversal(
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      delayReason: msg.delayReason,
     };
   } catch (error) {
     console.error("Failed to fetch attestation from Iris:", error);

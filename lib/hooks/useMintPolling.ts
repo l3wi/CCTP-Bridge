@@ -18,6 +18,8 @@ export interface MintPollingState {
   checking: boolean;
   lastChecked: Date | null;
   error?: string;
+  /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
+  delayReason?: string;
 }
 
 interface UseMintPollingParams {
@@ -58,6 +60,7 @@ export function useMintPolling({
     checking: false,
     attestationReady: false,
     lastChecked: null,
+    delayReason: undefined,
   });
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -168,6 +171,15 @@ export function useMintPolling({
 
         if (!isMountedRef.current) return;
 
+        // Handle delay reason (e.g., insufficient_fee) - update to standard speed
+        if (result.delayReason && !mintSimulation.delayReason) {
+          // Update transaction to reflect standard speed fallback
+          updateTransaction(burnTxHash, {
+            transferType: "standard",
+            estimatedTime: "~15 minutes",
+          });
+        }
+
         setMintSimulation({
           canMint: result.canMint,
           alreadyMinted: result.alreadyMinted,
@@ -175,6 +187,7 @@ export function useMintPolling({
           attestationReady: result.attestationReady,
           lastChecked: new Date(),
           error: result.error,
+          delayReason: result.delayReason,
         });
 
         // Read latest steps from ref to avoid stale closure
@@ -256,6 +269,20 @@ export function useMintPolling({
         const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
 
         if (!isMountedRef.current) return;
+
+        // Handle delay reason (e.g., insufficient_fee) - update to standard speed
+        if (result?.delayReason && !mintSimulation.delayReason) {
+          setMintSimulation((prev) => ({
+            ...prev,
+            delayReason: result.delayReason,
+          }));
+
+          // Update transaction to reflect standard speed fallback
+          updateTransaction(burnTxHash, {
+            transferType: "standard",
+            estimatedTime: "~15 minutes",
+          });
+        }
 
         if (result?.status === "complete") {
           // Read latest steps from ref to avoid stale closure
