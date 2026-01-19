@@ -185,11 +185,13 @@ export function isTestnetChainUniversal(
  * This matches the CCTP contract's _hashSourceAndNonce implementation.
  */
 export function hashSourceAndNonce(sourceDomain: number, nonce: string): `0x${string}` {
-  // CCTP uses keccak256(abi.encodePacked(uint32 sourceDomain, uint64 nonce))
+  // CCTP v2 uses keccak256(abi.encodePacked(uint32 sourceDomain, bytes32 nonce))
+  // Nonces are 32-byte values, not 64-bit integers
+  const nonceHex = nonce.startsWith("0x") ? nonce : `0x${nonce}`;
   return keccak256(
     encodePacked(
-      ["uint32", "uint64"],
-      [sourceDomain, BigInt(nonce)]
+      ["uint32", "bytes32"],
+      [sourceDomain, nonceHex as `0x${string}`]
     )
   );
 }

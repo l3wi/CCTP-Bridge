@@ -136,3 +136,23 @@ isValidTxHash(value)       // Universal tx hash validation
 - Path aliases use `@/*` pointing to project root
 - Run `bun run lint` after changes (build not required for every change)
 - Solana burn returns immediately after send (no confirmation wait to avoid WebSocket hangs)
+
+---
+
+## Solana Program Integration Guidelines
+
+When implementing Solana program interactions:
+
+1. **Research PDA derivation first** — Verify which program ID each PDA should be derived from before implementation
+2. **Check account ordering** — Anchor macros like `#[event_cpi]` expect accounts at specific positions (e.g., [7-8] for event_cpi, not at the end)
+3. **Compare against official SDK** — Find and read the official adapter implementation (e.g., `@circle-fin/adapter-solana`) before building custom instructions
+4. **Test with simulation first** — Use `simulateTransaction` to catch account mismatches before signing
+
+### Debugging Solana Transaction Failures
+
+For `ConstraintSeeds` or similar account errors:
+
+1. **Map ALL accounts first** — List every account with its expected program derivation source
+2. **Compare against official implementation** — Match account order exactly against Circle's adapter
+3. **Verify PDAs independently** — Compute each PDA locally and verify against on-chain data
+4. **Don't iterate blindly** — Understand the full instruction structure before making changes
