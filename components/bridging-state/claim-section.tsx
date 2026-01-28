@@ -11,7 +11,32 @@ export function ClaimSection({
   isCheckingMint,
   isSwitchingChain,
   onClaim,
+  messageExpired,
+  onReattest,
+  isReattesting,
 }: ClaimSectionProps) {
+  // Show re-attest button if message has expired
+  if (messageExpired && onReattest) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Button
+          className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+          disabled={isReattesting}
+          onClick={onReattest}
+        >
+          {isReattesting ? (
+            <span className="flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Requesting new attestation...
+            </span>
+          ) : (
+            "Attestation Expired. Request a new Attestation."
+          )}
+        </Button>
+      </div>
+    );
+  }
+
   if (!showClaimButton) return null;
 
   return (

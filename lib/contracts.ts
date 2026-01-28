@@ -187,13 +187,44 @@ export function isTestnetChainUniversal(
 export function hashSourceAndNonce(sourceDomain: number, nonce: string): `0x${string}` {
   // CCTP v2 uses keccak256(abi.encodePacked(uint32 sourceDomain, bytes32 nonce))
   // Nonces are 32-byte values, not 64-bit integers
-  const nonceHex = nonce.startsWith("0x") ? nonce : `0x${nonce}`;
+  const nonceHex = normalizeNonceToHex(nonce);
   return keccak256(
     encodePacked(
       ["uint32", "bytes32"],
-      [sourceDomain, nonceHex as `0x${string}`]
+      [sourceDomain, nonceHex]
     )
   );
+}
+
+/**
+ * Normalize a nonce to bytes32 hex format.
+ * Handles both decimal strings (from Iris API) and hex strings.
+ *
+ * @param nonce - Nonce as decimal string, hex string with 0x prefix, or raw hex
+ * @returns Zero-padded bytes32 hex string with 0x prefix
+ */
+export function normalizeNonceToHex(nonce: string): `0x${string}` {
+  // Already hex with 0x prefix and correct length (64 hex chars = 32 bytes)
+  if (nonce.startsWith("0x") && nonce.length === 66) {
+    return nonce as `0x${string}`;
+  }
+
+  // Hex without 0x prefix (64 hex chars)
+  if (/^[0-9a-fA-F]{64}$/.test(nonce)) {
+    return `0x${nonce}` as `0x${string}`;
+  }
+
+  // Check if it's a decimal string (only digits, no hex letters)
+  if (/^\d+$/.test(nonce)) {
+    // Convert decimal to BigInt, then to hex, then pad to 32 bytes
+    const bigIntValue = BigInt(nonce);
+    const hexValue = bigIntValue.toString(16).padStart(64, "0");
+    return `0x${hexValue}` as `0x${string}`;
+  }
+
+  // Assume it's hex without 0x prefix - pad to 32 bytes
+  const cleanNonce = nonce.replace(/^0x/, "").padStart(64, "0");
+  return `0x${cleanNonce}` as `0x${string}`;
 }
 
 /**

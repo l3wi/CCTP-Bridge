@@ -16,6 +16,8 @@ interface UseClaimHandlerParams {
   onDestinationChain: boolean;
   onSuccess: (updatedSteps: BridgeResult["steps"]) => void;
   onAlreadyMinted?: () => void;
+  /** Called when the message has expired and needs re-attestation */
+  onMessageExpired?: (nonce: string) => void;
 }
 
 interface UseClaimHandlerResult {
@@ -35,6 +37,7 @@ export function useClaimHandler({
   onDestinationChain,
   onSuccess,
   onAlreadyMinted,
+  onMessageExpired,
 }: UseClaimHandlerParams): UseClaimHandlerResult {
   const { switchChain } = useSwitchChain();
   const solanaWallet = useWallet();
@@ -154,6 +157,14 @@ export function useClaimHandler({
         if (result.alreadyMinted) {
           onAlreadyMinted?.();
         }
+      } else if (result.messageExpired && result.nonce) {
+        // Message expired - trigger re-attestation flow
+        onMessageExpired?.(result.nonce);
+        toast({
+          title: "Attestation expired",
+          description: "Please request re-attestation to continue.",
+          variant: "destructive",
+        });
       } else {
         toast({
           title: "Claim failed",
@@ -173,6 +184,7 @@ export function useClaimHandler({
     executeMint,
     onSuccess,
     onAlreadyMinted,
+    onMessageExpired,
     toast,
   ]);
 

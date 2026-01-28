@@ -29,6 +29,8 @@ export interface SimulationResult {
   success: boolean;
   canMint: boolean;
   alreadyMinted: boolean;
+  /** True if the message attestation has expired and needs re-signing */
+  messageExpired?: boolean;
   error?: string;
 }
 
@@ -238,6 +240,17 @@ export async function simulateMint(
       };
     }
 
+    // Check for expired message (CCTP v2 messages expire after 24 hours)
+    if (/message expired|must be re-signed/i.test(errorMessage)) {
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        messageExpired: true,
+        error: "Message expired - attestation needs to be re-signed",
+      };
+    }
+
     return {
       success: false,
       canMint: false,
@@ -260,7 +273,7 @@ export async function checkMintReadiness(
   destinationChainId: number,
   burnTxHash: string,
   skipSimulation: boolean = false
-): Promise<SimulationResult & { attestationReady: boolean; delayReason?: string }> {
+): Promise<SimulationResult & { attestationReady: boolean; delayReason?: string; nonce?: string }> {
   // Import dynamically to avoid circular deps
   const { fetchAttestationUniversal } = await import("./iris");
 
@@ -288,6 +301,7 @@ export async function checkMintReadiness(
       attestationReady: false,
       error: "Attestation pending",
       delayReason: attestationData.delayReason,
+      nonce: attestationData.nonce,
     };
   }
 
@@ -300,6 +314,7 @@ export async function checkMintReadiness(
       alreadyMinted: false,
       attestationReady: true,
       delayReason: attestationData.delayReason,
+      nonce: attestationData.nonce,
     };
   }
 
@@ -313,6 +328,7 @@ export async function checkMintReadiness(
     ...simResult,
     attestationReady: true,
     delayReason: attestationData.delayReason,
+    nonce: attestationData.nonce,
   };
 }
 

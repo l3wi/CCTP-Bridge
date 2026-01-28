@@ -145,6 +145,10 @@ export interface MintResult {
   error?: string;
   /** True if mint was already executed (nonce used) */
   alreadyMinted?: boolean;
+  /** True if the attestation has expired and needs re-signing */
+  messageExpired?: boolean;
+  /** The nonce for re-attestation (when messageExpired is true) */
+  nonce?: string;
 }
 
 // =============================================================================

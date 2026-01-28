@@ -4,8 +4,9 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { ChainId, isSolanaChain } from "@/lib/types";
 import { checkMintReadiness } from "@/lib/simulation";
-import { fetchAttestationUniversal } from "@/lib/iris";
+import { fetchAttestationUniversal, requestReattestation } from "@/lib/iris";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { useToast } from "@/components/ui/use-toast";
 
 // Polling configuration
 const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
@@ -20,6 +21,10 @@ export interface MintPollingState {
   error?: string;
   /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
   delayReason?: string;
+  /** True if the message attestation has expired and needs re-signing */
+  messageExpired?: boolean;
+  /** The nonce for the message (needed for re-attestation) */
+  nonce?: string;
 }
 
 interface UseMintPollingParams {
@@ -61,6 +66,8 @@ export function useMintPolling({
     attestationReady: false,
     lastChecked: null,
     delayReason: undefined,
+    messageExpired: false,
+    nonce: undefined,
   });
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -88,6 +95,8 @@ export function useMintPolling({
   const shouldPollEvm = useMemo(() => {
     if (isSuccess) return false;
     if (mintSimulation.alreadyMinted) return false;
+    // Stop polling when message is expired - user needs to re-attest
+    if (mintSimulation.messageExpired) return false;
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
 
     // EVM polling only for EVM destinations
@@ -103,6 +112,7 @@ export function useMintPolling({
   }, [
     isSuccess,
     mintSimulation.alreadyMinted,
+    mintSimulation.messageExpired,
     burnTxHash,
     sourceChainId,
     destinationChainId,
@@ -188,6 +198,8 @@ export function useMintPolling({
           lastChecked: new Date(),
           error: result.error,
           delayReason: result.delayReason,
+          messageExpired: result.messageExpired,
+          nonce: result.nonce,
         });
 
         // Read latest steps from ref to avoid stale closure
@@ -346,8 +358,74 @@ export function useMintPolling({
     }));
   }, []);
 
+  // Setter for message expired state (called when claim detects expired attestation)
+  const setMessageExpired = useCallback((nonce: string) => {
+    setMintSimulation((prev) => ({
+      ...prev,
+      messageExpired: true,
+      nonce,
+      canMint: false,
+    }));
+  }, []);
+
+  const { toast } = useToast();
+
+  // Request re-attestation for expired messages
+  const [isReattesting, setIsReattesting] = useState(false);
+
+  const requestReattest = useCallback(async () => {
+    if (!sourceChainId || !mintSimulation.nonce) {
+      toast({
+        title: "Cannot re-attest",
+        description: "Missing source chain or nonce information",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsReattesting(true);
+
+    try {
+      const result = await requestReattestation(sourceChainId, mintSimulation.nonce);
+
+      if (result.success) {
+        toast({
+          title: "Re-attestation requested",
+          description: "Circle is processing a new attestation. This may take a few minutes.",
+        });
+
+        // Reset the expired state and resume polling
+        setMintSimulation((prev) => ({
+          ...prev,
+          messageExpired: false,
+          error: undefined,
+          canMint: false,
+          attestationReady: false,
+        }));
+      } else {
+        toast({
+          title: "Re-attestation failed",
+          description: result.error || "Unable to request re-attestation",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      toast({
+        title: "Re-attestation failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsReattesting(false);
+    }
+  }, [sourceChainId, mintSimulation.nonce, toast]);
+
   return {
     ...mintSimulation,
     setAlreadyMinted,
+    setMessageExpired,
+    requestReattest,
+    isReattesting,
   };
 }
