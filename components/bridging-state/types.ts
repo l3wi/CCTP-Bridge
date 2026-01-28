@@ -45,6 +45,12 @@ export interface ClaimSectionProps {
   isCheckingMint: boolean;
   isSwitchingChain: boolean;
   onClaim: () => void;
+  /** True if the message attestation has expired and needs re-signing */
+  messageExpired?: boolean;
+  /** Callback to request re-attestation */
+  onReattest?: () => void;
+  /** True if re-attestation is in progress */
+  isReattesting?: boolean;
 }
 
 export interface BridgeInfoProps {

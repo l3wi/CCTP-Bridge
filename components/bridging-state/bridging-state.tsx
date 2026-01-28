@@ -176,6 +176,10 @@ export function BridgingState({
     attestationReady,
     checking: isCheckingMint,
     setAlreadyMinted,
+    setMessageExpired,
+    messageExpired,
+    requestReattest,
+    isReattesting,
   } = useMintPolling({
     burnTxHash,
     sourceChainId,
@@ -220,6 +224,10 @@ export function BridgingState({
     setAlreadyMinted(true);
   }, [setAlreadyMinted]);
 
+  const handleMessageExpired = useCallback((nonce: string) => {
+    setMessageExpired(nonce);
+  }, [setMessageExpired]);
+
   const { handleClaim, isClaiming } = useClaimHandler({
     destinationChainId,
     sourceChainId,
@@ -228,6 +236,7 @@ export function BridgingState({
     onDestinationChain,
     onSuccess: handleClaimSuccess,
     onAlreadyMinted: handleAlreadyMinted,
+    onMessageExpired: handleMessageExpired,
   });
 
   // Track burn/mint completion timestamps
@@ -445,6 +454,9 @@ export function BridgingState({
             isCheckingMint={isCheckingMint}
             isSwitchingChain={isSwitchingChain}
             onClaim={handleClaim}
+            messageExpired={messageExpired}
+            onReattest={requestReattest}
+            isReattesting={isReattesting}
           />
 
           <BridgeInfo

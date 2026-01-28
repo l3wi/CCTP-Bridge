@@ -177,6 +177,16 @@ export function useMint() {
       }
 
       if (!simResult.canMint) {
+        // Check if message has expired - needs re-attestation
+        if (simResult.messageExpired) {
+          return {
+            success: false,
+            messageExpired: true,
+            nonce: attestationData.nonce,
+            error: "Message expired - please request re-attestation",
+          };
+        }
+
         return {
           success: false,
           error: simResult.error || "Simulation failed - mint may not be ready",

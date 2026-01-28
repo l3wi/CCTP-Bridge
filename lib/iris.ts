@@ -298,3 +298,100 @@ export async function isAttestationReady(
   const data = await fetchAttestation(sourceChainId, burnTxHash);
   return data?.status === "complete";
 }
+
+export interface ReattestResult {
+  success: boolean;
+  message?: string;
+  nonce?: string;
+  error?: string;
+}
+
+/**
+ * Request re-attestation for an expired CCTP message.
+ * This is used when a message has expired and needs to be re-signed by Circle.
+ *
+ * CCTP v2 messages have a 24-hour expiration window. If the message expires
+ * before being claimed on the destination chain, this endpoint can be used
+ * to get a fresh attestation.
+ *
+ * Note: Re-attested messages will use standard finality (not fast transfer).
+ *
+ * @param sourceChainId - The source chain ID (to determine testnet/mainnet)
+ * @param nonce - The message nonce (can be decimal string or hex)
+ * @returns Result indicating success or failure
+ */
+export async function requestReattestation(
+  sourceChainId: number | string,
+  nonce: string
+): Promise<ReattestResult> {
+  const isTestnet = typeof sourceChainId === "number"
+    ? isTestnetChain(sourceChainId)
+    : isTestnetChainUniversal(sourceChainId as any);
+
+  const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
+
+  // The API expects the nonce in the path
+  // Nonce should be the eventNonce from the attestation response
+  const url = `${baseUrl}/v2/reattest/${nonce}`;
+
+  try {
+    const response = await irisRateLimiter.throttle(() =>
+      fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      })
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `Re-attestation failed: ${response.status}`;
+
+      try {
+        const errorJson = JSON.parse(errorText);
+        errorMessage = errorJson.message || errorJson.error || errorMessage;
+      } catch {
+        // Use the raw text if not JSON
+        if (errorText) {
+          errorMessage = errorText;
+        }
+      }
+
+      console.error("Re-attestation API error:", {
+        status: response.status,
+        error: errorText,
+      });
+
+      return {
+        success: false,
+        error: errorMessage,
+      };
+    }
+
+    const data = await response.json();
+
+    return {
+      success: true,
+      message: data.message || "Re-attestation requested successfully",
+      nonce: data.nonce,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Failed to request re-attestation:", error);
+
+    return {
+      success: false,
+      error: `Network error: ${errorMessage}`,
+    };
+  }
+}
+
+/**
+ * Check if an error message indicates an expired CCTP message.
+ */
+export function isMessageExpiredError(error: unknown): boolean {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  return /message expired|must be re-signed/i.test(errorMessage);
+}
