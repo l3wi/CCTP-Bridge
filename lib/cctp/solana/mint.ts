@@ -763,9 +763,49 @@ export async function buildReceiveMessageTransaction(
 // =============================================================================
 
 /**
+ * Simulate a signed transaction and return the program logs.
+ * Used for debugging before sending.
+ *
+ * @returns logs array on success, throws enriched error on failure
+ */
+export async function simulateSignedTransaction(
+  connection: Connection,
+  signedTransaction: Transaction | VersionedTransaction
+): Promise<string[]> {
+  let result;
+
+  if (isVersionedTransaction(signedTransaction)) {
+    result = await connection.simulateTransaction(signedTransaction, {
+      commitment: "confirmed",
+      replaceRecentBlockhash: false,
+    });
+  } else {
+    result = await connection.simulateTransaction(signedTransaction, undefined, undefined);
+  }
+
+  const logs = result.value.logs ?? [];
+
+  if (result.value.err) {
+    // Build a rich error with logs attached
+    const errJson = JSON.stringify(result.value.err);
+    const error = new Error(
+      `Simulation failed: ${errJson}`
+    ) as Error & { simulationLogs: string[]; simulationError: unknown };
+    error.simulationLogs = logs;
+    error.simulationError = result.value.err;
+    throw error;
+  }
+
+  return logs;
+}
+
+/**
  * Send a signed transaction WITHOUT waiting for confirmation.
  * Returns the signature immediately after sending.
  * This avoids WebSocket confirmation hangs in the browser.
+ *
+ * Performs an explicit simulation first to capture program logs on failure.
+ * If simulation succeeds, sends with skipPreflight=true (already validated).
  *
  * Supports both legacy Transaction and VersionedTransaction.
  */
@@ -773,10 +813,14 @@ export async function sendTransactionNoConfirm(
   connection: Connection,
   signedTransaction: Transaction | VersionedTransaction
 ): Promise<string> {
+  // Simulate first to capture logs on failure
+  await simulateSignedTransaction(connection, signedTransaction);
+
+  // Simulation passed — send without preflight (already validated)
   const rawTransaction = signedTransaction.serialize();
 
   const signature = await connection.sendRawTransaction(rawTransaction, {
-    skipPreflight: false,
+    skipPreflight: true,
     preflightCommitment: "confirmed",
   });
 

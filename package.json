@@ -47,6 +47,7 @@
     "tailwindcss": "^4.1.18",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "5.8.3",
+    "vercel": "^50.15.1",
     "viem": "^2.43.5",
     "wagmi": "^2.19.5",
     "zustand": "^5.0.9"

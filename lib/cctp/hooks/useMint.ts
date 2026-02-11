@@ -35,6 +35,7 @@ import {
   type UniversalTxHash,
 } from "../types";
 import { isUserRejection, extractErrorMessage } from "../shared";
+import { parseSolanaCctpError } from "../solana/errors";
 import {
   estimateSolanaMintGas,
   estimateEvmMintGas,
@@ -573,6 +574,9 @@ function handleMintError(
 
 /**
  * Handle Solana mint errors with consistent behavior.
+ *
+ * Uses the CCTP error map to provide user-friendly messages for known
+ * program errors and always logs full simulation logs for debugging.
  */
 function handleSolanaMintError(
   error: unknown,
@@ -582,41 +586,39 @@ function handleSolanaMintError(
   toast: ToastFn,
   attestationNonce?: string
 ): MintResult {
-  const errorMessage = extractErrorMessage(error);
-  const errorLogs = (error as { logs?: string[] })?.logs ?? [];
-  const logsText = errorLogs.join("\n");
-  // Solana SendTransactionError stores full details in transactionMessage
-  const txMessage = (error as { transactionMessage?: string })?.transactionMessage ?? "";
-  const allErrorText = `${errorMessage} ${logsText} ${txMessage}`;
+  // ── 0. Gather all available error context ──────────────────────────────
+  const errorMessage = extractErrorMessage(error, 500);
 
-  // Handle user rejection
+  // Logs from our explicit simulateSignedTransaction (attached as .simulationLogs)
+  const simLogs = (error as { simulationLogs?: string[] })?.simulationLogs ?? [];
+  // Legacy .logs / .transactionLogs from SendTransactionError
+  const txLogs = (error as { transactionLogs?: string[] })?.transactionLogs ?? [];
+  const legacyLogs = (error as { logs?: string[] })?.logs ?? [];
+  const allLogs = [...simLogs, ...txLogs, ...legacyLogs];
+
+  const txMessage = (error as { transactionMessage?: string })?.transactionMessage ?? "";
+
+  // ── 1. Always log full debug info ──────────────────────────────────────
+  console.error("Solana mint failed:", {
+    ecosystem: "solana",
+    burnTxHash,
+    timestamp: new Date().toISOString(),
+    errorMessage,
+    transactionMessage: txMessage,
+    logs: allLogs.length > 0 ? allLogs : "(no logs captured)",
+    rawError: error,
+  });
+
+  // ── 2. User rejection (before any other checks) ───────────────────────
   if (isUserRejection(error)) {
     return { success: false, error: "Transaction cancelled by user" };
   }
 
-  // Check for MessageExpired error (0x1780 = 6016 from token-messenger-minter-v2)
-  // This means the burn message's expirationBlock (Solana slot) has passed.
-  // The user needs to request re-attestation to get a fresh message.
+  // ── 3. Nonce already used (account-already-in-use from init) ──────────
+  const allText = `${errorMessage} ${txMessage} ${allLogs.join("\n")}`;
   if (
-    /0x1780/i.test(allErrorText) ||
-    /custom program error: 0x1780/i.test(allErrorText) ||
-    /message.*expired/i.test(allErrorText)
-  ) {
-    console.warn("[useMint] CCTP message expired (0x1780). Needs re-attestation.");
-    return {
-      success: false,
-      messageExpired: true,
-      nonce: attestationNonce,
-      error: "Message expired - please request re-attestation",
-    };
-  }
-
-  // Check if nonce already used (transaction already claimed)
-  if (
-    /already in use/i.test(errorMessage) ||
-    /already in use/i.test(logsText) ||
-    /"Custom":\s*0\b/.test(errorMessage) ||
-    /account.*already.*allocated/i.test(errorMessage)
+    /already in use/i.test(allText) ||
+    /account.*already.*allocated/i.test(allText)
   ) {
     const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
     updateTransaction(burnTxHash, {
@@ -634,18 +636,54 @@ function handleSolanaMintError(
     return { success: true, alreadyMinted: true };
   }
 
-  console.error("Solana mint failed:", {
-    ecosystem: "solana",
-    error: errorMessage,
-    context: {
-      burnTxHash,
-      timestamp: new Date().toISOString(),
-    },
-    logs: errorLogs.length > 0 ? errorLogs : undefined,
-    rawError: error,
-  });
+  // ── 4. Try to match a known CCTP error code ───────────────────────────
+  const { code, info } = parseSolanaCctpError(error);
+
+  if (info) {
+    console.warn(
+      `[useMint] CCTP error 0x${code}: ${info.name}\n` +
+      `  User message: ${info.userMessage}\n` +
+      `  Detail: ${info.detail}`
+    );
+
+    // Message expired → trigger auto re-attestation
+    if (info.isExpired) {
+      return {
+        success: false,
+        messageExpired: true,
+        nonce: attestationNonce,
+        error: info.userMessage,
+      };
+    }
+
+    // Already claimed via error code
+    if (info.isAlreadyClaimed) {
+      const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+      updateTransaction(burnTxHash, {
+        status: "claimed",
+        bridgeState: "success",
+        completedAt: new Date(),
+        steps: updatedSteps,
+      });
+
+      toast({
+        title: "Already Claimed",
+        description: info.userMessage,
+      });
+
+      return { success: true, alreadyMinted: true };
+    }
+
+    // Known error with a good user message
+    return {
+      success: false,
+      error: info.userMessage,
+    };
+  }
+
+  // ── 5. Unknown error – return the raw message ─────────────────────────
   return {
     success: false,
-    error: errorMessage,
+    error: `Mint failed: ${errorMessage}`,
   };
 }
