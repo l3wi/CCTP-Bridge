@@ -452,6 +452,94 @@ export function extractEventNonceFromMessage(message: string): string {
 }
 
 // =============================================================================
+// Message Expiration Check
+// =============================================================================
+
+/**
+ * CCTP v2 message header size (bytes).
+ * version(4) + sourceDomain(4) + destinationDomain(4) + nonce(32)
+ * + sender(32) + recipient(32) + destinationCaller(32)
+ * + minFinalityThreshold(4) + finalityThresholdExecuted(4)
+ */
+const CCTP_V2_HEADER_SIZE = 148;
+
+/**
+ * BurnMessage field offsets within the message body.
+ * Fields use EVM uint256 (32 bytes), but Solana reads the last 8 bytes (u64 BE).
+ * The first 24 bytes must be zero (OFFSET = 24).
+ *
+ * Layout: version(4) + burnToken(32) + mintRecipient(32) + amount(32)
+ *         + messageSender(32) + maxFee(32) + feeExecuted(32) + expirationBlock(32)
+ *         + hookData(variable)
+ */
+const BURN_MSG_EXPIRATION_BLOCK_INDEX = 196; // Offset within burn message body
+const EVM_U256_TO_U64_OFFSET = 24; // Skip 24 leading zero bytes to get u64
+
+/**
+ * Extract the expirationBlock (Solana slot) from a CCTP v2 message.
+ * Returns 0 if no expiration is set (meaning the message never expires).
+ *
+ * @param message - Full CCTP message hex string (with or without 0x prefix)
+ * @returns expirationBlock as a number (Solana slot), 0 means no expiration
+ */
+export function extractExpirationBlock(message: string): number {
+  const hex = message.replace(/^0x/, "");
+  const totalBytes = hex.length / 2;
+
+  // Need at least header + 228 bytes of burn message body
+  const minRequired = CCTP_V2_HEADER_SIZE + BURN_MSG_EXPIRATION_BLOCK_INDEX + 32;
+  if (totalBytes < minRequired) {
+    return 0; // Message too short, assume no expiration
+  }
+
+  // expirationBlock u64 starts at: header + field_offset + u256_offset
+  const byteOffset = CCTP_V2_HEADER_SIZE + BURN_MSG_EXPIRATION_BLOCK_INDEX + EVM_U256_TO_U64_OFFSET;
+  const hexStart = byteOffset * 2;
+  const hexEnd = hexStart + 16; // 8 bytes = 16 hex chars
+
+  const expirationHex = hex.slice(hexStart, hexEnd);
+  if (!expirationHex || expirationHex.length !== 16) {
+    return 0;
+  }
+
+  // Parse as big-endian u64
+  // Use Number since Solana slots fit in JS safe integers
+  const value = parseInt(expirationHex, 16);
+  return isNaN(value) ? 0 : value;
+}
+
+/**
+ * Check if a CCTP v2 message has expired based on the current Solana slot.
+ *
+ * @param connection - Solana connection
+ * @param message - Full CCTP message hex string
+ * @returns Object with isExpired status and details
+ */
+export async function checkMessageExpiration(
+  connection: Connection,
+  message: string
+): Promise<{
+  isExpired: boolean;
+  expirationBlock: number;
+  currentSlot: number;
+}> {
+  const expirationBlock = extractExpirationBlock(message);
+
+  // 0 means no expiration
+  if (expirationBlock === 0) {
+    return { isExpired: false, expirationBlock: 0, currentSlot: 0 };
+  }
+
+  const currentSlot = await connection.getSlot("confirmed");
+
+  return {
+    isExpired: currentSlot >= expirationBlock,
+    expirationBlock,
+    currentSlot,
+  };
+}
+
+// =============================================================================
 // Transaction Building
 // =============================================================================
 

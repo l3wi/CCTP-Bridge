@@ -14,6 +14,7 @@ import {
   getBridgeChainByIdUniversal,
   BRIDGEKIT_ENV,
 } from "./bridgeKit";
+import { getCctpDomainSafe } from "./cctp/shared";
 import { createSolanaAdapter } from "./solanaAdapter";
 import type { SolanaChainId } from "./types";
 import type { Adapter } from "@solana/wallet-adapter-base";
@@ -24,6 +25,8 @@ const CCTP_NONCE_OFFSET = 12; // Nonce starts at byte 12
 const CCTP_NONCE_LENGTH = 32; // Nonce is 32 bytes
 const CCTP_SOURCE_DOMAIN_OFFSET = 4; // Source domain at byte 4
 const CCTP_SOURCE_DOMAIN_LENGTH = 4; // Domain is 4 bytes
+const CCTP_DEST_DOMAIN_OFFSET = 8; // Destination domain at byte 8
+const CCTP_DEST_DOMAIN_LENGTH = 4; // Domain is 4 bytes
 
 export interface SimulationResult {
   success: boolean;
@@ -146,6 +149,24 @@ export function extractSourceDomainFromMessage(message: `0x${string}`): number {
 }
 
 /**
+ * Extract destination domain from CCTP message bytes.
+ * Destination domain is at bytes 8-12 (0-indexed, exclusive end)
+ */
+export function extractDestinationDomainFromMessage(message: `0x${string}`): number {
+  if (!validateMessageFormat(message)) {
+    throw new Error(
+      `Invalid CCTP message format: expected at least ${CCTP_MESSAGE_HEADER_BYTES} bytes`
+    );
+  }
+
+  const startChar = 2 + CCTP_DEST_DOMAIN_OFFSET * 2;
+  const endChar = startChar + CCTP_DEST_DOMAIN_LENGTH * 2;
+  const domainHex = message.slice(startChar, endChar);
+
+  return parseInt(domainHex, 16);
+}
+
+/**
  * Simulate a mint (receiveMessage) transaction to check if it will succeed.
  *
  * @param destinationChainId - The chain ID where mint will occur
@@ -176,6 +197,30 @@ export async function simulateMint(
       alreadyMinted: false,
       error: `Invalid CCTP message format`,
     };
+  }
+
+  // Validate destination domain matches the target chain
+  try {
+    const messageDomain = extractDestinationDomainFromMessage(message);
+    const expectedDomain = getCctpDomainSafe(destinationChainId);
+
+    if (expectedDomain !== null && messageDomain !== expectedDomain) {
+      console.error(
+        `[simulateMint] Domain mismatch: message destination domain=${messageDomain}, ` +
+        `but target chain ${destinationChainId} has domain=${expectedDomain}. ` +
+        `The mint must be executed on the chain matching domain ${messageDomain}.`
+      );
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        error: `Destination chain mismatch: this transfer targets domain ${messageDomain}, ` +
+          `not chain ${destinationChainId} (domain ${expectedDomain}). ` +
+          `Please switch to the correct destination chain.`,
+      };
+    }
+  } catch {
+    // Don't block on validation errors — continue with simulation
   }
 
   const client = getPublicClient(destinationChainId);

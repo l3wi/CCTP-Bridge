@@ -28,6 +28,9 @@ interface UseClaimHandlerResult {
 /**
  * Handles claim execution for both EVM and Solana destinations.
  * Uses the unified useMint hook internally.
+ *
+ * When a message is expired, sets the expired state via onMessageExpired.
+ * The parent (useMintPolling) handles auto re-attestation and polling.
  */
 export function useClaimHandler({
   destinationChainId,
@@ -94,6 +97,30 @@ export function useClaimHandler({
       return updatedSteps;
     };
 
+    /**
+     * Handle mint result consistently for both EVM and Solana.
+     * If expired, signals the parent to auto re-attest.
+     */
+    const handleMintResult = (result: Awaited<ReturnType<typeof executeMint>>) => {
+      if (result.success || result.alreadyMinted) {
+        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
+        onSuccess(updatedSteps);
+
+        if (result.alreadyMinted) {
+          onAlreadyMinted?.();
+        }
+      } else if (result.messageExpired && result.nonce) {
+        // Signal parent — useMintPolling will auto re-attest and poll
+        onMessageExpired?.(result.nonce);
+      } else {
+        toast({
+          title: "Claim failed",
+          description: result.error || "Unable to complete mint",
+          variant: "destructive",
+        });
+      }
+    };
+
     if (isDestSolana) {
       // SOLANA DESTINATION
       if (!solanaWallet.connected) {
@@ -112,20 +139,7 @@ export function useClaimHandler({
         existingSteps: currentSteps,
       });
 
-      if (result.success || result.alreadyMinted) {
-        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
-        onSuccess(updatedSteps);
-
-        if (result.alreadyMinted) {
-          onAlreadyMinted?.();
-        }
-      } else if (result.error) {
-        toast({
-          title: "Claim failed",
-          description: result.error,
-          variant: "destructive",
-        });
-      }
+      handleMintResult(result);
     } else {
       // EVM DESTINATION
       if (!onDestinationChain) {
@@ -150,28 +164,7 @@ export function useClaimHandler({
         existingSteps: currentSteps,
       });
 
-      if (result.success || result.alreadyMinted) {
-        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
-        onSuccess(updatedSteps);
-
-        if (result.alreadyMinted) {
-          onAlreadyMinted?.();
-        }
-      } else if (result.messageExpired && result.nonce) {
-        // Message expired - trigger re-attestation flow
-        onMessageExpired?.(result.nonce);
-        toast({
-          title: "Attestation expired",
-          description: "Please request re-attestation to continue.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Claim failed",
-          description: result.error || "Unable to complete mint",
-          variant: "destructive",
-        });
-      }
+      handleMintResult(result);
     }
   }, [
     destinationChainId,

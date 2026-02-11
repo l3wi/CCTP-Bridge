@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast";
 // Polling configuration
 const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
 const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour
+const REATTEST_POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds while awaiting re-attestation
 
 export interface MintPollingState {
   canMint: boolean;
@@ -44,6 +45,9 @@ interface UseMintPollingParams {
  * Handles polling for mint readiness on both EVM and Solana destinations.
  * - EVM: Uses contract simulation via checkMintReadiness
  * - Solana: Polls Iris API for attestation status
+ *
+ * When a message expires, automatically requests re-attestation and polls
+ * for the fresh attestation every 15 seconds.
  */
 export function useMintPolling({
   burnTxHash,
@@ -58,6 +62,7 @@ export function useMintPolling({
   onStepsUpdate,
 }: UseMintPollingParams) {
   const { updateTransaction } = useTransactionStore();
+  const { toast } = useToast();
 
   const [mintSimulation, setMintSimulation] = useState<MintPollingState>({
     canMint: false,
@@ -72,7 +77,14 @@ export function useMintPolling({
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const solanaPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const reattestPollingRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
+
+  // Track re-attestation state
+  const [isReattesting, setIsReattesting] = useState(false);
+  const [isAwaitingReattestation, setIsAwaitingReattestation] = useState(false);
+  // Guard against duplicate auto-reattest triggers
+  const reattestTriggeredRef = useRef(false);
 
   // Refs to avoid stale closures in polling intervals
   const displayStepsRef = useRef<BridgeResult["steps"]>(displaySteps);
@@ -95,7 +107,7 @@ export function useMintPolling({
   const shouldPollEvm = useMemo(() => {
     if (isSuccess) return false;
     if (mintSimulation.alreadyMinted) return false;
-    // Stop polling when message is expired - user needs to re-attest
+    // Stop polling when message is expired - auto-reattest will handle it
     if (mintSimulation.messageExpired) return false;
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
 
@@ -151,6 +163,146 @@ export function useMintPolling({
     burnCompletedAt,
     startedAt,
   ]);
+
+  // =========================================================================
+  // Auto re-attestation: when messageExpired is set, automatically request
+  // re-attestation and start polling for the new attestation.
+  // =========================================================================
+  useEffect(() => {
+    if (
+      !mintSimulation.messageExpired ||
+      !mintSimulation.nonce ||
+      !sourceChainId ||
+      reattestTriggeredRef.current
+    ) {
+      return;
+    }
+
+    // Mark as triggered so we don't fire again
+    reattestTriggeredRef.current = true;
+
+    const doReattest = async () => {
+      if (!isMountedRef.current) return;
+
+      setIsReattesting(true);
+
+      toast({
+        title: "Attestation expired",
+        description: "Automatically requesting a new attestation from Circle…",
+      });
+
+      try {
+        const result = await requestReattestation(sourceChainId, mintSimulation.nonce!);
+
+        if (!isMountedRef.current) return;
+
+        if (result.success) {
+          toast({
+            title: "Re-attestation requested",
+            description: "Waiting for Circle to process. This may take a minute…",
+          });
+          setIsAwaitingReattestation(true);
+        } else {
+          toast({
+            title: "Re-attestation failed",
+            description: result.error || "Please try claiming again in a few minutes.",
+            variant: "destructive",
+          });
+          // Allow retry by resetting the guard
+          reattestTriggeredRef.current = false;
+        }
+      } catch (error) {
+        if (!isMountedRef.current) return;
+        const msg = error instanceof Error ? error.message : String(error);
+        toast({
+          title: "Re-attestation failed",
+          description: msg,
+          variant: "destructive",
+        });
+        reattestTriggeredRef.current = false;
+      } finally {
+        if (isMountedRef.current) {
+          setIsReattesting(false);
+        }
+      }
+    };
+
+    doReattest();
+  }, [mintSimulation.messageExpired, mintSimulation.nonce, sourceChainId, toast]);
+
+  // =========================================================================
+  // Poll for new attestation after re-attestation request
+  // =========================================================================
+  useEffect(() => {
+    if (!isAwaitingReattestation || !burnTxHash || !sourceChainId) {
+      if (reattestPollingRef.current) {
+        clearInterval(reattestPollingRef.current);
+        reattestPollingRef.current = null;
+      }
+      return;
+    }
+
+    const pollForNewAttestation = async () => {
+      if (!isMountedRef.current || !burnTxHash || !sourceChainId) return;
+
+      try {
+        const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
+
+        if (!isMountedRef.current) return;
+
+        if (result?.status === "complete") {
+          // Fresh attestation is ready — reset expired state and re-enable claim
+          setIsAwaitingReattestation(false);
+          reattestTriggeredRef.current = false;
+
+          setMintSimulation((prev) => ({
+            ...prev,
+            messageExpired: false,
+            error: undefined,
+            canMint: true,
+            attestationReady: true,
+          }));
+
+          // Update steps
+          const currentSteps = displayStepsRef.current ?? [];
+          const updatedSteps = currentSteps.map((step) => {
+            if (/attestation|attest/i.test(step.name)) {
+              return { ...step, state: "success" as const };
+            }
+            return step;
+          });
+          if (burnTxHash) {
+            updateTransaction(burnTxHash, { steps: updatedSteps });
+          }
+          onStepsUpdateRef.current?.(updatedSteps);
+
+          toast({
+            title: "New attestation ready",
+            description: "You can now claim your USDC.",
+          });
+
+          // Stop polling
+          if (reattestPollingRef.current) {
+            clearInterval(reattestPollingRef.current);
+            reattestPollingRef.current = null;
+          }
+        }
+      } catch (error) {
+        console.error("Re-attestation poll failed:", error);
+      }
+    };
+
+    // First check immediately, then every 15s
+    pollForNewAttestation();
+    reattestPollingRef.current = setInterval(pollForNewAttestation, REATTEST_POLL_INTERVAL_MS);
+
+    return () => {
+      if (reattestPollingRef.current) {
+        clearInterval(reattestPollingRef.current);
+        reattestPollingRef.current = null;
+      }
+    };
+  }, [isAwaitingReattestation, burnTxHash, sourceChainId, updateTransaction, toast]);
 
   // EVM polling effect
   useEffect(() => {
@@ -368,11 +520,7 @@ export function useMintPolling({
     }));
   }, []);
 
-  const { toast } = useToast();
-
-  // Request re-attestation for expired messages
-  const [isReattesting, setIsReattesting] = useState(false);
-
+  // Manual re-attestation trigger (fallback if auto-reattest fails)
   const requestReattest = useCallback(async () => {
     if (!sourceChainId || !mintSimulation.nonce) {
       toast({
@@ -391,17 +539,9 @@ export function useMintPolling({
       if (result.success) {
         toast({
           title: "Re-attestation requested",
-          description: "Circle is processing a new attestation. This may take a few minutes.",
+          description: "Waiting for Circle to process. This may take a minute…",
         });
-
-        // Reset the expired state and resume polling
-        setMintSimulation((prev) => ({
-          ...prev,
-          messageExpired: false,
-          error: undefined,
-          canMint: false,
-          attestationReady: false,
-        }));
+        setIsAwaitingReattestation(true);
       } else {
         toast({
           title: "Re-attestation failed",
@@ -427,5 +567,6 @@ export function useMintPolling({
     setMessageExpired,
     requestReattest,
     isReattesting,
+    isAwaitingReattestation,
   };
 }

@@ -91,8 +91,24 @@ export function BridgingState({
 
   // Extract chain IDs
   const destinationChainId: ChainId | undefined = useMemo(() => {
-    const chainDef = displayResult?.destination?.chain as { chainId?: number; chain?: string } | undefined;
+    const chainDef = displayResult?.destination?.chain as { chainId?: number; chain?: string; type?: string } | undefined;
     const bridgeChainId = chainDef?.chainId ?? chainDef?.chain;
+
+    // Debug: trace destination chain derivation
+    if (process.env.NODE_ENV === "development") {
+      const fallbackValue = toChain?.value ? (isNaN(Number(toChain.value)) ? toChain.value : Number(toChain.value)) : undefined;
+      console.debug(
+        `[BridgingState] destinationChainId derivation:`,
+        `\n  chainDef?.chainId=${chainDef?.chainId}`,
+        `\n  chainDef?.chain=${chainDef?.chain}`,
+        `\n  chainDef?.type=${chainDef?.type}`,
+        `\n  bridgeChainId=${bridgeChainId}`,
+        `\n  toChain.value=${toChain?.value}`,
+        `\n  fallbackValue=${fallbackValue}`,
+        `\n  resolved=${bridgeChainId ?? fallbackValue}`
+      );
+    }
+
     if (bridgeChainId) return bridgeChainId as ChainId;
     if (!toChain?.value) return undefined;
     const numValue = Number(toChain.value);
@@ -180,6 +196,7 @@ export function BridgingState({
     messageExpired,
     requestReattest,
     isReattesting,
+    isAwaitingReattestation,
   } = useMintPolling({
     burnTxHash,
     sourceChainId,
@@ -457,6 +474,7 @@ export function BridgingState({
             messageExpired={messageExpired}
             onReattest={requestReattest}
             isReattesting={isReattesting}
+            isAwaitingReattestation={isAwaitingReattestation}
           />
 
           <BridgeInfo

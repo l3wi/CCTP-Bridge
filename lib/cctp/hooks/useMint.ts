@@ -16,13 +16,14 @@ import {
   MESSAGE_TRANSMITTER_ABI,
 } from "@/lib/contracts";
 import { getExplorerTxUrl, getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
-import { getCctpDomain } from "../shared";
+import { getCctpDomain, getCctpDomainSafe } from "../shared";
 import { checkNonceUsed } from "../nonce";
 import { updateStepsWithMint } from "../steps";
 import {
   buildReceiveMessageTransaction,
   sendTransactionNoConfirm,
   isVersionedTransaction,
+  checkMessageExpiration,
 } from "../solana/mint";
 import {
   isSolanaChain,
@@ -40,6 +41,7 @@ import {
   formatSol,
   formatNative,
 } from "../gasEstimation";
+import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 
 // =============================================================================
 // Hook
@@ -149,6 +151,30 @@ export function useMint() {
           success: false,
           error: "Attestation not ready yet. Please wait a few more minutes.",
         };
+      }
+
+      // 1b. Validate destination domain matches target chain
+      try {
+        const messageDomain = extractDestinationDomainFromMessage(attestationData.message);
+        const expectedDomain = getCctpDomainSafe(destinationChainId);
+
+        if (expectedDomain !== null && messageDomain !== expectedDomain) {
+          console.error(
+            `[useMint] Domain mismatch detected!\n` +
+            `  Message destination domain: ${messageDomain}\n` +
+            `  Target chain ${destinationChainId} domain: ${expectedDomain}\n` +
+            `  The CCTP message can only be received on the chain with domain ${messageDomain}.\n` +
+            `  This indicates the UI is targeting the wrong destination chain.`
+          );
+          return {
+            success: false,
+            error: `Wrong destination chain: this transfer was burned for CCTP domain ${messageDomain}, ` +
+              `but you are trying to claim on chain ${destinationChainId} (domain ${expectedDomain}). ` +
+              `Please switch to the correct chain.`,
+          };
+        }
+      } catch (domainError) {
+        console.warn("[useMint] Could not validate destination domain:", domainError);
       }
 
       // 2. Simulate to verify it will succeed
@@ -304,6 +330,9 @@ export function useMint() {
       };
     }
 
+    // Track nonce for error handling (re-attestation needs it)
+    let attestationNonce: string | undefined;
+
     try {
       // 1. Fetch attestation
       toast({
@@ -330,6 +359,9 @@ export function useMint() {
         };
       }
 
+      // Store nonce for error handler (needed for re-attestation)
+      attestationNonce = attestationData.nonce;
+
       // 2. Check if already minted using nonce check
       const nonceResult = await checkNonceUsed(
         destinationChainId,
@@ -353,7 +385,31 @@ export function useMint() {
         return { success: true, alreadyMinted: true };
       }
 
-      // 3. Build the receiveMessage transaction
+      // 3. Check if message has expired before building transaction
+      try {
+        const expirationCheck = await checkMessageExpiration(
+          connection,
+          attestationData.message
+        );
+
+        if (expirationCheck.isExpired) {
+          console.warn(
+            `[useMint] CCTP message expired: expirationBlock=${expirationCheck.expirationBlock}, ` +
+            `currentSlot=${expirationCheck.currentSlot}. Needs re-attestation.`
+          );
+          return {
+            success: false,
+            messageExpired: true,
+            nonce: attestationData.nonce,
+            error: `Message expired (slot ${expirationCheck.expirationBlock} < current ${expirationCheck.currentSlot}). Please request re-attestation.`,
+          };
+        }
+      } catch (expirationError) {
+        // Don't block on expiration check failure - let the transaction try
+        console.warn("[useMint] Expiration check failed, proceeding:", expirationError);
+      }
+
+      // 4. Build the receiveMessage transaction
       toast({
         title: "Preparing mint transaction",
         description: "Building transaction...",
@@ -371,7 +427,7 @@ export function useMint() {
         isTestnet,
       });
 
-      // 4. Check gas balance before prompting user to sign
+      // 5. Check gas balance before prompting user to sign
       if (solanaWallet.publicKey) {
         try {
           // Fetch current SOL balance
@@ -401,7 +457,7 @@ export function useMint() {
         }
       }
 
-      // 5. Sign transaction with wallet
+      // 6. Sign transaction with wallet
       // Note: signTransaction handles both legacy and versioned transactions
       toast({
         title: "Sign transaction",
@@ -410,7 +466,7 @@ export function useMint() {
 
       const signedTransaction = await solanaWallet.signTransaction(transaction);
 
-      // 6. Send transaction without waiting for confirmation
+      // 7. Send transaction without waiting for confirmation
       toast({
         title: "Sending transaction",
         description: "Submitting transaction to the network...",
@@ -418,7 +474,7 @@ export function useMint() {
 
       const txSignature = await sendTransactionNoConfirm(connection, signedTransaction);
 
-      // 7. Update transaction store
+      // 8. Update transaction store
       const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
       const explorerUrl = getExplorerTxUrlUniversal(
         destinationChainId,
@@ -443,7 +499,7 @@ export function useMint() {
 
       return { success: true, mintTxHash: txSignature };
     } catch (error: unknown) {
-      return handleSolanaMintError(error, burnTxHash, existingSteps, updateTransaction, toast);
+      return handleSolanaMintError(error, burnTxHash, existingSteps, updateTransaction, toast, attestationNonce);
     }
   }
 
@@ -523,15 +579,36 @@ function handleSolanaMintError(
   burnTxHash: UniversalTxHash,
   existingSteps: MintParams["existingSteps"],
   updateTransaction: UpdateTransactionFn,
-  toast: ToastFn
+  toast: ToastFn,
+  attestationNonce?: string
 ): MintResult {
   const errorMessage = extractErrorMessage(error);
   const errorLogs = (error as { logs?: string[] })?.logs ?? [];
   const logsText = errorLogs.join("\n");
+  // Solana SendTransactionError stores full details in transactionMessage
+  const txMessage = (error as { transactionMessage?: string })?.transactionMessage ?? "";
+  const allErrorText = `${errorMessage} ${logsText} ${txMessage}`;
 
   // Handle user rejection
   if (isUserRejection(error)) {
     return { success: false, error: "Transaction cancelled by user" };
+  }
+
+  // Check for MessageExpired error (0x1780 = 6016 from token-messenger-minter-v2)
+  // This means the burn message's expirationBlock (Solana slot) has passed.
+  // The user needs to request re-attestation to get a fresh message.
+  if (
+    /0x1780/i.test(allErrorText) ||
+    /custom program error: 0x1780/i.test(allErrorText) ||
+    /message.*expired/i.test(allErrorText)
+  ) {
+    console.warn("[useMint] CCTP message expired (0x1780). Needs re-attestation.");
+    return {
+      success: false,
+      messageExpired: true,
+      nonce: attestationNonce,
+      error: "Message expired - please request re-attestation",
+    };
   }
 
   // Check if nonce already used (transaction already claimed)
