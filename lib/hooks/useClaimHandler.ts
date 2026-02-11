@@ -114,7 +114,7 @@ export function useClaimHandler({
         onMessageExpired?.(result.nonce);
       } else {
         toast({
-          title: "Claim failed",
+          title: result.errorTitle || "Claim failed",
           description: result.error || "Unable to complete mint",
           variant: "destructive",
         });

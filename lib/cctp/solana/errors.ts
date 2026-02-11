@@ -21,14 +21,16 @@
 // Error code → friendly message mapping
 // =============================================================================
 
-interface CctpErrorInfo {
+export interface CctpErrorInfo {
   /** Internal error name */
   name: string;
   /** Program that most likely emitted this during receiveMessage */
   program: "MessageTransmitter" | "TokenMessenger" | "TokenMinter";
-  /** Short user-facing message */
+  /** Short toast title (≤ 30 chars) */
+  title: string;
+  /** Toast description — 1-2 short sentences that fit in 420px */
   userMessage: string;
-  /** Longer explanation shown in console / debug UI */
+  /** Longer explanation for console.error / debugging */
   detail: string;
   /** If true, the mint hook should set messageExpired */
   isExpired?: boolean;
@@ -52,45 +54,50 @@ const CCTP_ERROR_MAP: Record<string, CctpErrorInfo> = {
   "1770": {
     name: "TokenMessenger::InvalidAuthority",
     program: "TokenMessenger",
-    userMessage: "Internal CCTP authority error. Please try again later.",
+    title: "Authority error",
+    userMessage: "Internal CCTP authority mismatch. Please try again later.",
     detail: "The authority PDA check failed in the TokenMessenger CPI.",
   },
   "1772": {
     name: "TokenMessenger::InvalidTokenMessenger",
     program: "TokenMessenger",
-    userMessage: "CCTP configuration error — remote token messenger mismatch.",
-    detail: "The remote_token_messenger.token_messenger does not match params.sender.",
+    title: "Configuration error",
+    userMessage: "Remote token messenger mismatch. This route may not be supported yet.",
+    detail: "remote_token_messenger.token_messenger != params.sender.",
   },
   "1774": {
     name: "TokenMessenger::MalformedMessage",
     program: "TokenMessenger",
+    title: "Invalid message",
     userMessage: "The burn message is malformed. This transfer may be invalid.",
     detail: "BurnMessage could not be parsed — wrong length or version.",
   },
   "1775": {
     name: "TokenMessenger::InvalidMessageBodyVersion",
     program: "TokenMessenger",
-    userMessage: "Unsupported CCTP message version. The bridge may have been upgraded.",
+    title: "Version mismatch",
+    userMessage: "Unsupported message version. The bridge may have been upgraded.",
     detail: "BurnMessage version doesn't match the on-chain expected version.",
   },
   "1776": {
     name: "TokenMessenger::InvalidAmount",
     program: "TokenMessenger",
-    userMessage: "Invalid transfer amount in the burn message.",
+    title: "Invalid amount",
+    userMessage: "The transfer amount in the message is invalid.",
     detail: "The amount field in the BurnMessage is zero or overflows.",
   },
   "1777": {
     name: "TokenMessenger::InvalidDestinationDomain",
     program: "TokenMessenger",
+    title: "Wrong chain",
     userMessage: "This transfer is not destined for this chain.",
     detail: "remote_token_messenger.domain != params.remote_domain.",
   },
   "1779": {
     name: "TokenMessenger::InvalidMintRecipient",
     program: "TokenMessenger",
-    userMessage:
-      "Your connected wallet doesn't match the destination address for this transfer. " +
-      "Please connect the wallet that was set as the recipient when the transfer was initiated.",
+    title: "Wrong wallet",
+    userMessage: "Connect the wallet that was set as recipient when this transfer was initiated.",
     detail:
       "recipient_token_account.key() != burn_message.mint_recipient(). " +
       "The ATA derived from the connected wallet doesn't match the mintRecipient encoded in the burn message.",
@@ -98,56 +105,67 @@ const CCTP_ERROR_MAP: Record<string, CctpErrorInfo> = {
   "177b": {
     name: "TokenMessenger::InvalidTokenPair",
     program: "TokenMessenger",
-    userMessage: "Unsupported token pair for this route. The bridge configuration may have changed.",
+    title: "Unsupported route",
+    userMessage: "Token pair not supported on this route. Bridge config may have changed.",
     detail: "token_pair.local_token != local_token.key().",
   },
   "177d": {
     name: "TokenMessenger::InvalidHookData",
     program: "TokenMessenger",
-    userMessage: "Invalid hook data in the burn message.",
+    title: "Invalid hook data",
+    userMessage: "The burn message contains invalid hook data.",
     detail: "The hookData section of the BurnMessage failed validation.",
   },
   "177e": {
     name: "TokenMessenger::FeeExceedsAmount",
     program: "TokenMessenger",
-    userMessage: "The relay fee exceeds the transfer amount. Request re-attestation for a fresh quote.",
+    title: "Fee too high",
+    userMessage: "Relay fee exceeds the transfer amount. Re-attestation needed.",
     detail: "fee_executed >= amount in BurnMessage.",
+    isExpired: true, // re-attest to get a fresh fee
   },
   "177f": {
     name: "TokenMessenger::FeeExceedsMaxFee",
     program: "TokenMessenger",
-    userMessage: "The relay fee exceeds the maximum fee. Request re-attestation for a fresh quote.",
+    title: "Fee too high",
+    userMessage: "Relay fee exceeds the max fee. Re-attestation needed.",
     detail: "fee_executed > max_fee in BurnMessage.",
+    isExpired: true, // re-attest to get a fresh fee
   },
   "1780": {
     name: "TokenMessenger::MessageExpired",
     program: "TokenMessenger",
-    userMessage: "This transfer's attestation has expired. Automatically requesting a new one…",
+    title: "Attestation expired",
+    userMessage: "Automatically requesting a new attestation…",
     detail: "expiration_block != 0 && current_slot >= expiration_block.",
     isExpired: true,
   },
   "1781": {
     name: "TokenMessenger::UnsupportedFinalityThreshold",
     program: "TokenMessenger",
-    userMessage: "Unsupported finality threshold. Please try again with different transfer settings.",
+    title: "Unsupported finality",
+    userMessage: "Finality threshold not accepted. Try standard speed.",
     detail: "The finality_threshold_executed value is not accepted by the handler.",
   },
   "1785": {
     name: "TokenMessenger::DenylistedAccount",
     program: "TokenMessenger",
-    userMessage: "This account has been restricted by Circle and cannot receive USDC via CCTP.",
+    title: "Account restricted",
+    userMessage: "This account has been restricted by Circle and cannot receive USDC.",
     detail: "The recipient or fee_recipient is on the denylist.",
   },
   "1786": {
     name: "TokenMessenger::InvalidFeeRecipient",
     program: "TokenMessenger",
-    userMessage: "Fee recipient configuration error. Please try again later.",
+    title: "Fee config error",
+    userMessage: "Fee recipient mismatch. Please try again later.",
     detail: "fee_recipient_token_account doesn't match token_messenger.fee_recipient ATA.",
   },
   "178a": {
     name: "TokenMessenger::InsufficientMaxFee",
     program: "TokenMessenger",
-    userMessage: "The maximum fee is too low for this transfer. Try increasing the fee or using standard speed.",
+    title: "Fee too low",
+    userMessage: "Max fee is too low for this route. Try standard speed.",
     detail: "max_fee is below the required minimum for this route.",
   },
 
@@ -157,54 +175,22 @@ const CCTP_ERROR_MAP: Record<string, CctpErrorInfo> = {
   "1771": {
     name: "MessageTransmitter::ProgramPaused",
     program: "MessageTransmitter",
-    userMessage: "CCTP is temporarily paused for maintenance. Please try again later.",
+    title: "CCTP paused",
+    userMessage: "CCTP is temporarily paused. Please try again later.",
     detail: "message_transmitter.paused == true.",
   },
   "176e": {
     name: "MessageTransmitter::InvalidDestinationCaller",
     program: "MessageTransmitter",
-    userMessage:
-      "Only a specific address can claim this transfer. " +
-      "If you set a destination caller when burning, connect that wallet.",
+    title: "Wrong caller",
+    userMessage: "Only a specific wallet can claim this transfer. Connect that wallet.",
     detail: "destination_caller != Pubkey::default() && destination_caller != caller.key().",
-  },
-  "1772_mt": {
-    // Note: 0x1772 from MT = InvalidDestinationDomain, from TM = InvalidTokenMessenger
-    // We store MT version under a suffixed key; lookup logic tries TM first.
-    name: "MessageTransmitter::InvalidDestinationDomain",
-    program: "MessageTransmitter",
-    userMessage: "This transfer is not destined for this chain. Check the destination chain.",
-    detail: "message.destination_domain != message_transmitter.local_domain.",
-  },
-  "1775_mt": {
-    name: "MessageTransmitter::InvalidRecipientProgram",
-    program: "MessageTransmitter",
-    userMessage: "Internal routing error — the recipient program doesn't match.",
-    detail: "message.recipient() != receiver.key(). The receiver account is wrong.",
-  },
-  "1777_mt": {
-    name: "MessageTransmitter::NonceAlreadyUsed",
-    program: "MessageTransmitter",
-    userMessage: "This transfer has already been claimed. Check your wallet for the USDC.",
-    detail: "The nonce PDA already exists (account already in use = init failed).",
-    isAlreadyClaimed: true,
-  },
-  "1779_mt": {
-    name: "MessageTransmitter::MalformedMessage",
-    program: "MessageTransmitter",
-    userMessage: "The CCTP message is malformed or corrupted.",
-    detail: "Message parsing failed in MessageTransmitter.",
-  },
-  "177b_mt": {
-    name: "MessageTransmitter::InvalidAttesterSignature",
-    program: "MessageTransmitter",
-    userMessage: "Invalid attestation signature. The attestation may be corrupted — try re-fetching.",
-    detail: "ECDSA signature verification failed for one or more attesters.",
   },
   "177c": {
     name: "MessageTransmitter::InvalidAttestationLength",
     program: "MessageTransmitter",
-    userMessage: "Invalid attestation data. Try refreshing and claiming again.",
+    title: "Bad attestation",
+    userMessage: "Attestation data is invalid. Try refreshing and claiming again.",
     detail: "Attestation byte length doesn't match expected signature count.",
   },
 };
@@ -218,7 +204,7 @@ const CCTP_ERROR_MAP: Record<string, CctpErrorInfo> = {
  *
  * Matches patterns like:
  *   - "custom program error: 0x1780"
- *   - "Custom:6016"
+ *   - "Custom":6016  /  "Custom": 6016
  *
  * Returns lowercase hex string without prefix, e.g. "1780".
  */
@@ -279,6 +265,10 @@ export function parseSolanaCctpError(error: unknown): {
   // Deprecated .logs getter
   const logs = (error as { logs?: string[] })?.logs;
   if (Array.isArray(logs)) parts.push(...logs);
+
+  // Simulation logs from our explicit simulate call
+  const simLogs = (error as { simulationLogs?: string[] })?.simulationLogs;
+  if (Array.isArray(simLogs)) parts.push(...simLogs);
 
   const searchText = parts.join("\n");
   const code = extractCctpErrorCode(searchText);

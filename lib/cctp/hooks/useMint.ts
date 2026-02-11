@@ -35,7 +35,7 @@ import {
   type UniversalTxHash,
 } from "../types";
 import { isUserRejection, extractErrorMessage } from "../shared";
-import { parseSolanaCctpError } from "../solana/errors";
+import { parseSolanaCctpError, extractCctpErrorCode } from "../solana/errors";
 import {
   estimateSolanaMintGas,
   estimateEvmMintGas,
@@ -642,16 +642,18 @@ function handleSolanaMintError(
   if (info) {
     console.warn(
       `[useMint] CCTP error 0x${code}: ${info.name}\n` +
-      `  User message: ${info.userMessage}\n` +
+      `  Title: ${info.title}\n` +
+      `  Message: ${info.userMessage}\n` +
       `  Detail: ${info.detail}`
     );
 
-    // Message expired → trigger auto re-attestation
+    // Message expired / fee issues → trigger auto re-attestation
     if (info.isExpired) {
       return {
         success: false,
         messageExpired: true,
         nonce: attestationNonce,
+        errorTitle: info.title,
         error: info.userMessage,
       };
     }
@@ -674,16 +676,19 @@ function handleSolanaMintError(
       return { success: true, alreadyMinted: true };
     }
 
-    // Known error with a good user message
+    // Known error with specific title + message
     return {
       success: false,
+      errorTitle: info.title,
       error: info.userMessage,
     };
   }
 
-  // ── 5. Unknown error – return the raw message ─────────────────────────
+  // ── 5. Unknown error – return raw message with error code if found ────
+  const unknownCode = extractCctpErrorCode(allText);
   return {
     success: false,
-    error: `Mint failed: ${errorMessage}`,
+    errorTitle: unknownCode ? `Error 0x${unknownCode}` : undefined,
+    error: errorMessage,
   };
 }
