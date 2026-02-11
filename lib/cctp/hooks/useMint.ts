@@ -36,6 +36,7 @@ import {
 } from "../types";
 import { isUserRejection, extractErrorMessage } from "../shared";
 import { parseSolanaCctpError, extractCctpErrorCode } from "../solana/errors";
+import { parseEvmCctpError } from "../evm/errors";
 import {
   estimateSolanaMintGas,
   estimateEvmMintGas,
@@ -133,6 +134,9 @@ export function useMint() {
       };
     }
 
+    // Track nonce for error handling (re-attestation needs it)
+    let evmAttestationNonce: string | undefined;
+
     try {
       // 1. Fetch attestation from Iris
       const attestationData = await fetchAttestationUniversal(
@@ -153,6 +157,9 @@ export function useMint() {
           error: "Attestation not ready yet. Please wait a few more minutes.",
         };
       }
+
+      // Store nonce for error handler (needed for re-attestation)
+      evmAttestationNonce = attestationData.nonce;
 
       // 1b. Validate destination domain matches target chain
       try {
@@ -298,7 +305,7 @@ export function useMint() {
 
       return { success: true, mintTxHash: hash };
     } catch (error: unknown) {
-      return handleMintError(error, burnTxHash, existingSteps, updateTransaction, toast);
+      return handleMintError(error, burnTxHash, existingSteps, updateTransaction, toast, evmAttestationNonce);
     }
   }
 
@@ -524,48 +531,82 @@ type ToastFn = (opts: { title: string; description: string }) => void;
 
 /**
  * Handle EVM mint errors with consistent behavior.
+ *
+ * Uses the CCTP EVM error map to provide user-friendly messages for known
+ * revert reasons and always logs the full error for debugging.
  */
 function handleMintError(
   error: unknown,
   burnTxHash: UniversalTxHash,
   existingSteps: MintParams["existingSteps"],
   updateTransaction: UpdateTransactionFn,
-  toast: ToastFn
+  toast: ToastFn,
+  attestationNonce?: string
 ): MintResult {
-  const errorMessage = extractErrorMessage(error);
+  const errorMessage = extractErrorMessage(error, 500);
 
-  // Check for user rejection
+  // ── 0. Always log full debug info ──────────────────────────────────
+  console.error("EVM mint failed:", {
+    ecosystem: "evm",
+    burnTxHash,
+    timestamp: new Date().toISOString(),
+    errorMessage,
+    shortMessage: (error as { shortMessage?: string })?.shortMessage,
+    rawError: error,
+  });
+
+  // ── 1. User rejection ─────────────────────────────────────────────
   if (isUserRejection(error)) {
     return { success: false, error: "Transaction cancelled by user" };
   }
 
-  // Check for nonce already used (race condition)
-  if (/nonce already used/i.test(errorMessage)) {
-    const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
-    updateTransaction(burnTxHash, {
-      status: "claimed",
-      bridgeState: "success",
-      completedAt: new Date(),
-      steps: updatedSteps,
-    });
+  // ── 2. Try to match a known CCTP revert reason ────────────────────
+  const { info } = parseEvmCctpError(error);
 
-    toast({
-      title: "Already Claimed",
-      description: "This transfer was already minted. Check your wallet.",
-    });
+  if (info) {
+    console.warn(
+      `[useMint] EVM CCTP error: ${info.title}\n` +
+      `  Message: ${info.userMessage}`
+    );
 
-    return { success: true, alreadyMinted: true };
+    // Already claimed
+    if (info.isAlreadyClaimed) {
+      const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+      updateTransaction(burnTxHash, {
+        status: "claimed",
+        bridgeState: "success",
+        completedAt: new Date(),
+        steps: updatedSteps,
+      });
+
+      toast({
+        title: info.title,
+        description: info.userMessage,
+      });
+
+      return { success: true, alreadyMinted: true };
+    }
+
+    // Message expired / fee issues → trigger auto re-attestation
+    if (info.isExpired) {
+      return {
+        success: false,
+        messageExpired: true,
+        nonce: attestationNonce,
+        errorTitle: info.title,
+        error: info.userMessage,
+      };
+    }
+
+    // Known error with specific title + message
+    return {
+      success: false,
+      errorTitle: info.title,
+      error: info.userMessage,
+    };
   }
 
-  console.error("EVM mint failed:", {
-    ecosystem: "evm",
-    error: errorMessage,
-    context: {
-      burnTxHash,
-      timestamp: new Date().toISOString(),
-    },
-    rawError: error,
-  });
+  // ── 3. Unknown error ──────────────────────────────────────────────
   return {
     success: false,
     error: errorMessage,
