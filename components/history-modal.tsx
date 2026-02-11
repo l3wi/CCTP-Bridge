@@ -16,14 +16,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2 } from "lucide-react";
-import { useChains } from "wagmi";
+import { History, CheckCircle, ExternalLink, Clock, Plus, X, ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
+import { useChains, useAccount } from "wagmi";
+import { useWallet } from "@solana/wallet-adapter-react";
+import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { PublicKey } from "@solana/web3.js";
 import { LocalTransaction, type UniversalTxHash, type ChainId, isValidTxHash, isValidEvmTxHash, isSolanaChain, getChainType } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { ChainIcon } from "@/components/chain-icon";
 import { getExplorerTxUrlUniversal, getAllSupportedChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal, type UniversalChainDefinition } from "@/lib/bridgeKit";
 import { fetchAttestationUniversal } from "@/lib/iris";
 import { getChainIdFromDomainUniversal, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
+import { getSolanaUsdcMint } from "@/lib/cctp/shared";
+import type { SolanaChainId } from "@/lib/cctp/types";
 import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
@@ -43,6 +48,8 @@ export function HistoryModal({
   const [view, setView] = useState<ModalView>("history");
   const { transactions, updateTransaction, addTransaction, removeTransaction } = useTransactionStore();
   const chains = useChains();
+  const { address: evmAddress } = useAccount();
+  const solanaWallet = useWallet();
 
   const handleOpenChange = (newOpen: boolean) => {
     setIsOpen(newOpen);
@@ -178,6 +185,8 @@ export function HistoryModal({
               onSuccess={handleAddTransactionSuccess}
               addTransaction={addTransaction}
               existingHashes={existingHashes}
+              evmAddress={evmAddress}
+              solanaPublicKey={solanaWallet.publicKey}
             />
           )}
         </DialogContent>
@@ -364,13 +373,16 @@ interface AddTransactionViewProps {
   onSuccess: () => void;
   addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
   existingHashes: Set<string>;
+  evmAddress?: `0x${string}`;
+  solanaPublicKey?: PublicKey | null;
 }
 
-function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes }: AddTransactionViewProps) {
+function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes, evmAddress, solanaPublicKey }: AddTransactionViewProps) {
   const [selectedChainId, setSelectedChainId] = useState<ChainId | null>(null);
   const [txHash, setTxHash] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [walletMismatchWarning, setWalletMismatchWarning] = useState<string | null>(null);
 
   // Get all supported chains (EVM + Solana)
   const supportedChains = useMemo(() => getAllSupportedChains(BRIDGEKIT_ENV), []);
@@ -391,7 +403,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
   // Determine if selected chain is Solana (for UI hints)
   const isSolanaSelected = selectedChainId !== null && isSolanaChain(selectedChainId);
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (forceSkipWalletCheck = false) => {
     if (!selectedChainId || !txHash) {
       setError("Please select a chain and enter a transaction hash");
       return;
@@ -522,20 +534,78 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
       const txStatus = isAlreadyClaimed ? "claimed" : "pending";
       const bridgeState = isAlreadyClaimed ? "success" : "pending";
 
+      // Resolve the actual wallet address for the destination
+      // For Solana destinations, mintRecipient from Iris is the ATA (token account),
+      // not the user's wallet address. We need to match against connected wallets.
+      let resolvedTargetAddress: string | undefined;
+      setWalletMismatchWarning(null);
+
+      if (isSolanaChain(targetChainId)) {
+        // Solana destination: mintRecipient is the ATA, not the wallet
+        const mintRecipientAta = attestationData.mintRecipient;
+
+        if (!forceSkipWalletCheck && solanaPublicKey && mintRecipientAta) {
+          // Derive ATA from connected Solana wallet and compare
+          try {
+            const usdcMint = getSolanaUsdcMint(targetChainId as SolanaChainId);
+            const derivedAta = getAssociatedTokenAddressSync(usdcMint, solanaPublicKey);
+            const derivedAtaStr = derivedAta.toBase58();
+
+            if (derivedAtaStr === mintRecipientAta) {
+              // Match! Store the actual wallet address
+              resolvedTargetAddress = solanaPublicKey.toBase58();
+            } else {
+              // Mismatch - warn user but still add the transaction
+              resolvedTargetAddress = mintRecipientAta;
+              setWalletMismatchWarning(
+                "The connected Solana wallet doesn't match this transaction's recipient. " +
+                "Connect the correct destination wallet to claim these funds."
+              );
+              // Don't auto-navigate, let user see warning
+              setIsLoading(false);
+              return;
+            }
+          } catch {
+            // Fallback to raw mintRecipient if derivation fails
+            resolvedTargetAddress = mintRecipientAta;
+          }
+        } else if (!forceSkipWalletCheck && !solanaPublicKey && mintRecipientAta) {
+          // No Solana wallet connected - warn user
+          resolvedTargetAddress = mintRecipientAta;
+          setWalletMismatchWarning(
+            "Connect your Solana wallet to verify you are the recipient of this transaction and to claim your funds."
+          );
+          setIsLoading(false);
+          return;
+        } else {
+          resolvedTargetAddress = attestationData.mintRecipient;
+        }
+      } else {
+        // EVM destination: mintRecipient is a padded 20-byte address
+        // Strip zero-padding from 32-byte hex to get the 20-byte EVM address
+        const rawRecipient = attestationData.mintRecipient;
+        if (rawRecipient && rawRecipient.startsWith("0x")) {
+          // 0x + 64 hex chars (32 bytes) → extract last 40 chars (20 bytes)
+          const stripped = "0x" + rawRecipient.slice(-40);
+          resolvedTargetAddress = stripped.toLowerCase();
+        } else {
+          resolvedTargetAddress = rawRecipient;
+        }
+      }
+
       // Construct a minimal bridgeResult for resume capability
-      // Note: mintRecipient is validated above so it's guaranteed to exist here
-      const recipientAddress = attestationData.mintRecipient as `0x${string}`;
+      const displayAddress = resolvedTargetAddress || attestationData.mintRecipient || "";
       const bridgeResult: BridgeResult = {
         state: bridgeState,
         provider: "CCTPV2BridgingProvider",
         amount: formattedAmount || "0",
         token: "USDC",
         source: {
-          address: recipientAddress,
+          address: displayAddress as `0x${string}`,
           chain: sourceChain as unknown as ChainDefinition,
         },
         destination: {
-          address: recipientAddress,
+          address: displayAddress as `0x${string}`,
           chain: destChain as unknown as ChainDefinition,
         },
         steps,
@@ -546,7 +616,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
         hash: normalizedHash as UniversalTxHash,
         originChain: selectedChainId,
         targetChain: targetChainId,
-        targetAddress: attestationData.mintRecipient as UniversalTxHash | undefined,
+        targetAddress: resolvedTargetAddress as UniversalTxHash | undefined,
         amount: formattedAmount,
         status: txStatus,
         version: "v3",
@@ -652,8 +722,32 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes 
           </div>
         )}
 
+        {walletMismatchWarning && (
+          <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg space-y-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-yellow-400 mt-0.5 flex-shrink-0" />
+              <p className="text-sm text-yellow-400">{walletMismatchWarning}</p>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20"
+              onClick={() => {
+                setWalletMismatchWarning(null);
+                // Re-trigger submit with wallet check bypassed
+                handleSubmit(true);
+              }}
+            >
+              Add Anyway (without wallet verification)
+            </Button>
+          </div>
+        )}
+
         <Button
-          onClick={handleSubmit}
+          onClick={() => {
+            setWalletMismatchWarning(null);
+            handleSubmit();
+          }}
           disabled={!selectedChainId || !txHash || isLoading}
           className="w-full bg-blue-600 hover:bg-blue-700 text-white"
         >
