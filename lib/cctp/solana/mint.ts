@@ -266,7 +266,7 @@ function getSourceUsdcAddress(
   isTestnet: boolean
 ): string | null {
   const env: BridgeEnvironment = isTestnet ? "testnet" : "mainnet";
-  return getUsdcAddressByDomain(sourceDomain, env);
+  return getUsdcAddressByDomain(sourceDomain, env) ?? null;
 }
 
 // =============================================================================

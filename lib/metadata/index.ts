@@ -146,6 +146,17 @@ export const getUsdcAddressForChain = (
   return chain?.usdcAddress as `0x${string}` | undefined;
 };
 
+export const getUsdcAddressByDomain = (
+  domain: number,
+  env: BridgeEnvironment = DEFAULT_ENV
+): `0x${string}` | undefined => {
+  const chain = byEnv(env).find(
+    (item): item is EvmChainMetadata =>
+      item.type === "evm" && item.cctp?.domain === domain
+  );
+  return chain?.usdcAddress as `0x${string}` | undefined;
+};
+
 export const getCctpConfirmationsUniversal = (
   chainId: ChainId,
   env: BridgeEnvironment = DEFAULT_ENV

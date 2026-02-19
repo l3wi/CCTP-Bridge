@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAllSupportedChains,
   getChainIdFromDomainUniversal,
+  getUsdcAddressByDomain,
   resolveBridgeChain,
 } from "@/lib/metadata/index";
 
@@ -15,6 +16,10 @@ describe("metadata index", () => {
 
   it("maps known domain IDs back to chain IDs", () => {
     expect(getChainIdFromDomainUniversal(0, "mainnet")).toBe(1);
+  });
+
+  it("resolves USDC address from CCTP domain for EVM chains", () => {
+    expect(getUsdcAddressByDomain(0, "mainnet")).toMatch(/^0x[a-fA-F0-9]{40}$/);
   });
 
   it("returns both evm and solana chain entries for an environment", () => {

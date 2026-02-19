@@ -16,6 +16,7 @@ import {
   getExplorerTxUrl as getExplorerTxUrlFromMetadata,
   getExplorerTxUrlUniversal as getExplorerTxUrlUniversalFromMetadata,
   getChainName as getChainNameFromMetadata,
+  getUsdcAddressByDomain as getUsdcAddressByDomainFromMetadata,
   getUsdcAddressForChain as getUsdcAddressForChainFromMetadata,
   getCctpConfirmationsUniversal as getCctpConfirmationsUniversalFromMetadata,
 } from "@/lib/metadata/index";
@@ -117,6 +118,11 @@ export const getUsdcAddressForChain = (
   chainId: number,
   env: BridgeEnvironment = BRIDGEKIT_ENV
 ): `0x${string}` | undefined => getUsdcAddressForChainFromMetadata(chainId, env);
+
+export const getUsdcAddressByDomain = (
+  domain: number,
+  env: BridgeEnvironment = BRIDGEKIT_ENV
+): `0x${string}` | undefined => getUsdcAddressByDomainFromMetadata(domain, env);
 
 export const getCctpConfirmationsUniversal = (
   chainId: ChainId,
