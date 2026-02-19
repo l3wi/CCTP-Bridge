@@ -26,7 +26,6 @@ bun run metadata:refresh # Regenerate CCTP metadata + validated RPC candidates
 
 ```bash
 NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: testnet)
-NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED=FAST|SLOW   # Default transfer speed (default: FAST)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable bridge analytics event emission

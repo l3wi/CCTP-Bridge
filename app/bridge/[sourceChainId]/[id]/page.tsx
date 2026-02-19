@@ -18,6 +18,7 @@ import {
 } from "@/lib/bridgeRoute";
 import {
   recoverTransactionFromBurnHash,
+  recoverTransactionFromNonce,
   TransactionRecoveryError,
 } from "@/lib/transactionRecovery";
 import { getErrorMessage } from "@/lib/cctp/errors";
@@ -45,10 +46,8 @@ export default function BridgeTrackingPage() {
   const { transactions, addTransaction } = useTransactionStore();
   const isFreshNavigation = searchParams.get("fresh") === "1";
 
-  const sourceParam = Array.isArray(params.sourceChainId)
-    ? params.sourceChainId[0]
-    : params.sourceChainId;
-  const idParam = Array.isArray(params.id) ? params.id[0] : params.id;
+  const sourceParam = params.sourceChainId;
+  const idParam = params.id;
 
   const decodedId = decodeURIComponent(idParam ?? "").trim();
 
@@ -196,15 +195,7 @@ export default function BridgeTrackingPage() {
       return;
     }
 
-    if (routeId.kind !== "txHash") {
-      setRecoveryError(
-        "This nonce link is not in local history yet. Add the burn transaction hash below to rehydrate it."
-      );
-      setIsInitialLookupPending(false);
-      return;
-    }
-
-    const attemptKey = `${sourceChainId}:${routeId.normalizedId}`;
+    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}`;
     if (recoveryAttemptRef.current === attemptKey) {
       setIsInitialLookupPending(false);
       return;
@@ -215,17 +206,24 @@ export default function BridgeTrackingPage() {
 
     let cancelled = false;
 
-    const recoveryDelayMs = isFreshNavigation ? STORE_GRACE_MS : 0;
+    const recoveryDelayMs =
+      routeId.kind === "txHash" && isFreshNavigation ? STORE_GRACE_MS : 0;
     const timer = setTimeout(async () => {
       if (cancelled) return;
 
       try {
         setRecoveryError(null);
         setIsRecovering(true);
-        const { transaction } = await recoverTransactionFromBurnHash(
-          sourceChainId,
-          routeId.normalizedId
-        );
+        const { transaction } =
+          routeId.kind === "txHash"
+            ? await recoverTransactionFromBurnHash(
+                sourceChainId,
+                routeId.normalizedId
+              )
+            : await recoverTransactionFromNonce(
+                sourceChainId,
+                routeId.normalizedId
+              );
 
         if (cancelled) return;
         addTransaction(transaction);
@@ -233,7 +231,12 @@ export default function BridgeTrackingPage() {
         if (cancelled) return;
 
         if (error instanceof TransactionRecoveryError) {
-          setRecoveryError(error.message);
+          const baseMessage = error.message;
+          const nonceHint =
+            routeId.kind === "nonce"
+              ? " If needed, paste the burn transaction hash below to rehydrate manually."
+              : "";
+          setRecoveryError(`${baseMessage}${nonceHint}`);
         } else {
           setRecoveryError(getErrorMessage(error));
         }

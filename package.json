@@ -51,7 +51,6 @@
     "tailwindcss": "^4.1.18",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "5.8.3",
-    "vercel": "^50.18.2",
     "viem": "^2.46.2",
     "wagmi": "2.19.5",
     "zustand": "^5.0.9"
@@ -62,6 +61,7 @@
     "husky": "^9.1.7",
     "jsdom": "^28.1.0",
     "postcss": "^8.5.6",
+    "vercel": "^50.18.2",
     "vitest": "^4.0.17"
   }
 }

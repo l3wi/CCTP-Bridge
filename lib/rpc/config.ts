@@ -1,10 +1,6 @@
 import generatedRpc from "../../.generated/metadata/rpc.generated.json";
 import type { GeneratedRpcMetadata } from "@/lib/metadata/types";
-import type { BridgeEnvironment } from "@/lib/metadata/types";
 import type { SolanaChainId } from "@/lib/types";
-import { BRIDGEKIT_ENV } from "@/lib/metadata/index";
-
-const DEFAULT_ENV: BridgeEnvironment = BRIDGEKIT_ENV;
 const rpcMetadata = generatedRpc as GeneratedRpcMetadata;
 
 function isValidHttpUrl(url: string): boolean {
@@ -27,16 +23,14 @@ const dedupe = (urls: string[]) =>
   );
 
 export const getConfiguredEvmRpcUrls = (
-  chainId: number,
-  _env: BridgeEnvironment = DEFAULT_ENV
+  chainId: number
 ): string[] => {
   const fromGenerated = rpcMetadata.evm.find((entry) => entry.chainId === chainId)?.urls ?? [];
   return dedupe(fromGenerated);
 };
 
 export const getConfiguredSolanaRpcUrls = (
-  chainId: SolanaChainId,
-  _env: BridgeEnvironment = DEFAULT_ENV
+  chainId: SolanaChainId
 ): string[] => {
   const fromGenerated =
     rpcMetadata.solana.find((entry) => entry.chain === chainId)?.urls ??

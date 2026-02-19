@@ -8,7 +8,11 @@ import {
   getChainInfoFromDomainAllChains,
   isNonceUsed,
 } from "@/lib/contracts";
-import { fetchAttestationUniversal } from "@/lib/iris";
+import {
+  fetchAttestationUniversal,
+  fetchAttestationByNonceUniversal,
+  type AttestationData,
+} from "@/lib/iris";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   type ChainId,
@@ -62,23 +66,11 @@ export class TransactionRecoveryError extends Error {
   }
 }
 
-export async function recoverTransactionFromBurnHash(
+const buildRecoveredTransaction = async (
   sourceChainId: ChainId,
-  burnTxHash: string
-): Promise<RecoverTransactionResult> {
-  const normalizedHash = normalizeTxHashForChain(sourceChainId, burnTxHash);
-  if (!normalizedHash) {
-    throw new TransactionRecoveryError("Invalid burn transaction hash for source chain");
-  }
-
-  const attestationData = await fetchAttestationUniversal(sourceChainId, normalizedHash);
-
-  if (!attestationData) {
-    throw new TransactionRecoveryError(
-      "Transaction not found in Circle Iris. Verify source chain and burn tx hash."
-    );
-  }
-
+  burnTxHash: string,
+  attestationData: AttestationData
+): Promise<RecoverTransactionResult> => {
   const targetChainId = getChainIdFromDomainUniversal(
     attestationData.destinationDomain,
     BRIDGEKIT_ENV
@@ -130,7 +122,7 @@ export async function recoverTransactionFromBurnHash(
     {
       name: "Burn",
       state: "success",
-      txHash: normalizedHash,
+      txHash: burnTxHash,
     },
     {
       name: "Fetch Attestation",
@@ -165,7 +157,7 @@ export async function recoverTransactionFromBurnHash(
 
   return {
     transaction: {
-      hash: normalizedHash as UniversalTxHash,
+      hash: burnTxHash as UniversalTxHash,
       originChain: sourceChainId,
       targetChain: targetChainId,
       targetAddress,
@@ -179,4 +171,58 @@ export async function recoverTransactionFromBurnHash(
       nonce: attestationData.nonce,
     },
   };
+};
+
+export async function recoverTransactionFromBurnHash(
+  sourceChainId: ChainId,
+  burnTxHash: string
+): Promise<RecoverTransactionResult> {
+  const normalizedHash = normalizeTxHashForChain(sourceChainId, burnTxHash);
+  if (!normalizedHash) {
+    throw new TransactionRecoveryError("Invalid burn transaction hash for source chain");
+  }
+
+  const attestationData = await fetchAttestationUniversal(sourceChainId, normalizedHash);
+
+  if (!attestationData) {
+    throw new TransactionRecoveryError(
+      "Transaction not found in Circle Iris. Verify source chain and burn tx hash."
+    );
+  }
+
+  return buildRecoveredTransaction(sourceChainId, normalizedHash, attestationData);
+}
+
+export async function recoverTransactionFromNonce(
+  sourceChainId: ChainId,
+  nonce: string
+): Promise<RecoverTransactionResult> {
+  const normalizedNonce = nonce.trim();
+  if (!normalizedNonce) {
+    throw new TransactionRecoveryError("Invalid nonce");
+  }
+
+  const lookupResult = await fetchAttestationByNonceUniversal(
+    sourceChainId,
+    normalizedNonce
+  );
+
+  if (!lookupResult) {
+    throw new TransactionRecoveryError(
+      "Nonce not found in Circle Iris. If this transfer was just created, try again shortly."
+    );
+  }
+
+  const { attestation, burnTxHash } = lookupResult;
+  const normalizedHash =
+    (burnTxHash && normalizeTxHashForChain(sourceChainId, burnTxHash)) ??
+    normalizeTxHashForChain(sourceChainId, normalizedNonce);
+
+  if (!normalizedHash) {
+    throw new TransactionRecoveryError(
+      "Found nonce in Iris, but burn transaction hash is unavailable for this source chain."
+    );
+  }
+
+  return buildRecoveredTransaction(sourceChainId, normalizedHash, attestation);
 }

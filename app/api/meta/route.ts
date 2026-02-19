@@ -1,6 +1,12 @@
 import { track } from "@vercel/analytics/server";
 import { NextRequest, NextResponse } from "next/server";
 
+const ALLOWED_RECIPIENT_RESOLUTION = new Set([
+  "connected_target_wallet",
+  "manual_input",
+  "source_wallet_default",
+]);
+
 export async function POST(request: NextRequest) {
   try {
     const {
@@ -11,10 +17,16 @@ export async function POST(request: NextRequest) {
       targetChainId,
     } = await request.json();
 
+    const normalizedRecipientResolution =
+      typeof recipientResolution === "string" &&
+      ALLOWED_RECIPIENT_RESOLUTION.has(recipientResolution)
+        ? recipientResolution
+        : "unknown";
+
     await track("bridge", {
       amount,
       meta,
-      recipientResolution,
+      recipientResolution: normalizedRecipientResolution,
       sourceChainId,
       targetChainId,
     });

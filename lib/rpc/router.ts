@@ -5,11 +5,16 @@ import { BRIDGEKIT_ENV } from "@/lib/metadata/index";
 import { getConfiguredEvmRpcUrls, getConfiguredSolanaRpcUrls } from "@/lib/rpc/config";
 
 const DEFAULT_ENV: BridgeEnvironment = BRIDGEKIT_ENV;
+
+// Client-side rotation cursor state.
+// Important: we avoid mutating this map during SSR so request handling stays deterministic.
 const cursorByKey = new Map<string, number>();
 const MAX_RETRIES = 3;
+const isServerRuntime = () => typeof window === "undefined";
 
 function getNextStartIndex(key: string, size: number): number {
   if (size <= 1) return 0;
+  if (isServerRuntime()) return 0;
 
   const current = cursorByKey.get(key) ?? 0;
   const next = (current + 1) % size;
@@ -43,6 +48,7 @@ function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
           body,
         });
 
+        // Do not retry 4xx: malformed/invalid JSON-RPC requests won't succeed on another node.
         if (response.ok || (response.status >= 400 && response.status < 500)) {
           return response;
         }
@@ -61,7 +67,8 @@ export const getPreferredEvmRpcUrl = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ): string | undefined => {
-  const urls = getConfiguredEvmRpcUrls(chainId, env);
+  void env;
+  const urls = getConfiguredEvmRpcUrls(chainId);
   return urls[0];
 };
 
@@ -69,11 +76,11 @@ export const getSolanaRpcEndpoint = (
   chainId: SolanaChainId,
   env: BridgeEnvironment = DEFAULT_ENV
 ): string => {
-  const urls = getConfiguredSolanaRpcUrls(chainId, env);
+  const urls = getConfiguredSolanaRpcUrls(chainId);
   if (!urls.length) {
     throw new Error(`No Solana RPC endpoint configured for ${chainId}`);
   }
-  const key = `solana:${chainId}`;
+  const key = `solana:${env}:${chainId}`;
   const index = getNextStartIndex(key, urls.length);
   return urls[index];
 };
@@ -82,9 +89,9 @@ export const getRotatingEvmTransport = (
   chainId: number,
   env: BridgeEnvironment = DEFAULT_ENV
 ): Transport => {
-  const urls = getConfiguredEvmRpcUrls(chainId, env);
+  const urls = getConfiguredEvmRpcUrls(chainId);
   const fallbackUrl = urls[0];
-  const key = `evm:${chainId}`;
+  const key = `evm:${env}:${chainId}`;
 
   return http(fallbackUrl, {
     fetchFn: buildRotatingFetch(key, urls),

@@ -6,14 +6,14 @@ import {
 
 describe("rpc config", () => {
   it("exposes generated EVM RPC URLs for Ethereum", () => {
-    const urls = getConfiguredEvmRpcUrls(1, "mainnet");
+    const urls = getConfiguredEvmRpcUrls(1);
     expect(urls.length).toBeGreaterThan(0);
     expect(urls.every((url) => url.startsWith("http"))).toBe(true);
   });
 
   it("exposes Solana RPC URLs", () => {
-    const mainnet = getConfiguredSolanaRpcUrls("Solana", "mainnet");
-    const devnet = getConfiguredSolanaRpcUrls("Solana_Devnet", "testnet");
+    const mainnet = getConfiguredSolanaRpcUrls("Solana");
+    const devnet = getConfiguredSolanaRpcUrls("Solana_Devnet");
     expect(mainnet.length).toBeGreaterThan(0);
     expect(devnet.length).toBeGreaterThan(0);
   });
