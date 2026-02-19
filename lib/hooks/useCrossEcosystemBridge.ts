@@ -24,6 +24,7 @@ import {
 } from "@/lib/types";
 import { getErrorMessage } from "@/lib/cctp/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 
 export const useCrossEcosystemBridge = () => {
   // EVM wallet state
@@ -192,6 +193,10 @@ export const useCrossEcosystemBridge = () => {
           status: "pending",
           version: "v3",
           transferType,
+          estimatedTime: resolveEstimatedTimeLabel({
+            transferType,
+            sourceChainId: params.sourceChainId,
+          }),
           bridgeState: "pending",
           steps: initialSteps,
           bridgeResult: initialResult,

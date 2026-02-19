@@ -61,6 +61,7 @@ import {
   resolveRecipientForBridgingState,
   resolveRecipientForSend,
 } from "@/lib/recipientResolution";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
 
@@ -715,8 +716,16 @@ export function BridgeCard({
   );
 
   const getEtaLabel = useCallback(
-    (speed: TransferSpeedValue, override?: string | null) =>
-      override || (speed === TransferSpeed.FAST ? "~1 minute" : "13-19 minutes"),
+    (
+      speed: TransferSpeedValue,
+      sourceId?: ChainId | null,
+      override?: string | null
+    ) =>
+      resolveEstimatedTimeLabel({
+        transferType: speed === TransferSpeed.FAST ? "fast" : "standard",
+        sourceChainId: sourceId,
+        estimatedTime: override,
+      }),
     []
   );
 
@@ -1433,6 +1442,7 @@ export function BridgeCard({
             loadedTransaction.transferType === "fast"
               ? TransferSpeed.FAST
               : TransferSpeed.SLOW,
+            loadedTransaction.originChain,
             loadedTransaction.estimatedTime
           )}
           onMessageExpiredNonce={(nonce) => {
@@ -1503,7 +1513,11 @@ export function BridgeCard({
           finalityEstimate={finalityEstimate}
           transferType={activeTransferSpeed === TransferSpeed.FAST ? "fast" : "standard"}
           startedAt={bridgeStartedAt ?? undefined}
-          estimatedTimeLabel={getEtaLabel(activeTransferSpeed, finalityEstimate)}
+          estimatedTimeLabel={getEtaLabel(
+            activeTransferSpeed,
+            sourceChainIdForResult,
+            finalityEstimate
+          )}
           bridgeResult={(() => {
             if (bridgeResult) return bridgeResult;
             const destChain = targetChainIdForResult

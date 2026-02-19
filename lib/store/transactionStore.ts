@@ -8,8 +8,7 @@ import {
   type UniversalTxHash,
   getChainType,
 } from "@/lib/types";
-
-const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 
 const serverStorage: StateStorage = {
   getItem: (_name) => null,
@@ -88,6 +87,7 @@ const normalizeTransaction = (
   const claimHash = tx.claimHash && targetChain
     ? normalizeHash(tx.claimHash as string, targetChain)
     : undefined;
+  const transferType = (tx as Partial<LocalTransaction>).transferType ?? "standard";
 
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
@@ -103,9 +103,13 @@ const normalizeTransaction = (
       (bridgeResult?.destination?.address as string | undefined),
     claimHash,
     version: "v3",
-    transferType: (tx as Partial<LocalTransaction>).transferType ?? "standard",
+    transferType,
     fee: (tx as Partial<LocalTransaction>).fee,
-    estimatedTime: (tx as Partial<LocalTransaction>).estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    estimatedTime: resolveEstimatedTimeLabel({
+      transferType,
+      sourceChainId: originChain,
+      estimatedTime: (tx as Partial<LocalTransaction>).estimatedTime,
+    }),
     completedAt: (tx as Partial<LocalTransaction>).completedAt
       ? new Date((tx as Partial<LocalTransaction>).completedAt!)
       : undefined,
@@ -170,7 +174,10 @@ const migrateLegacyV1Transaction = (
     claimHash: legacyTx.claimHash,
     version: "v3",
     transferType: "standard",
-    estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,
+    estimatedTime: resolveEstimatedTimeLabel({
+      transferType: "standard",
+      sourceChainId: legacyTx.originChain,
+    }),
   };
 };
 

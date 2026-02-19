@@ -145,16 +145,18 @@ export function useClaimHandler({
       if (!onDestinationChain) {
         try {
           await switchChain({ chainId: destinationChainId as number });
-          // Wait for chain switch to complete
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          toast({
+            title: "Network switched",
+            description: "Click claim again to mint on the destination chain.",
+          });
         } catch {
           toast({
             title: "Chain switch required",
             description: "Please switch to the destination chain to claim",
             variant: "destructive",
           });
-          return;
         }
+        return;
       }
 
       const result = await executeMint({
