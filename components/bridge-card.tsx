@@ -1180,8 +1180,12 @@ export function BridgeCard({
     setIntentStarted(true);
 
     void (async () => {
-      const didStart = await handleSend(speed);
-      setIntentStarted(didStart);
+      try {
+        const didStart = await handleSend(speed);
+        setIntentStarted(didStart);
+      } finally {
+        executedIntentKeys.delete(executeIntentKey);
+      }
     })();
   }, [
     mode,

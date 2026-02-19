@@ -43,7 +43,7 @@ export default function BridgeTrackingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const params = useParams<{ sourceChainId: string; id: string }>();
-  const { transactions, addTransaction } = useTransactionStore();
+  const { transactions, addTransaction, updateTransaction } = useTransactionStore();
   const isFreshNavigation = searchParams.get("fresh") === "1";
 
   const sourceParam = params.sourceChainId;
@@ -149,6 +149,7 @@ export default function BridgeTrackingPage() {
       try {
         const { transaction } = await recoverTransactionFromBurnHash(sourceChainId, burnHash);
         addTransaction(transaction);
+        updateTransaction(transaction.hash, transaction);
 
         const nextId = routeId.kind === "nonce" && transaction.nonce
           ? transaction.nonce
@@ -161,7 +162,7 @@ export default function BridgeTrackingPage() {
         setIsRecovering(false);
       }
     },
-    [addTransaction, router, routeId.kind, sourceChainId]
+    [addTransaction, router, routeId.kind, sourceChainId, updateTransaction]
   );
 
   useEffect(() => {
@@ -227,6 +228,7 @@ export default function BridgeTrackingPage() {
 
         if (cancelled) return;
         addTransaction(transaction);
+        updateTransaction(transaction.hash, transaction);
       } catch (error) {
         if (cancelled) return;
 
@@ -260,6 +262,7 @@ export default function BridgeTrackingPage() {
     routeId.normalizedId,
     sourceChainId,
     isFreshNavigation,
+    updateTransaction,
   ]);
 
   useEffect(() => {
