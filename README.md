@@ -34,7 +34,7 @@ NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 ## Architecture
 
 - **`lib/cctp/`** — Custom CCTP v2 library with unified interfaces for EVM and Solana
-- **`lib/metadata/`** — generated chain/domain/contracts metadata (BridgeKit-sourced)
+- **`lib/metadata/`** — metadata loaders/types (generated JSON lives under `.generated/metadata/`)
 - **`lib/rpc/`** — app-owned wallet-first RPC routing and rotating fallback transports
 - **`lib/bridgeKit.ts`** — compatibility facade backed by local metadata + RPC modules
 - **`components/bridging-state/`** — Modular bridge progress UI (decomposed into hooks + sub-components)
@@ -46,10 +46,10 @@ NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 
 ## Metadata & RPC Generation
 
-- `scripts/generate-cctp-metadata.ts` builds `lib/metadata/cctp.generated.json` from BridgeKit.
+- `scripts/generate-cctp-metadata.ts` builds `.generated/metadata/cctp.generated.json` from BridgeKit.
 - `scripts/generate-rpc-candidates.ts` fetches Chainlist RPCs, runs CORS validation with `Origin: https://cctp.io`, and writes:
-  - `lib/metadata/rpc.generated.json`
-  - `reports/rpc-validation-report.json`
-- A pre-commit hook refreshes and stages these generated artifacts automatically.
+  - `.generated/metadata/rpc.generated.json`
+  - `.generated/reports/rpc-validation-report.json`
+- `bun run build` runs `metadata:refresh` automatically via `prebuild`.
 
 See `CLAUDE.md` for detailed architecture documentation.

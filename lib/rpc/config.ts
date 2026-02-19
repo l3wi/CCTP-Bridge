@@ -1,4 +1,4 @@
-import generatedRpc from "@/lib/metadata/rpc.generated.json";
+import generatedRpc from "../../.generated/metadata/rpc.generated.json";
 import type { GeneratedRpcMetadata } from "@/lib/metadata/types";
 import type { BridgeEnvironment } from "@/lib/metadata/types";
 import type { SolanaChainId } from "@/lib/types";

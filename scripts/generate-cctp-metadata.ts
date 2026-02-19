@@ -11,7 +11,7 @@ import type {
   CctpContracts,
 } from "../lib/metadata/types";
 
-const OUTPUT_PATH = resolve(process.cwd(), "lib/metadata/cctp.generated.json");
+const OUTPUT_PATH = resolve(process.cwd(), ".generated/metadata/cctp.generated.json");
 
 type ChainWithOptionalRpcUrls = ChainDefinition & {
   rpcUrls?: { default?: { http?: string[] } };

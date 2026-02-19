@@ -11,12 +11,15 @@ import type {
 
 const CCTP_METADATA_PATH = resolve(
   process.cwd(),
-  "lib/metadata/cctp.generated.json"
+  ".generated/metadata/cctp.generated.json"
 );
-const RPC_METADATA_PATH = resolve(process.cwd(), "lib/metadata/rpc.generated.json");
+const RPC_METADATA_PATH = resolve(
+  process.cwd(),
+  ".generated/metadata/rpc.generated.json"
+);
 const REPORT_PATH = resolve(
   process.cwd(),
-  "reports/rpc-validation-report.json"
+  ".generated/reports/rpc-validation-report.json"
 );
 const CHAINLIST_URL = "https://chainlist.org/rpcs.json";
 const CORS_ORIGIN = "https://cctp.io";

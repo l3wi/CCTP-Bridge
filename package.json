@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "bun run metadata:refresh",
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",

@@ -1,4 +1,4 @@
-import generatedCctp from "@/lib/metadata/cctp.generated.json";
+import generatedCctp from "../../.generated/metadata/cctp.generated.json";
 import type {
   BridgeEnvironment,
   GeneratedCctpMetadata,
