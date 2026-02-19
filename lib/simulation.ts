@@ -3,21 +3,14 @@
  * Simulates the receiveMessage call to check if a mint can be executed.
  */
 
-import { createPublicClient, keccak256, encodePacked } from "viem";
+import { keccak256, encodePacked } from "viem";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
 } from "./contracts";
-import {
-  getWagmiChainsForEnv,
-  getWagmiTransportsForEnv,
-  getBridgeChainByIdUniversal,
-  BRIDGEKIT_ENV,
-} from "./bridgeKit";
 import { getCctpDomainSafe } from "./cctp/shared";
-import { createSolanaAdapter } from "./solanaAdapter";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
 import type { SolanaChainId } from "./types";
-import type { Adapter } from "@solana/wallet-adapter-base";
 
 // CCTP message format constants
 const CCTP_MESSAGE_HEADER_BYTES = 148; // Minimum header size
@@ -41,23 +34,7 @@ export interface SimulationResult {
  * Create a public client for a given chain ID using app's RPC config.
  */
 function getPublicClient(chainId: number) {
-  const chains = getWagmiChainsForEnv();
-  const transports = getWagmiTransportsForEnv();
-
-  const chain = chains.find((c) => c.id === chainId);
-  if (!chain) {
-    throw new Error(`Unsupported chain: ${chainId}`);
-  }
-
-  const transport = transports[chainId];
-  if (!transport) {
-    throw new Error(`No RPC transport configured for chain ${chainId}`);
-  }
-
-  return createPublicClient({
-    chain,
-    transport,
-  });
+  return createEvmPublicClient(chainId);
 }
 
 /**
@@ -397,49 +374,24 @@ export async function checkSolanaMintStatus(
     message: string;
     mintRecipient?: string;
   },
-  walletAdapter: Adapter
+  _walletAdapter: unknown
 ): Promise<SimulationResult> {
   try {
-    const sourceChain = getBridgeChainByIdUniversal(sourceChainId, BRIDGEKIT_ENV);
-    const destChain = getBridgeChainByIdUniversal(destinationChainId, BRIDGEKIT_ENV);
+    void sourceChainId;
+    void destinationChainId;
 
-    if (!sourceChain || !destChain) {
+    // This helper is now metadata/RPC only and no longer relies on BridgeKit adapters.
+    // If we can fetch attestation data, user can proceed to claim; claim path performs
+    // the authoritative on-chain checks.
+    if (!attestationData.message || !attestationData.attestation) {
       return {
         success: false,
         canMint: false,
         alreadyMinted: false,
-        error: "Could not resolve chain definitions",
+        error: "Missing attestation payload",
       };
     }
 
-    const adapter = await createSolanaAdapter(walletAdapter);
-
-    // Cast adapter to access prepareAction method
-    const adapterWithActions = adapter as unknown as {
-      prepareAction: (
-        action: string,
-        params: Record<string, unknown>,
-        ctx: { chain: string }
-      ) => Promise<{ estimate: () => Promise<unknown> }>;
-    };
-
-    const preparedRequest = await adapterWithActions.prepareAction(
-      "cctp.v2.receiveMessage",
-      {
-        eventNonce: attestationData.nonce,
-        attestation: attestationData.attestation,
-        message: attestationData.message,
-        fromChain: sourceChain,
-        toChain: destChain,
-        mintRecipient: attestationData.mintRecipient,
-      },
-      { chain: destinationChainId }
-    );
-
-    // Try to simulate (estimate) the transaction
-    await preparedRequest.estimate();
-
-    // Simulation succeeded - mint can be executed
     return {
       success: true,
       canMint: true,

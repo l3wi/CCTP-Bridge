@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import {
   LegacyLocalTransaction,
   LegacyV2Transaction,
@@ -10,6 +10,16 @@ import {
 } from "@/lib/types";
 
 const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
+
+const serverStorage: StateStorage = {
+  getItem: (_name) => null,
+  setItem: (_name, _value) => {},
+  removeItem: (_name) => {},
+};
+
+const transactionStorage = createJSONStorage(() =>
+  typeof window === "undefined" ? serverStorage : localStorage
+);
 
 interface TransactionState {
   transactions: LocalTransaction[];
@@ -101,6 +111,7 @@ const normalizeTransaction = (
       : undefined,
     bridgeResult,
     transferId: (tx as Partial<LocalTransaction>).transferId,
+    nonce: (tx as Partial<LocalTransaction>).nonce,
   };
 };
 
@@ -329,6 +340,7 @@ export const useTransactionStore = create<TransactionState>()(
     }),
     {
       name: "cctp-transactions-v3",
+      storage: transactionStorage,
       partialize: (state) => ({ transactions: state.transactions }),
       onRehydrateStorage: () => (state) => {
         if (state) {

@@ -1,0 +1,118 @@
+{
+  "generatedAt": "2026-02-19T16:51:48.325Z",
+  "source": "https://chainlist.org/rpcs.json",
+  "totalChains": 33,
+  "missingChainIds": [],
+  "warnings": {
+    "1": [
+      "https://go.getblock.io/aefd01aa907c4805ba3c00a9e5b48c6b -> post status 429",
+      "https://eth-mainnet.nodereal.io/v1/1659dfb40aa24bbb8153a677b98064d7 -> The operation was aborted.",
+      "https://rpc.ankr.com/eth/c4cc6a8c87ec30258076de433ab2cf3d834228aae3fc4d76087873e4fea11635 -> post status 401",
+      "https://rpc.builder0x69.io -> Unable to connect. Is the computer able to access the url?"
+    ],
+    "10": [
+      "https://optimism-mainnet.public.blastapi.io -> preflight status 403",
+      "https://optimism-public.nodies.app -> The operation was aborted.",
+      "https://opt-mainnet.g.alchemy.com/v2/demo -> The operation was aborted.",
+      "https://optimism.public.blockpi.network/v1/rpc/public -> The operation was aborted.",
+      "https://rpc.optimism.gateway.fm -> Unable to connect. Is the computer able to access the url?"
+    ],
+    "50": [
+      "https://erpc.xinfin.network -> The operation was aborted.",
+      "https://rpc.xdc.org -> The operation was aborted."
+    ],
+    "51": [
+      "https://apothem.xdcrpc.com -> post status 404"
+    ],
+    "130": [
+      "https://unichain-rpc.publicnode.com -> The operation was aborted.",
+      "https://unichain.drpc.org -> The operation was aborted.",
+      "https://unichain.therpc.io -> The operation was aborted.",
+      "https://rpc.poolz.finance/unichain -> Unable to connect. Is the computer able to access the url?",
+      "https://api-unichain-mainnet.n.dwellir.com/2ccf18bf-2916-4198-8856-42172854353c -> post status 429"
+    ],
+    "137": [
+      "https://rpc.ankr.com/polygon -> post missing chainId result",
+      "https://polygon-rpc.com -> post status 401",
+      "https://polygon-public.nodies.app -> The operation was aborted.",
+      "https://polygon-mainnet.public.blastapi.io -> The operation was aborted."
+    ],
+    "146": [
+      "https://rpc.ankr.com/sonic_mainnet -> post status 403",
+      "https://sonic.api.onfinality.io/public -> The operation was aborted.",
+      "https://sonic.therpc.io -> The operation was aborted.",
+      "https://sonic-json-rpc.stakely.io -> The operation was aborted.",
+      "https://api-sonic-mainnet-archive.n.dwellir.com/2ccf18bf-2916-4198-8856-42172854353c -> post status 429"
+    ],
+    "480": [
+      "https://sparkling-autumn-dinghy.worldchain-mainnet.quiknode.pro -> The operation was aborted.",
+      "https://worldchain.drpc.org -> The operation was aborted."
+    ],
+    "998": [
+      "https://rpcs.chain.link/hyperevm/testnet -> latency 836ms exceeds 500ms",
+      "https://api.hyperliquid-testnet.xyz/evm -> post status 404"
+    ],
+    "1301": [
+      "https://endpoints.omniatech.io/v1/unichain/sepolia/public -> Unable to connect. Is the computer able to access the url?"
+    ],
+    "8453": [
+      "https://li-fi-base.intustechno.workers.dev/rpc -> preflight status 429",
+      "https://base-mainnet.diamondswap.org/rpc -> Unable to connect. Is the computer able to access the url?"
+    ],
+    "42161": [
+      "https://rpc.ankr.com/arbitrum/c4cc6a8c87ec30258076de433ab2cf3d834228aae3fc4d76087873e4fea11635 -> post status 401",
+      "https://arb-mainnet.g.alchemy.com/v2/demo -> preflight status 429"
+    ],
+    "43113": [
+      "https://endpoints.omniatech.io/v1/avax/fuji/public -> Was there a typo in the url or port?",
+      "https://avalanchetestapi.terminet.io/ext/bc/C/rpc -> The operation was aborted.",
+      "https://ava-testnet.public.blastapi.io/ext/bc/C/rpc -> preflight status 403",
+      "https://api.zan.top/avax-fuji/ext/bc/C/rpc -> latency 758ms exceeds 500ms",
+      "https://public.stackup.sh/api/v1/node/avalanche-fuji -> Unable to connect. Is the computer able to access the url?"
+    ],
+    "43114": [
+      "https://avalanche.public-rpc.com -> post status 401",
+      "https://ava-mainnet.public.blastapi.io/ext/bc/C/rpc -> preflight status 403",
+      "https://avalancheapi.terminet.io/ext/bc/C/rpc -> The operation was aborted."
+    ],
+    "59141": [
+      "https://rpc.sepolia.linea.build -> latency 531ms exceeds 500ms",
+      "https://linea-sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161 -> post status 401",
+      "https://linea-sepolia.therpc.io -> The operation was aborted."
+    ],
+    "59144": [
+      "https://linea.decubate.com -> The operation was aborted.",
+      "https://rpc.owlracle.info/linea/70d38ce1826c4a60bb2a8e05a6c8b20f -> The operation was aborted.",
+      "https://linea.therpc.io -> The operation was aborted."
+    ],
+    "80002": [
+      "https://polygon-bor-amoy-rpc.publicnode.com -> preflight status 404",
+      "https://polygon-amoy.blockpi.network/v1/rpc/private -> preflight status 521"
+    ],
+    "84532": [
+      "https://rpc.notadegen.com/base/sepolia -> The operation was aborted.",
+      "https://public.stackup.sh/api/v1/node/base-sepolia -> Unable to connect. Is the computer able to access the url?",
+      "https://base-sepolia.therpc.io -> The operation was aborted."
+    ],
+    "421614": [
+      "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public -> Unable to connect. Is the computer able to access the url?",
+      "https://public.stackup.sh/api/v1/node/arbitrum-sepolia -> Unable to connect. Is the computer able to access the url?",
+      "https://api.zan.top/arb-sepolia -> The operation was aborted.",
+      "https://arbitrum-sepolia.api.onfinality.io/public -> post status 429",
+      "https://arbitrum-sepolia.therpc.io -> The operation was aborted."
+    ],
+    "11155111": [
+      "https://eth-sepolia.g.alchemy.com/v2/demo -> preflight status 429",
+      "https://eth-sepolia.public.blastapi.io -> preflight status 403",
+      "https://eth-sepolia-public.unifra.io -> Unable to connect. Is the computer able to access the url?",
+      "https://sphinx.shardeum.org -> Unable to connect. Is the computer able to access the url?",
+      "https://dapps.shardeum.org -> Unable to connect. Is the computer able to access the url?",
+      "https://api.zan.top/eth-sepolia -> The operation was aborted."
+    ],
+    "11155420": [
+      "https://public.stackup.sh/api/v1/node/optimism-sepolia -> Was there a typo in the url or port?",
+      "https://endpoints.omniatech.io/v1/op/sepolia/public -> Was there a typo in the url or port?",
+      "https://api.zan.top/opt-sepolia -> The operation was aborted."
+    ]
+  }
+}

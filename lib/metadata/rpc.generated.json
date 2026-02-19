@@ -1,0 +1,551 @@
+{
+  "version": 1,
+  "generatedAt": "2026-02-19T16:51:48.325Z",
+  "source": "https://chainlist.org/rpcs.json",
+  "validation": {
+    "corsOrigin": "https://cctp.io",
+    "requestTimeoutMs": 1500,
+    "maxCandidatesPerChain": 8,
+    "maxValidUrlsPerChain": 4
+  },
+  "evm": [
+    {
+      "chainId": 1,
+      "chainName": "Ethereum",
+      "isTestnet": false,
+      "urls": [
+        "https://eth.llamarpc.com",
+        "https://ethereum-rpc.publicnode.com",
+        "https://1rpc.io/eth",
+        "https://rpc.mevblocker.io"
+      ],
+      "testedCount": 8,
+      "passedCount": 4,
+      "warnings": [
+        "https://go.getblock.io/aefd01aa907c4805ba3c00a9e5b48c6b -> post status 429",
+        "https://eth-mainnet.nodereal.io/v1/1659dfb40aa24bbb8153a677b98064d7 -> The operation was aborted.",
+        "https://rpc.ankr.com/eth/c4cc6a8c87ec30258076de433ab2cf3d834228aae3fc4d76087873e4fea11635 -> post status 401",
+        "https://rpc.builder0x69.io -> Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "chainId": 10,
+      "chainName": "Optimism",
+      "isTestnet": false,
+      "urls": [
+        "https://mainnet.optimism.io",
+        "https://1rpc.io/op",
+        "https://optimism.api.onfinality.io/public"
+      ],
+      "testedCount": 8,
+      "passedCount": 3,
+      "warnings": [
+        "https://optimism-mainnet.public.blastapi.io -> preflight status 403",
+        "https://optimism-public.nodies.app -> The operation was aborted.",
+        "https://opt-mainnet.g.alchemy.com/v2/demo -> The operation was aborted.",
+        "https://optimism.public.blockpi.network/v1/rpc/public -> The operation was aborted.",
+        "https://rpc.optimism.gateway.fm -> Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "chainId": 50,
+      "chainName": "XDC",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc.xdcrpc.com",
+        "https://rpc1.xinfin.network",
+        "https://erpc.xdcrpc.com",
+        "https://rpc.xdc.network"
+      ],
+      "testedCount": 6,
+      "passedCount": 4,
+      "warnings": [
+        "https://erpc.xinfin.network -> The operation was aborted.",
+        "https://rpc.xdc.org -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 51,
+      "chainName": "Apothem Network",
+      "isTestnet": true,
+      "urls": [
+        "https://erpc.apothem.network",
+        "https://rpc.ankr.com/xdc_testnet",
+        "https://earpc.apothem.network",
+        "https://rpc.apothem.network"
+      ],
+      "testedCount": 5,
+      "passedCount": 4,
+      "warnings": [
+        "https://apothem.xdcrpc.com -> post status 404"
+      ]
+    },
+    {
+      "chainId": 130,
+      "chainName": "Unichain",
+      "isTestnet": false,
+      "urls": [
+        "https://mainnet.unichain.org",
+        "https://unichain.api.onfinality.io/public",
+        "https://unichain-mainnet.gateway.tatum.io"
+      ],
+      "testedCount": 8,
+      "passedCount": 3,
+      "warnings": [
+        "https://unichain-rpc.publicnode.com -> The operation was aborted.",
+        "https://unichain.drpc.org -> The operation was aborted.",
+        "https://unichain.therpc.io -> The operation was aborted.",
+        "https://rpc.poolz.finance/unichain -> Unable to connect. Is the computer able to access the url?",
+        "https://api-unichain-mainnet.n.dwellir.com/2ccf18bf-2916-4198-8856-42172854353c -> post status 429"
+      ]
+    },
+    {
+      "chainId": 137,
+      "chainName": "Polygon",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc-mainnet.matic.quiknode.pro",
+        "https://1rpc.io/matic",
+        "https://polygon-mainnet.rpcfast.com?api_key=xbhWBI1Wkguk8SNMu1bvvLurPGLXmgwYeC4S6g2H7WdwFigZSmPWVZRxrskEQwIf",
+        "https://polygon-bor-rpc.publicnode.com"
+      ],
+      "testedCount": 8,
+      "passedCount": 4,
+      "warnings": [
+        "https://rpc.ankr.com/polygon -> post missing chainId result",
+        "https://polygon-rpc.com -> post status 401",
+        "https://polygon-public.nodies.app -> The operation was aborted.",
+        "https://polygon-mainnet.public.blastapi.io -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 146,
+      "chainName": "Sonic",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc.soniclabs.com",
+        "https://sonic.drpc.org",
+        "https://sonic.api.pocket.network"
+      ],
+      "testedCount": 8,
+      "passedCount": 3,
+      "warnings": [
+        "https://rpc.ankr.com/sonic_mainnet -> post status 403",
+        "https://sonic.api.onfinality.io/public -> The operation was aborted.",
+        "https://sonic.therpc.io -> The operation was aborted.",
+        "https://sonic-json-rpc.stakely.io -> The operation was aborted.",
+        "https://api-sonic-mainnet-archive.n.dwellir.com/2ccf18bf-2916-4198-8856-42172854353c -> post status 429"
+      ]
+    },
+    {
+      "chainId": 480,
+      "chainName": "World Chain",
+      "isTestnet": false,
+      "urls": [
+        "https://worldchain-mainnet.g.alchemy.com/public",
+        "https://480.rpc.thirdweb.com",
+        "https://worldchain-mainnet.gateway.tenderly.co"
+      ],
+      "testedCount": 5,
+      "passedCount": 3,
+      "warnings": [
+        "https://sparkling-autumn-dinghy.worldchain-mainnet.quiknode.pro -> The operation was aborted.",
+        "https://worldchain.drpc.org -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 998,
+      "chainName": "HyperEVM Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://rpc.hyperliquid-testnet.xyz/evm",
+        "https://spectrum-01.simplystaking.xyz/hyperliquid-tn-rpc/evm"
+      ],
+      "testedCount": 4,
+      "passedCount": 2,
+      "warnings": [
+        "https://rpcs.chain.link/hyperevm/testnet -> latency 836ms exceeds 500ms",
+        "https://api.hyperliquid-testnet.xyz/evm -> post status 404"
+      ]
+    },
+    {
+      "chainId": 999,
+      "chainName": "HyperEVM",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc.hyperliquid.xyz/evm",
+        "https://rpc.hypurrscan.io",
+        "https://hyperliquid-json-rpc.stakely.io",
+        "https://hyperliquid.drpc.org"
+      ],
+      "testedCount": 4,
+      "passedCount": 4,
+      "warnings": []
+    },
+    {
+      "chainId": 1301,
+      "chainName": "Unichain Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://sepolia.unichain.org",
+        "https://unichain-sepolia.api.onfinality.io/public",
+        "https://unichain-sepolia-rpc.publicnode.com",
+        "https://unichain-sepolia.drpc.org"
+      ],
+      "testedCount": 5,
+      "passedCount": 4,
+      "warnings": [
+        "https://endpoints.omniatech.io/v1/unichain/sepolia/public -> Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "chainId": 1328,
+      "chainName": "Sei Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://evm-rpc-testnet.sei-apis.com",
+        "https://sei-testnet.drpc.org",
+        "https://sei-testnet-public.nodies.app"
+      ],
+      "testedCount": 3,
+      "passedCount": 3,
+      "warnings": []
+    },
+    {
+      "chainId": 1329,
+      "chainName": "Sei",
+      "isTestnet": false,
+      "urls": [
+        "https://evm-rpc.sei-apis.com",
+        "https://sei.drpc.org",
+        "https://sei-evm-rpc.stakeme.pro",
+        "https://sei-public.nodies.app"
+      ],
+      "testedCount": 4,
+      "passedCount": 4,
+      "warnings": []
+    },
+    {
+      "chainId": 4801,
+      "chainName": "World Chain Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://worldchain-sepolia.g.alchemy.com/public",
+        "https://4801.rpc.thirdweb.com",
+        "https://worldchain-sepolia.gateway.tenderly.co",
+        "https://worldchain-sepolia.drpc.org"
+      ],
+      "testedCount": 4,
+      "passedCount": 4,
+      "warnings": []
+    },
+    {
+      "chainId": 8453,
+      "chainName": "Base",
+      "isTestnet": false,
+      "urls": [
+        "https://base.llamarpc.com",
+        "https://mainnet.base.org",
+        "https://developer-access-mainnet.base.org",
+        "https://base.public.blockpi.network/v1/rpc/public"
+      ],
+      "testedCount": 6,
+      "passedCount": 4,
+      "warnings": [
+        "https://li-fi-base.intustechno.workers.dev/rpc -> preflight status 429",
+        "https://base-mainnet.diamondswap.org/rpc -> Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "chainId": 14601,
+      "chainName": "Sonic Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://sonic-testnet-v2.drpc.org",
+        "https://rpc.testnet.soniclabs.com"
+      ],
+      "testedCount": 2,
+      "passedCount": 2,
+      "warnings": []
+    },
+    {
+      "chainId": 42161,
+      "chainName": "Arbitrum",
+      "isTestnet": false,
+      "urls": [
+        "https://arb1.arbitrum.io/rpc",
+        "https://1rpc.io/arb",
+        "https://arbitrum-one-public.nodies.app",
+        "https://arbitrum.public.blockpi.network/v1/rpc/public"
+      ],
+      "testedCount": 6,
+      "passedCount": 4,
+      "warnings": [
+        "https://rpc.ankr.com/arbitrum/c4cc6a8c87ec30258076de433ab2cf3d834228aae3fc4d76087873e4fea11635 -> post status 401",
+        "https://arb-mainnet.g.alchemy.com/v2/demo -> preflight status 429"
+      ]
+    },
+    {
+      "chainId": 43113,
+      "chainName": "Avalanche Fuji",
+      "isTestnet": true,
+      "urls": [
+        "https://api.avax-test.network/ext/bc/C/rpc",
+        "https://avalanche-fuji-c-chain-rpc.publicnode.com",
+        "https://avalanche-fuji.drpc.org"
+      ],
+      "testedCount": 8,
+      "passedCount": 3,
+      "warnings": [
+        "https://endpoints.omniatech.io/v1/avax/fuji/public -> Was there a typo in the url or port?",
+        "https://avalanchetestapi.terminet.io/ext/bc/C/rpc -> The operation was aborted.",
+        "https://ava-testnet.public.blastapi.io/ext/bc/C/rpc -> preflight status 403",
+        "https://api.zan.top/avax-fuji/ext/bc/C/rpc -> latency 758ms exceeds 500ms",
+        "https://public.stackup.sh/api/v1/node/avalanche-fuji -> Unable to connect. Is the computer able to access the url?"
+      ]
+    },
+    {
+      "chainId": 43114,
+      "chainName": "Avalanche",
+      "isTestnet": false,
+      "urls": [
+        "https://api.avax.network/ext/bc/C/rpc",
+        "https://avalanche-c-chain-rpc.publicnode.com",
+        "https://1rpc.io/avax/c",
+        "https://avalanche-public.nodies.app/ext/bc/C/rpc"
+      ],
+      "testedCount": 7,
+      "passedCount": 4,
+      "warnings": [
+        "https://avalanche.public-rpc.com -> post status 401",
+        "https://ava-mainnet.public.blastapi.io/ext/bc/C/rpc -> preflight status 403",
+        "https://avalancheapi.terminet.io/ext/bc/C/rpc -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 57073,
+      "chainName": "Ink",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc-gel.inkonchain.com",
+        "https://rpc-qnd.inkonchain.com",
+        "https://ink.drpc.org",
+        "https://ink-public.nodies.app"
+      ],
+      "testedCount": 4,
+      "passedCount": 4,
+      "warnings": []
+    },
+    {
+      "chainId": 59141,
+      "chainName": "Linea Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://linea-sepolia.drpc.org",
+        "https://linea-sepolia-rpc.publicnode.com"
+      ],
+      "testedCount": 5,
+      "passedCount": 2,
+      "warnings": [
+        "https://rpc.sepolia.linea.build -> latency 531ms exceeds 500ms",
+        "https://linea-sepolia.infura.io/v3/9aa3d95b3bc440fa88ea12eaa4456161 -> post status 401",
+        "https://linea-sepolia.therpc.io -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 59144,
+      "chainName": "Linea",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc.linea.build",
+        "https://1rpc.io/linea",
+        "https://linea.drpc.org",
+        "https://linea.api.pocket.network"
+      ],
+      "testedCount": 7,
+      "passedCount": 4,
+      "warnings": [
+        "https://linea.decubate.com -> The operation was aborted.",
+        "https://rpc.owlracle.info/linea/70d38ce1826c4a60bb2a8e05a6c8b20f -> The operation was aborted.",
+        "https://linea.therpc.io -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 80002,
+      "chainName": "Polygon Amoy",
+      "isTestnet": true,
+      "urls": [
+        "https://rpc-amoy.polygon.technology",
+        "https://polygon-amoy.drpc.org",
+        "https://polygon-amoy.gateway.tatum.io",
+        "https://polygon-amoy.gateway.tenderly.co"
+      ],
+      "testedCount": 6,
+      "passedCount": 4,
+      "warnings": [
+        "https://polygon-bor-amoy-rpc.publicnode.com -> preflight status 404",
+        "https://polygon-amoy.blockpi.network/v1/rpc/private -> preflight status 521"
+      ]
+    },
+    {
+      "chainId": 81224,
+      "chainName": "Codex Mainnet",
+      "isTestnet": false,
+      "urls": [
+        "https://rpc.codex.xyz"
+      ],
+      "testedCount": 1,
+      "passedCount": 1,
+      "warnings": []
+    },
+    {
+      "chainId": 84532,
+      "chainName": "Base Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://base-sepolia.gateway.tenderly.co",
+        "https://base-sepolia.drpc.org",
+        "https://base-sepolia-public.nodies.app",
+        "https://base-sepolia.api.onfinality.io/public"
+      ],
+      "testedCount": 7,
+      "passedCount": 4,
+      "warnings": [
+        "https://rpc.notadegen.com/base/sepolia -> The operation was aborted.",
+        "https://public.stackup.sh/api/v1/node/base-sepolia -> Unable to connect. Is the computer able to access the url?",
+        "https://base-sepolia.therpc.io -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 98866,
+      "chainName": "Plume",
+      "isTestnet": false,
+      "urls": [
+        "https://plume.drpc.org",
+        "https://plume-mainnet.gateway.tatum.io",
+        "https://rpc.plume.org"
+      ],
+      "testedCount": 3,
+      "passedCount": 3,
+      "warnings": []
+    },
+    {
+      "chainId": 98867,
+      "chainName": "Plume Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://testnet-rpc.plume.org"
+      ],
+      "testedCount": 1,
+      "passedCount": 1,
+      "warnings": []
+    },
+    {
+      "chainId": 421614,
+      "chainName": "Arbitrum Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://arbitrum-sepolia.gateway.tenderly.co",
+        "https://arbitrum-sepolia.drpc.org",
+        "https://arbitrum-sepolia-testnet.api.pocket.network"
+      ],
+      "testedCount": 8,
+      "passedCount": 3,
+      "warnings": [
+        "https://endpoints.omniatech.io/v1/arbitrum/sepolia/public -> Unable to connect. Is the computer able to access the url?",
+        "https://public.stackup.sh/api/v1/node/arbitrum-sepolia -> Unable to connect. Is the computer able to access the url?",
+        "https://api.zan.top/arb-sepolia -> The operation was aborted.",
+        "https://arbitrum-sepolia.api.onfinality.io/public -> post status 429",
+        "https://arbitrum-sepolia.therpc.io -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 763373,
+      "chainName": "Ink Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://rpc-gel-sepolia.inkonchain.com",
+        "https://ink-sepolia.drpc.org"
+      ],
+      "testedCount": 2,
+      "passedCount": 2,
+      "warnings": []
+    },
+    {
+      "chainId": 812242,
+      "chainName": "Codex Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://rpc.codex-stg.xyz"
+      ],
+      "testedCount": 1,
+      "passedCount": 1,
+      "warnings": []
+    },
+    {
+      "chainId": 5042002,
+      "chainName": "Arc Testnet",
+      "isTestnet": true,
+      "urls": [
+        "https://arc-testnet.drpc.org",
+        "https://rpc.testnet.arc.network"
+      ],
+      "testedCount": 2,
+      "passedCount": 2,
+      "warnings": []
+    },
+    {
+      "chainId": 11155111,
+      "chainName": "Ethereum Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://sepolia.gateway.tenderly.co",
+        "https://gateway.tenderly.co/public/sepolia"
+      ],
+      "testedCount": 8,
+      "passedCount": 2,
+      "warnings": [
+        "https://eth-sepolia.g.alchemy.com/v2/demo -> preflight status 429",
+        "https://eth-sepolia.public.blastapi.io -> preflight status 403",
+        "https://eth-sepolia-public.unifra.io -> Unable to connect. Is the computer able to access the url?",
+        "https://sphinx.shardeum.org -> Unable to connect. Is the computer able to access the url?",
+        "https://dapps.shardeum.org -> Unable to connect. Is the computer able to access the url?",
+        "https://api.zan.top/eth-sepolia -> The operation was aborted."
+      ]
+    },
+    {
+      "chainId": 11155420,
+      "chainName": "Optimism Sepolia",
+      "isTestnet": true,
+      "urls": [
+        "https://sepolia.optimism.io",
+        "https://optimism-sepolia.gateway.tenderly.co",
+        "https://optimism-sepolia-public.nodies.app",
+        "https://optimism-sepolia.api.onfinality.io/public"
+      ],
+      "testedCount": 7,
+      "passedCount": 4,
+      "warnings": [
+        "https://public.stackup.sh/api/v1/node/optimism-sepolia -> Was there a typo in the url or port?",
+        "https://endpoints.omniatech.io/v1/op/sepolia/public -> Was there a typo in the url or port?",
+        "https://api.zan.top/opt-sepolia -> The operation was aborted."
+      ]
+    }
+  ],
+  "solana": [
+    {
+      "chain": "Solana",
+      "urls": [
+        "https://solana-rpc.publicnode.com",
+        "https://api.mainnet-beta.solana.com"
+      ]
+    },
+    {
+      "chain": "Solana_Devnet",
+      "urls": [
+        "https://api.devnet.solana.com"
+      ]
+    }
+  ],
+  "missingChainIds": []
+}

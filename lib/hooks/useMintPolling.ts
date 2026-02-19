@@ -11,6 +11,8 @@ import { useToast } from "@/components/ui/use-toast";
 // Polling configuration
 const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
 const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour
+const EVM_MINT_POLL_INTERVAL_MS = 15_000; // Keep Iris pressure low for EVM-destination mint readiness checks
+const SOLANA_POLL_INTERVAL_MS = 15_000; // Solana attestations settle slower; avoid over-polling Iris
 const REATTEST_POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds while awaiting re-attestation
 
 export interface MintPollingState {
@@ -86,6 +88,12 @@ export function useMintPolling({
   // Guard against duplicate auto-reattest triggers
   const reattestTriggeredRef = useRef(false);
 
+  const isDocumentVisible = useCallback(
+    () =>
+      typeof document === "undefined" || document.visibilityState === "visible",
+    []
+  );
+
   // Refs to avoid stale closures in polling intervals
   const displayStepsRef = useRef<BridgeResult["steps"]>(displaySteps);
   const onStepsUpdateRef = useRef(onStepsUpdate);
@@ -107,8 +115,11 @@ export function useMintPolling({
   const shouldPollEvm = useMemo(() => {
     if (isSuccess) return false;
     if (mintSimulation.alreadyMinted) return false;
+    if (mintSimulation.attestationReady || mintSimulation.canMint) return false;
+    if (hasFetchAttestation) return false;
     // Stop polling when message is expired - auto-reattest will handle it
     if (mintSimulation.messageExpired) return false;
+    if (isAwaitingReattestation) return false;
     if (!burnTxHash || !sourceChainId || !destinationChainId) return false;
 
     // EVM polling only for EVM destinations
@@ -124,7 +135,11 @@ export function useMintPolling({
   }, [
     isSuccess,
     mintSimulation.alreadyMinted,
+    mintSimulation.attestationReady,
+    mintSimulation.canMint,
+    hasFetchAttestation,
     mintSimulation.messageExpired,
+    isAwaitingReattestation,
     burnTxHash,
     sourceChainId,
     destinationChainId,
@@ -146,6 +161,11 @@ export function useMintPolling({
     // Don't poll if attestation already fetched
     if (hasFetchAttestation) return false;
 
+    // While re-attestation is in progress, a dedicated poller handles Iris checks.
+    if (mintSimulation.messageExpired || isAwaitingReattestation) return false;
+
+    if (mintSimulation.attestationReady) return false;
+
     const referenceTime = burnCompletedAt ?? startedAt;
     if (!referenceTime) return false;
 
@@ -160,6 +180,9 @@ export function useMintPolling({
     destinationChainId,
     hasBurnCompleted,
     hasFetchAttestation,
+    mintSimulation.messageExpired,
+    mintSimulation.attestationReady,
+    isAwaitingReattestation,
     burnCompletedAt,
     startedAt,
   ]);
@@ -244,6 +267,7 @@ export function useMintPolling({
 
     const pollForNewAttestation = async () => {
       if (!isMountedRef.current || !burnTxHash || !sourceChainId) return;
+      if (!isDocumentVisible()) return;
 
       try {
         const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
@@ -302,7 +326,14 @@ export function useMintPolling({
         reattestPollingRef.current = null;
       }
     };
-  }, [isAwaitingReattestation, burnTxHash, sourceChainId, updateTransaction, toast]);
+  }, [
+    isAwaitingReattestation,
+    burnTxHash,
+    sourceChainId,
+    updateTransaction,
+    toast,
+    isDocumentVisible,
+  ]);
 
   // EVM polling effect
   useEffect(() => {
@@ -318,6 +349,7 @@ export function useMintPolling({
       if (!burnTxHash || !sourceChainId || !destinationChainId) return;
       if (!isMountedRef.current) return;
       if (isSolanaChain(destinationChainId)) return;
+      if (!isDocumentVisible()) return;
 
       setMintSimulation((prev) => ({ ...prev, checking: true }));
 
@@ -354,6 +386,12 @@ export function useMintPolling({
           nonce: result.nonce,
         });
 
+        if (result.nonce && burnTxHash) {
+          updateTransaction(burnTxHash, {
+            nonce: result.nonce,
+          });
+        }
+
         // Read latest steps from ref to avoid stale closure
         const currentSteps = displayStepsRef.current ?? [];
 
@@ -367,7 +405,7 @@ export function useMintPolling({
               return {
                 ...step,
                 state: "success" as const,
-                errorMessage: "USDC claimed. Check your wallet for the USDC",
+                errorMessage: "success - check wallet",
               };
             }
             return step;
@@ -378,6 +416,7 @@ export function useMintPolling({
             bridgeState: "success",
             completedAt: new Date(),
             steps: updatedSteps,
+            nonce: result.nonce,
           });
 
           onStepsUpdateRef.current?.(updatedSteps);
@@ -390,7 +429,10 @@ export function useMintPolling({
             return step;
           });
 
-          updateTransaction(burnTxHash, { steps: updatedSteps });
+          updateTransaction(burnTxHash, {
+            steps: updatedSteps,
+            nonce: result.nonce,
+          });
           onStepsUpdateRef.current?.(updatedSteps);
         }
       } catch (error) {
@@ -405,7 +447,7 @@ export function useMintPolling({
     };
 
     checkMint();
-    pollingRef.current = setInterval(checkMint, POLL_INTERVAL_MS);
+    pollingRef.current = setInterval(checkMint, EVM_MINT_POLL_INTERVAL_MS);
 
     return () => {
       if (pollingRef.current) {
@@ -413,7 +455,14 @@ export function useMintPolling({
         pollingRef.current = null;
       }
     };
-  }, [shouldPollEvm, burnTxHash, sourceChainId, destinationChainId, updateTransaction]);
+  }, [
+    shouldPollEvm,
+    burnTxHash,
+    sourceChainId,
+    destinationChainId,
+    updateTransaction,
+    isDocumentVisible,
+  ]);
 
   // Solana attestation polling effect
   useEffect(() => {
@@ -425,9 +474,18 @@ export function useMintPolling({
       return;
     }
 
+    if (mintSimulation.messageExpired || isAwaitingReattestation) {
+      if (solanaPollingRef.current) {
+        clearInterval(solanaPollingRef.current);
+        solanaPollingRef.current = null;
+      }
+      return;
+    }
+
     const checkAttestation = async () => {
       if (!burnTxHash || !sourceChainId) return;
       if (!isMountedRef.current) return;
+      if (!isDocumentVisible()) return;
 
       try {
         const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
@@ -470,7 +528,10 @@ export function useMintPolling({
             });
           }
 
-          updateTransaction(burnTxHash, { steps: updatedSteps });
+          updateTransaction(burnTxHash, {
+            steps: updatedSteps,
+            nonce: result.nonce,
+          });
           onStepsUpdateRef.current?.(updatedSteps);
 
           // Update local state
@@ -491,7 +552,7 @@ export function useMintPolling({
     };
 
     checkAttestation();
-    solanaPollingRef.current = setInterval(checkAttestation, POLL_INTERVAL_MS);
+    solanaPollingRef.current = setInterval(checkAttestation, SOLANA_POLL_INTERVAL_MS);
 
     return () => {
       if (solanaPollingRef.current) {
@@ -499,7 +560,15 @@ export function useMintPolling({
         solanaPollingRef.current = null;
       }
     };
-  }, [shouldPollSolana, burnTxHash, sourceChainId, updateTransaction]);
+  }, [
+    shouldPollSolana,
+    burnTxHash,
+    sourceChainId,
+    updateTransaction,
+    mintSimulation.messageExpired,
+    isAwaitingReattestation,
+    isDocumentVisible,
+  ]);
 
   // Setter for external updates (e.g., from claim handler)
   const setAlreadyMinted = useCallback((value: boolean) => {
@@ -518,7 +587,10 @@ export function useMintPolling({
       nonce,
       canMint: false,
     }));
-  }, []);
+    if (burnTxHash) {
+      updateTransaction(burnTxHash, { nonce });
+    }
+  }, [burnTxHash, updateTransaction]);
 
   // Manual re-attestation trigger (fallback if auto-reattest fails)
   const requestReattest = useCallback(async () => {

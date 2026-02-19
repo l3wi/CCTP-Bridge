@@ -66,6 +66,7 @@ export interface LocalTransaction {
   completedAt?: Date; // When mint/claim completed
   bridgeResult?: BridgeResult;
   transferId?: string;
+  nonce?: string; // Message nonce used for re-attestation deep links
 }
 
 // Legacy v2 transaction interface for migration
@@ -91,6 +92,7 @@ export interface LegacyV2Transaction {
   completedAt?: Date;
   bridgeResult?: BridgeResult;
   transferId?: string;
+  nonce?: string;
 }
 
 // Legacy v1 transaction interface for migration from pre-v2 localStorage

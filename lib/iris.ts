@@ -14,6 +14,22 @@ const IRIS_API_ENDPOINTS = {
   testnet: "https://iris-api-sandbox.circle.com",
 } as const;
 
+const IRIS_PENDING_CACHE_TTL_MS = 10_000;
+const IRIS_COMPLETE_CACHE_TTL_MS = 60_000;
+const IRIS_NOT_FOUND_CACHE_TTL_MS = 5_000;
+
+interface CachedAttestationEntry {
+  expiresAt: number;
+  value: AttestationData | null;
+}
+
+// Prevent duplicate concurrent Iris calls for identical sourceDomain+txHash requests.
+const pendingUniversalAttestationRequests = new Map<
+  string,
+  Promise<AttestationData | null>
+>();
+const cachedUniversalAttestationResponses = new Map<string, CachedAttestationEntry>();
+
 export interface IrisAttestationResponse {
   messages: Array<{
     attestation: string;
@@ -210,77 +226,125 @@ export async function fetchAttestationUniversal(
   }
 
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
-
-  try {
-    // Rate limit API calls to stay under 35 req/s limit
-    const response = await irisRateLimiter.throttle(() =>
-      fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      })
-    );
-
-    if (!response.ok) {
-      if (response.status !== 404) {
-        console.error(
-          `Iris API error: ${response.status} ${response.statusText}`
-        );
-      }
-      return null;
-    }
-
-    const data: IrisAttestationResponse = await response.json();
-
-    if (!data.messages || data.messages.length === 0) {
-      return null;
-    }
-
-    const msg = data.messages[0];
-
-    // Log delay reason if present (insufficient fee means fallback to standard speed)
-    logDelayReason(msg.delayReason);
-
-    if (!msg.decodedMessage) {
-      // Attestation still in progress - expected during attestation window
-      // Return partial data with delayReason if available
-      if (msg.delayReason) {
-        return {
-          message: "0x" as `0x${string}`,
-          attestation: "0x" as `0x${string}`,
-          status: msg.status,
-          sourceDomain: 0,
-          destinationDomain: 0,
-          nonce: msg.eventNonce,
-          delayReason: msg.delayReason,
-        };
-      }
-      return null;
-    }
-
-    const message = (
-      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-    ) as `0x${string}`;
-    const attestation = (
-      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-    ) as `0x${string}`;
-
-    return {
-      message,
-      attestation,
-      status: msg.status,
-      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
-      nonce: msg.eventNonce,
-      amount: msg.decodedMessage.decodedMessageBody?.amount,
-      mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
-      delayReason: msg.delayReason,
-    };
-  } catch (error) {
-    console.error("Failed to fetch attestation from Iris:", error);
-    return null;
+  const requestKey = `${sourceDomain}:${normalizedHash}:${isTestnet ? "testnet" : "mainnet"}`;
+  const now = Date.now();
+  const cached = cachedUniversalAttestationResponses.get(requestKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
   }
+
+  const existingRequest = pendingUniversalAttestationRequests.get(requestKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const requestPromise = (async (): Promise<AttestationData | null> => {
+    try {
+      // Rate limit API calls to stay under 35 req/s limit
+      const response = await irisRateLimiter.throttle(() =>
+        fetch(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        })
+      );
+
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.error(
+            `Iris API error: ${response.status} ${response.statusText}`
+          );
+        }
+        cachedUniversalAttestationResponses.set(requestKey, {
+          value: null,
+          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+        });
+        return null;
+      }
+
+      const data: IrisAttestationResponse = await response.json();
+
+      if (!data.messages || data.messages.length === 0) {
+        cachedUniversalAttestationResponses.set(requestKey, {
+          value: null,
+          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+        });
+        return null;
+      }
+
+      const msg = data.messages[0];
+
+      // Log delay reason if present (insufficient fee means fallback to standard speed)
+      logDelayReason(msg.delayReason);
+
+      if (!msg.decodedMessage) {
+        // Attestation still in progress - expected during attestation window
+        // Return partial data with delayReason if available
+        if (msg.delayReason) {
+          const pendingResult: AttestationData = {
+            message: "0x" as `0x${string}`,
+            attestation: "0x" as `0x${string}`,
+            status: msg.status,
+            sourceDomain: 0,
+            destinationDomain: 0,
+            nonce: msg.eventNonce,
+            delayReason: msg.delayReason,
+          };
+          cachedUniversalAttestationResponses.set(requestKey, {
+            value: pendingResult,
+            expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
+          });
+          return pendingResult;
+        }
+        cachedUniversalAttestationResponses.set(requestKey, {
+          value: null,
+          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+        });
+        return null;
+      }
+
+      const message = (
+        msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
+      ) as `0x${string}`;
+      const attestation = (
+        msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
+      ) as `0x${string}`;
+
+      const attestationResult: AttestationData = {
+        message,
+        attestation,
+        status: msg.status,
+        sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
+        destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+        nonce: msg.eventNonce,
+        amount: msg.decodedMessage.decodedMessageBody?.amount,
+        mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+        delayReason: msg.delayReason,
+      };
+      const ttl =
+        attestationResult.status === "complete"
+          ? IRIS_COMPLETE_CACHE_TTL_MS
+          : IRIS_PENDING_CACHE_TTL_MS;
+      cachedUniversalAttestationResponses.set(requestKey, {
+        value: attestationResult,
+        expiresAt: Date.now() + ttl,
+      });
+      return attestationResult;
+    } catch (error) {
+      console.error("Failed to fetch attestation from Iris:", error);
+      cachedUniversalAttestationResponses.set(requestKey, {
+        value: null,
+        expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+      });
+      return null;
+    } finally {
+      pendingUniversalAttestationRequests.delete(requestKey);
+    }
+  })();
+
+  pendingUniversalAttestationRequests.set(requestKey, requestPromise);
+  return requestPromise;
 }
 
 /**

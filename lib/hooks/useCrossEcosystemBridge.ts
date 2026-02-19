@@ -4,7 +4,7 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { useAccount, useWalletClient } from "wagmi";
+import { useWalletClient } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { formatUnits } from "viem";
 import { type BridgeResult, type ChainDefinition } from "@circle-fin/bridge-kit";
@@ -57,6 +57,8 @@ export const useCrossEcosystemBridge = () => {
       }
     ): Promise<BridgeResult> => {
       const sourceChainType = getChainType(params.sourceChainId);
+      const destinationChainType = getChainType(params.targetChainId);
+      const isCrossEcosystem = sourceChainType !== destinationChainType;
 
       // Validate wallet connection based on source chain type
       if (sourceChainType === "solana") {
@@ -84,8 +86,16 @@ export const useCrossEcosystemBridge = () => {
       // Determine sender address based on source chain type
       const senderAddress = sourceChainType === "solana" ? solanaAddress : evmAddress;
 
-      // Use custom target address if provided, otherwise fall back to sender
+      // Cross-ecosystem transfers must always have an explicit locked destination address.
+      if (isCrossEcosystem && !params.targetAddress) {
+        throw new Error("Destination address is required for cross-ecosystem transfers");
+      }
+
+      // Use locked target address if provided, otherwise fall back to sender.
       const recipientAddress = params.targetAddress ?? senderAddress;
+      if (!recipientAddress) {
+        throw new Error("Destination address is required");
+      }
 
       const buildResult = (
         steps: BridgeResult["steps"],
@@ -164,18 +174,6 @@ export const useCrossEcosystemBridge = () => {
         const burnHash = burnResult.burnTxHash! as UniversalTxHash;
         currentHashRef.current = burnHash;
         opts?.onPendingHash?.(burnHash);
-
-        // Server-side analytics
-        const roundedAmount = Math.round(Number(formattedAmount));
-        const txType = transferType === "fast" ? 1 : 0;
-        fetch("/api/meta", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: roundedAmount,
-            meta: `${roundedAmount},${params.sourceChainId},${params.targetChainId},${txType}`,
-          }),
-        }).catch(() => {});
 
         // Build initial steps using unified helper
         const initialSteps = createInitialSteps({

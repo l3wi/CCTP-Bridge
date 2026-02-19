@@ -4,11 +4,12 @@
  */
 
 import { useCallback, useState } from "react";
-import { useAccount, usePublicClient, useWalletClient } from "wagmi";
+import { useAccount, useWalletClient } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
 import { createSolanaConnection } from "@/lib/solanaAdapter";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
 import type { BurnParams, BurnResult, ChainId, SolanaChainId, EvmTxHash } from "../types";
 import { isSolanaChain } from "../types";
 import { handleBurnError } from "../errors";
@@ -47,7 +48,6 @@ import {
 export function useBurn() {
   // EVM wallet state
   const { address: evmAddress } = useAccount();
-  const publicClient = usePublicClient();
   const { data: walletClient } = useWalletClient();
 
   // Solana wallet state
@@ -70,9 +70,7 @@ export function useBurn() {
       if (!walletClient) {
         return { success: false, error: "Wallet client not available." };
       }
-      if (!publicClient) {
-        return { success: false, error: "Public client not available." };
-      }
+      const publicClient = createEvmPublicClient(sourceChainId, { walletClient });
 
       let approvalTxHash: `0x${string}` | undefined;
 
@@ -232,7 +230,7 @@ export function useBurn() {
         return handleBurnError(error, "burn");
       }
     },
-    [evmAddress, walletClient, publicClient, toast]
+    [evmAddress, walletClient, toast]
   );
 
   /**

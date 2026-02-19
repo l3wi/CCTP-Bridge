@@ -5,10 +5,11 @@
  */
 
 import { useCallback, useState } from "react";
-import { useWalletClient, usePublicClient, useBalance } from "wagmi";
+import { useWalletClient, useBalance } from "wagmi";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
 import { fetchAttestationUniversal } from "@/lib/iris";
 import { simulateMint } from "@/lib/simulation";
 import {
@@ -49,10 +50,13 @@ import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 // Hook
 // =============================================================================
 
+const ALREADY_CLAIMED_TOAST_TITLE = "USDC Successfully Claimed";
+const ALREADY_CLAIMED_TOAST_DESCRIPTION =
+  "USDC Successfully Claimed. Check you wallet for the USDC.";
+
 export function useMint() {
   // EVM wallet state
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient();
 
   // EVM native balance for gas checks
   const { data: evmNativeBalance } = useBalance({
@@ -104,7 +108,7 @@ export function useMint() {
         setIsMinting(false);
       }
     },
-    [walletClient, publicClient, solanaWallet, connection, updateTransaction, toast, evmNativeBalance?.value]
+    [walletClient, solanaWallet, connection, updateTransaction, toast, evmNativeBalance?.value]
   );
 
   /**
@@ -122,9 +126,7 @@ export function useMint() {
       return { success: false, error: "EVM wallet not connected" };
     }
 
-    if (!publicClient) {
-      return { success: false, error: "Public client not available" };
-    }
+    const publicClient = createEvmPublicClient(destinationChainId, { walletClient });
 
     const messageTransmitter = getMessageTransmitterAddress(destinationChainId);
     if (!messageTransmitter) {
@@ -203,8 +205,8 @@ export function useMint() {
         });
 
         toast({
-          title: "Already Claimed",
-          description: "This transfer was already minted. Check your wallet for the USDC.",
+          title: ALREADY_CLAIMED_TOAST_TITLE,
+          description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
         });
 
         return { success: true, alreadyMinted: true };
@@ -386,8 +388,8 @@ export function useMint() {
         });
 
         toast({
-          title: "Already Claimed",
-          description: "This transfer was already minted. Check your wallet for the USDC.",
+          title: ALREADY_CLAIMED_TOAST_TITLE,
+          description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
         });
 
         return { success: true, alreadyMinted: true };
@@ -580,8 +582,8 @@ function handleMintError(
       });
 
       toast({
-        title: info.title,
-        description: info.userMessage,
+        title: ALREADY_CLAIMED_TOAST_TITLE,
+        description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
       });
 
       return { success: true, alreadyMinted: true };
@@ -670,8 +672,8 @@ function handleSolanaMintError(
     });
 
     toast({
-      title: "Already Claimed",
-      description: "This transfer was already minted. Check your wallet for the USDC.",
+      title: ALREADY_CLAIMED_TOAST_TITLE,
+      description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
     });
 
     return { success: true, alreadyMinted: true };
@@ -710,8 +712,8 @@ function handleSolanaMintError(
       });
 
       toast({
-        title: "Already Claimed",
-        description: info.userMessage,
+        title: ALREADY_CLAIMED_TOAST_TITLE,
+        description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
       });
 
       return { success: true, alreadyMinted: true };

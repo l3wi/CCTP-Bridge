@@ -3,11 +3,26 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const { amount, meta } = await request.json();
+    const {
+      amount,
+      meta,
+      sourceWallet,
+      displayedRecipient,
+      submittedRecipient,
+      recipientResolution,
+      sourceChainId,
+      targetChainId,
+    } = await request.json();
 
     await track("bridge", {
       amount,
       meta,
+      sourceWallet,
+      displayedRecipient,
+      submittedRecipient,
+      recipientResolution,
+      sourceChainId,
+      targetChainId,
     });
 
     return NextResponse.json({ success: true });

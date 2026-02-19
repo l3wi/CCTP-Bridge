@@ -27,8 +27,10 @@ import {
   AmountState,
   LocalTransaction,
   ChainId,
+  UniversalTxHash,
   getChainType,
 } from "@/lib/types";
+import type { BridgeIntent } from "@/lib/bridgeIntent";
 import { useCrossEcosystemBridge } from "@/lib/hooks/useCrossEcosystemBridge";
 import { estimateBridgeFee } from "@/lib/cctp/estimate";
 import type { BridgeEstimate } from "@/lib/cctp/types";
@@ -45,26 +47,54 @@ import {
 import ConnectGuard from "@/components/guards/ConnectGuard";
 import SolanaConnectGuard from "@/components/guards/SolanaConnectGuard";
 import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
-import { TransferSpeed } from "@circle-fin/bridge-kit";
+import {
+  TransferSpeed,
+  type TransferSpeedValue,
+} from "@/lib/cctp/transferSpeed";
 import {
   getBridgeChainByIdUniversal,
   getCctpConfirmationsUniversal,
   resolveBridgeChainUniversal,
   getAllSupportedChains,
 } from "@/lib/bridgeKit";
+import {
+  resolveRecipientForBridgingState,
+  resolveRecipientForSend,
+} from "@/lib/recipientResolution";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
+
+// Prevent duplicate auto-submits for the same execute intent (e.g., StrictMode remounts).
+const executedIntentKeys = new Set<string>();
 
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
   loadedTransaction?: LocalTransaction | null;
   onBackToNew?: () => void;
+  mode?: "full" | "intentOnly" | "executeIntent";
+  initialIntent?: BridgeIntent | null;
+  onSubmitIntent?: (intent: BridgeSubmissionIntent) => void;
+  onPendingHashResolved?: (payload: {
+    sourceChainId: ChainId;
+    hash: UniversalTxHash;
+  }) => void;
+  onMessageExpiredNonce?: (payload: {
+    sourceChainId: ChainId;
+    nonce: string;
+  }) => void;
 }
+
+export type BridgeSubmissionIntent = BridgeIntent;
 
 export function BridgeCard({
   onBurn,
   loadedTransaction,
   onBackToNew,
+  mode = "full",
+  initialIntent,
+  onSubmitIntent,
+  onPendingHashResolved,
+  onMessageExpiredNonce,
 }: BridgeCardProps) {
   // Hooks
   const { address, chain } = useAccount();
@@ -72,9 +102,18 @@ export function BridgeCard({
   const chains = useChains();
   const { switchChain } = useSwitchChain();
   const { bridge, isLoading: isBridgeLoading } = useCrossEcosystemBridge();
-  const { usdcBalance: evmUsdcBalance, usdcFormatted: evmUsdcFormatted, isUsdcLoading: evmIsUsdcLoading } = useBalance();
+  const enableFormQueries = mode !== "executeIntent";
+  const {
+    usdcBalance: evmUsdcBalance,
+    usdcFormatted: evmUsdcFormatted,
+    isUsdcLoading: evmIsUsdcLoading,
+  } = useBalance({ enabled: enableFormQueries });
   const solanaWallet = useWallet();
-  const { usdcBalance: solanaUsdcBalance, usdcFormatted: solanaUsdcFormatted, isLoading: solanaIsUsdcLoading } = useSolanaBalance();
+  const {
+    usdcBalance: solanaUsdcBalance,
+    usdcFormatted: solanaUsdcFormatted,
+    isLoading: solanaIsUsdcLoading,
+  } = useSolanaBalance({ enabled: enableFormQueries });
 
   // State
   const [sourceChainId, setSourceChainId] = useState<ChainId | null>(
@@ -82,7 +121,7 @@ export function BridgeCard({
   );
   const [targetChainId, setTargetChainId] = useState<ChainId | null>(null);
   const [amount, setAmount] = useState<AmountState | null>(null);
-  const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeed>(
+  const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeedValue>(
     TransferSpeed.FAST
   );
   const [diffWallet, setDiffWallet] = useState(false);
@@ -95,6 +134,7 @@ export function BridgeCard({
   const [bridgeTargetChainId, setBridgeTargetChainId] = useState<ChainId | null>(null);
   const [bridgeStartedAt, setBridgeStartedAt] = useState<Date | null>(null);
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
+  const [submittedRecipientAddress, setSubmittedRecipientAddress] = useState<string | undefined>(undefined);
   const [loadedTransactionData, setLoadedTransactionData] = useState<{
     fromChain: { value: string; label: string };
     toChain: { value: string; label: string };
@@ -102,9 +142,15 @@ export function BridgeCard({
     recipient: string | null;
   } | null>(null);
   const [bridgeTransactionHash, setBridgeTransactionHash] = useState<
-    `0x${string}` | null
+    UniversalTxHash | null
   >(null);
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
+  const [intentHydrated, setIntentHydrated] = useState(false);
+  const [intentStarted, setIntentStarted] = useState(false);
+  const executeIntentKey = useMemo(
+    () => (initialIntent ? JSON.stringify(initialIntent) : null),
+    [initialIntent]
+  );
 
   // Determine target chain type early for validation
   const targetChainType = useMemo(
@@ -118,6 +164,23 @@ export function BridgeCard({
     diffWallet ? targetAddress : undefined,
     targetChainType
   );
+
+  const parseAmountToState = useCallback((input: string): AmountState | null => {
+    const cleanStr = input.replace(/[^0-9.]/g, "").trim();
+    if (!cleanStr) return null;
+
+    const [integerPart, decimalPart = ""] = cleanStr.split(".");
+    const paddedDecimal = decimalPart.padEnd(6, "0").slice(0, 6);
+
+    try {
+      return {
+        str: cleanStr,
+        bigInt: BigInt(`${integerPart}${paddedDecimal}`),
+      };
+    } catch {
+      return null;
+    }
+  }, []);
 
   type ChainOption = {
     value: string;
@@ -271,6 +334,20 @@ export function BridgeCard({
     return targetChainType === "evm" ? address : solanaWallet.publicKey?.toBase58();
   }, [isCrossEcosystem, targetChainType, address, solanaWallet.publicKey]);
 
+  // Destination address used for validation when recipient is auto-derived
+  const validationTargetAddress = useMemo(() => {
+    if (isCrossEcosystem && crossEcosystemTargetAddress) {
+      return crossEcosystemTargetAddress;
+    }
+    return targetAddress;
+  }, [isCrossEcosystem, crossEcosystemTargetAddress, targetAddress]);
+
+  // Default destination wallet for non-custom recipient flows
+  const defaultTargetWalletAddress = useMemo(
+    () => (targetChainType === "solana" ? solanaWallet.publicKey?.toBase58() : address),
+    [targetChainType, solanaWallet.publicKey, address]
+  );
+
   const fastTransferSupported = useMemo(() => {
     if (!activeSourceChainId) return false;
     // Fast transfer supported for any source chain that has fast confirmations
@@ -366,18 +443,25 @@ export function BridgeCard({
 
   // Auto-set address input for cross-ecosystem bridging
   useEffect(() => {
-    if (isCrossEcosystem) {
-      // Force diffWallet mode for cross-ecosystem and pre-fill with target ecosystem wallet
-      setDiffWallet(true);
-      if (crossEcosystemTargetAddress) {
-        setTargetAddress(crossEcosystemTargetAddress);
-      }
-    } else {
-      // Reset to default for same-ecosystem bridging
-      setDiffWallet(false);
-      setTargetAddress(undefined);
+    if (mode === "executeIntent" && initialIntent) {
+      return;
     }
-  }, [isCrossEcosystem, crossEcosystemTargetAddress]);
+
+    if (isCrossEcosystem) {
+      // Force custom-recipient mode for cross-ecosystem
+      setDiffWallet(true);
+
+      // Keep recipient derived from live connected target wallet instead of mutable local state
+      if (crossEcosystemTargetAddress) {
+        setTargetAddress(undefined);
+      }
+      return;
+    }
+
+    // Reset to default for same-ecosystem bridging
+    setDiffWallet(false);
+    setTargetAddress(undefined);
+  }, [mode, initialIntent, isCrossEcosystem, crossEcosystemTargetAddress]);
 
   // Handle amount change with validation
   const handleAmountChange = useCallback(
@@ -457,9 +541,9 @@ export function BridgeCard({
         targetChain: targetChain?.id || targetChainId || null,
         sourceChain: activeSourceChainId ?? undefined,
         balance: usdcBalance,
-        userAddress: address,
+        userAddress: defaultTargetWalletAddress,
         isCustomAddress: diffWallet,
-        targetAddress,
+        targetAddress: validationTargetAddress,
         targetChainType: targetChainType ?? undefined,
       }),
     [
@@ -468,9 +552,9 @@ export function BridgeCard({
       targetChainId,
       activeSourceChainId,
       usdcBalance,
-      address,
+      defaultTargetWalletAddress,
       diffWallet,
-      targetAddress,
+      validationTargetAddress,
       targetChainType,
     ]
   );
@@ -512,7 +596,7 @@ export function BridgeCard({
     targetChainId != null;
 
   const estimateBridge = useCallback(
-    async (transferSpeed: TransferSpeed): Promise<BridgeEstimate> => {
+    async (transferSpeed: TransferSpeedValue): Promise<BridgeEstimate> => {
       const sourceId = sourceChainId ?? chain?.id;
       const targetId = targetChainId;
 
@@ -544,7 +628,7 @@ export function BridgeCard({
       "standard",
     ],
     queryFn: () => estimateBridge(TransferSpeed.SLOW),
-    enabled: canEstimate,
+    enabled: canEstimate && enableFormQueries,
     staleTime: 300_000,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
@@ -564,7 +648,7 @@ export function BridgeCard({
       "fast",
     ],
     queryFn: () => estimateBridge(TransferSpeed.FAST),
-    enabled: canEstimate && fastTransferSupported,
+    enabled: canEstimate && fastTransferSupported && enableFormQueries,
     staleTime: 300_000,
     retry: 3,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10000),
@@ -602,7 +686,7 @@ export function BridgeCard({
   );
 
   const getTransferSpeedLabel = useCallback(
-    (speed: TransferSpeed) => {
+    (speed: TransferSpeedValue) => {
       const sourceChain =
         activeSourceChainId != null
           ? getBridgeChainByIdUniversal(activeSourceChainId)
@@ -631,7 +715,7 @@ export function BridgeCard({
   );
 
   const getEtaLabel = useCallback(
-    (speed: TransferSpeed, override?: string | null) =>
+    (speed: TransferSpeedValue, override?: string | null) =>
       override || (speed === TransferSpeed.FAST ? "~1 minute" : "13-19 minutes"),
     []
   );
@@ -669,12 +753,17 @@ export function BridgeCard({
   };
 
   const handleSend = useCallback(
-    async (transferSpeed: TransferSpeed) => {
+    async (transferSpeed: TransferSpeedValue): Promise<boolean> => {
       const selectedSourceId = sourceChainId ?? chain?.id ?? null;
+      const selectedSourceType = selectedSourceId
+        ? getChainType(selectedSourceId)
+        : "evm";
+      const hasSourceWallet =
+        selectedSourceType === "solana" ? solanaWallet.connected : !!chain;
 
       if (
         !selectedSourceId ||
-        !chain ||
+        !hasSourceWallet ||
         !isSourceChainSynced
       ) {
         toast({
@@ -684,7 +773,7 @@ export function BridgeCard({
           } to bridge.`,
           variant: "destructive",
         });
-        return;
+        return false;
       }
 
       if (
@@ -693,25 +782,73 @@ export function BridgeCard({
         !targetChainId ||
         !amount
       ) {
-        return;
+        return false;
       }
 
+      const senderAddress = selectedSourceType === "solana"
+        ? solanaWallet.publicKey?.toBase58()
+        : address;
+
+      // Lock recipient at click time using a single source of truth.
+      // This prevents stale state from diverging from connected wallet state.
+      const resolvedRecipient = resolveRecipientForSend({
+        isCrossEcosystem,
+        diffWallet,
+        crossEcosystemTargetAddress,
+        validationTargetAddress,
+        targetAddress,
+        defaultTargetWalletAddress,
+        senderAddress,
+      });
+      const finalTargetAddress = resolvedRecipient.finalTargetAddress;
+      const displayedRecipient = resolvedRecipient.displayedRecipient;
+      const recipientResolution = resolvedRecipient.recipientResolution;
+
+      if (!finalTargetAddress) {
+        toast({
+          title: "Missing recipient",
+          description: "Destination wallet address is required.",
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      let sourceBridgeDefinition: ChainDefinition;
+      let targetBridgeDefinition: ChainDefinition;
       try {
-        resolveBridgeChainUniversal(selectedSourceId);
-        resolveBridgeChainUniversal(targetChainId);
+        sourceBridgeDefinition = resolveBridgeChainUniversal(
+          selectedSourceId
+        ) as unknown as ChainDefinition;
+        targetBridgeDefinition = resolveBridgeChainUniversal(
+          targetChainId
+        ) as unknown as ChainDefinition;
       } catch (error) {
         toast({
           title: "Unsupported chain",
           description: getErrorMessage(error),
           variant: "destructive",
         });
-        return;
+        return false;
+      }
+
+      const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
+
+      if (mode === "intentOnly") {
+        onSubmitIntent?.({
+          sourceChainId: selectedSourceId,
+          targetChainId,
+          amount: amount.str,
+          targetAddress: finalTargetAddress,
+          transferType,
+        });
+        return true;
       }
 
       setIsLoading(true);
       setActiveTransferSpeed(transferSpeed);
       setBridgeResult(null);
       setBridgeStartedAt(new Date());
+      setSubmittedRecipientAddress(finalTargetAddress);
       const resolvedSourceChain =
         chainOptionById.get(selectedSourceId)?.chain || chain || null;
       setBridgeSourceChain(resolvedSourceChain);
@@ -723,18 +860,57 @@ export function BridgeCard({
         setBridgeTargetChain(targetOption.chain);
       }
 
-      let pendingHash: string | null = null;
-      try {
-        const transferType = transferSpeed === TransferSpeed.FAST ? "fast" : "standard";
-        // Use custom address if specified, otherwise use connected wallet
-        // For Solana source, use Solana address; for EVM source, use EVM address
-        const senderAddress = sourceChainType === "solana"
-          ? solanaWallet.publicKey?.toBase58()
-          : address;
-        const finalTargetAddress = diffWallet && validation.data.targetAddress
-          ? validation.data.targetAddress
-          : senderAddress;
+      if (mode === "executeIntent") {
+        const pendingSteps =
+          selectedSourceType === "evm"
+            ? [
+                { name: "Approve", state: "pending" as const },
+                { name: "Burn", state: "pending" as const },
+                { name: "Fetch Attestation", state: "pending" as const },
+                { name: "Mint", state: "pending" as const },
+              ]
+            : [
+                { name: "Burn", state: "pending" as const },
+                { name: "Fetch Attestation", state: "pending" as const },
+                { name: "Mint", state: "pending" as const },
+              ];
 
+        setIsBridging(true);
+        setBridgeResult({
+          amount: amount.str,
+          token: "USDC",
+          state: "pending",
+          provider: "CCTPV2BridgingProvider",
+          source: {
+            address: senderAddress ?? "",
+            chain: sourceBridgeDefinition,
+          },
+          destination: {
+            address: finalTargetAddress,
+            chain: targetBridgeDefinition,
+          },
+          steps: pendingSteps,
+        });
+      }
+
+      let pendingHash: UniversalTxHash | null = null;
+      let pendingHashNotified = false;
+
+      const emitPendingHash = (hash: UniversalTxHash) => {
+        pendingHash = hash;
+        setBridgeTransactionHash(hash);
+        setIsBridging(true);
+
+        if (!pendingHashNotified) {
+          pendingHashNotified = true;
+          onPendingHashResolved?.({
+            sourceChainId: selectedSourceId,
+            hash,
+          });
+        }
+      };
+
+      try {
         const result = await bridge(
           {
             amount: validation.data.amount,
@@ -749,9 +925,7 @@ export function BridgeCard({
               setIsBridging(true);
             },
             onPendingHash: (hash) => {
-              pendingHash = hash;
-              setBridgeTransactionHash(hash as `0x${string}`);
-              setIsBridging(true);
+              emitPendingHash(hash);
             },
             onStateChange: (next) => {
               setIsBridging(true);
@@ -769,13 +943,13 @@ export function BridgeCard({
                     next.source ??
                     prev?.source ?? {
                       address: senderAddress ?? "",
-                      chain: resolveBridgeChainUniversal(selectedSourceId) as unknown as ChainDefinition,
+                      chain: sourceBridgeDefinition,
                     },
                   destination:
                     next.destination ??
                     prev?.destination ?? {
-                      address: finalTargetAddress ?? "",
-                      chain: resolveBridgeChainUniversal(targetChainId) as unknown as ChainDefinition,
+                      address: finalTargetAddress,
+                      chain: targetBridgeDefinition,
                     },
                   steps: mergedSteps,
                 };
@@ -786,26 +960,49 @@ export function BridgeCard({
                 next.steps?.[0]?.txHash ||
                 null;
               if (txHashFromStep && !bridgeTransactionHash) {
-                setBridgeTransactionHash(txHashFromStep as `0x${string}`);
+                setBridgeTransactionHash(txHashFromStep as UniversalTxHash);
               }
             },
           }
         );
 
-        const primaryHash = result.steps.find((step) => step.txHash)?.txHash;
+        const primaryHash = result.steps.find((step) => step.txHash)?.txHash as
+          | UniversalTxHash
+          | undefined;
 
-        setBridgeTransactionHash(
-          (primaryHash as `0x${string}` | undefined) || pendingHash
-        );
+        if (primaryHash) {
+          emitPendingHash(primaryHash);
+        }
+
+        setBridgeTransactionHash(primaryHash || pendingHash);
 
         setBridgeResult(result);
 
         setIsLoading(false);
         setIsBridging(true);
 
+        // Server-side analytics
+        const roundedAmount = Math.round(Number(amount.str));
+        const txType = transferType === "fast" ? 1 : 0;
+        fetch("/api/meta", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            amount: roundedAmount,
+            meta: `${roundedAmount},${selectedSourceId},${targetChainId},${txType}`,
+            sourceWallet: senderAddress,
+            displayedRecipient,
+            submittedRecipient: finalTargetAddress,
+            recipientResolution,
+            sourceChainId: String(selectedSourceId),
+            targetChainId: String(targetChainId),
+          }),
+        }).catch(() => {});
+
         if (onBurn) {
           onBurn(true);
         }
+        return true;
       } catch (error) {
         console.error("Bridge transaction failed:", error);
         setIsLoading(false);
@@ -816,30 +1013,44 @@ export function BridgeCard({
           description: getErrorMessage(error),
           variant: "destructive",
         });
+        return false;
       }
     },
     [
       validation,
       chain,
-      targetChain,
       amount,
       bridge,
       onBurn,
+      mode,
+      onSubmitIntent,
+      onPendingHashResolved,
       toast,
       isSourceChainSynced,
       selectedSourceChain,
       chainOptionById,
       sourceChainId,
+      targetChainId,
       address,
       bridgeTransactionHash,
       diffWallet,
+      solanaWallet.publicKey,
+      solanaWallet.connected,
+      isCrossEcosystem,
+      crossEcosystemTargetAddress,
+      targetAddress,
+      defaultTargetWalletAddress,
     ]
   );
 
   const handleBackToNew = () => {
+    if (executeIntentKey) {
+      executedIntentKeys.delete(executeIntentKey);
+    }
     setIsBridging(false);
     setIsLoading(false);
     setLoadedTransactionData(null);
+    setSubmittedRecipientAddress(undefined);
     setBridgeTransactionHash(null); // Reset bridge transaction hash
     setBridgeResult(null);
     setBridgeStartedAt(null);
@@ -898,6 +1109,81 @@ export function BridgeCard({
     }
   }, [loadedTransaction, chainOptionById]);
 
+  useEffect(() => {
+    if (mode !== "executeIntent" || !initialIntent || intentHydrated) {
+      return;
+    }
+
+    const parsedAmount = parseAmountToState(initialIntent.amount);
+
+    setSourceChainId(initialIntent.sourceChainId);
+    userChangedSourceRef.current = true;
+    setTargetChainId(initialIntent.targetChainId);
+    setAmount(parsedAmount);
+    setTargetAddress(initialIntent.targetAddress);
+    setDiffWallet(true);
+    setActiveTransferSpeed(
+      initialIntent.transferType === "fast"
+        ? TransferSpeed.FAST
+        : TransferSpeed.SLOW
+    );
+    setIntentHydrated(true);
+    setIntentStarted(false);
+  }, [mode, initialIntent, intentHydrated, parseAmountToState]);
+
+  useEffect(() => {
+    if (mode !== "executeIntent" || !initialIntent) {
+      return;
+    }
+
+    if (!intentHydrated || intentStarted) {
+      return;
+    }
+
+    if (sourceChainId !== initialIntent.sourceChainId) {
+      return;
+    }
+
+    if (targetChainId !== initialIntent.targetChainId) {
+      return;
+    }
+
+    if (amount?.str !== initialIntent.amount) {
+      return;
+    }
+
+    const speed =
+      initialIntent.transferType === "fast"
+        ? TransferSpeed.FAST
+        : TransferSpeed.SLOW;
+
+    if (!executeIntentKey) {
+      return;
+    }
+
+    if (executedIntentKeys.has(executeIntentKey)) {
+      return;
+    }
+
+    executedIntentKeys.add(executeIntentKey);
+    setIntentStarted(true);
+
+    void (async () => {
+      const didStart = await handleSend(speed);
+      setIntentStarted(didStart);
+    })();
+  }, [
+    mode,
+    initialIntent,
+    executeIntentKey,
+    intentHydrated,
+    intentStarted,
+    sourceChainId,
+    targetChainId,
+    amount?.str,
+    handleSend,
+  ]);
+
   // Loading states
   const showChainLoader = !chainOptions.length; // Only show loader when chains haven't loaded
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
@@ -906,7 +1192,7 @@ export function BridgeCard({
   // Helper to get estimate labels for a given speed
   const getEstimateLabels = useCallback(
     (
-      speed: TransferSpeed,
+      speed: TransferSpeedValue,
       estimate: BridgeEstimate | null | undefined,
       isEstimating: boolean
     ) => {
@@ -962,10 +1248,14 @@ export function BridgeCard({
     const isStandardSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.SLOW;
 
     // Show "Enter Address" when bridging from Solana without EVM wallet connected
-    const needsDestinationAddress = sourceChainType === "solana" && isCrossEcosystem && !crossEcosystemTargetAddress && !targetAddress;
+    const needsDestinationAddress =
+      sourceChainType === "solana" &&
+      isCrossEcosystem &&
+      !crossEcosystemTargetAddress &&
+      !validationTargetAddress;
     const validationMessage = validation.isValid ? null : (needsDestinationAddress ? "Enter Address" : validation.errors[0] || "Complete the form");
 
-    const renderButton = (speed: TransferSpeed, isPrimary: boolean) => {
+    const renderButton = (speed: TransferSpeedValue, isPrimary: boolean) => {
       const isSubmitting = speed === TransferSpeed.FAST ? isFastSubmitting : isStandardSubmitting;
       const buttonText = validationMessage || (speed === TransferSpeed.FAST ? "Bridge Fast" : "Bridge Standard");
       const buttonClass = isPrimary
@@ -990,7 +1280,7 @@ export function BridgeCard({
       );
     };
 
-    const renderMobileCard = (speed: TransferSpeed, labels: typeof fastLabels, isPrimary: boolean) => (
+    const renderMobileCard = (speed: TransferSpeedValue, labels: typeof fastLabels, isPrimary: boolean) => (
       <div className={`rounded-lg p-3 ${isPrimary ? "bg-slate-900/30" : "bg-slate-800/20"}`}>
         <h3 className="text-white text-base font-semibold mb-3">
           {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
@@ -1145,27 +1435,45 @@ export function BridgeCard({
               : TransferSpeed.SLOW,
             loadedTransaction.estimatedTime
           )}
+          onMessageExpiredNonce={(nonce) => {
+            onMessageExpiredNonce?.({
+              sourceChainId: loadedTransaction.originChain,
+              nonce,
+            });
+          }}
         />
       );
-    } else if ((bridgeTargetChain || bridgeTargetChainId || targetChain) && amount && bridgeTransactionHash) {
-      const sourceId = bridgeSourceChain?.id ?? chain?.id ?? sourceChainId ?? null;
+    } else if (
+      (bridgeTargetChain || bridgeTargetChainId || targetChain) &&
+      amount &&
+      (bridgeTransactionHash || bridgeResult || mode === "executeIntent")
+    ) {
+      const sourceId = sourceChainId ?? bridgeSourceChain?.id ?? chain?.id ?? null;
       // Use bridgeTargetChainId for Solana destinations (where bridgeTargetChain is null)
       const targetId = bridgeTargetChainId ?? bridgeTargetChain?.id ?? targetChain?.id ?? targetChainId ?? null;
 
+      const sourceChainOption = sourceId != null
+        ? chainOptionById.get(sourceId as ChainId)
+        : null;
       // Get target chain label from chainOptionById (works for both EVM and Solana)
       const targetChainOption = targetId != null ? chainOptionById.get(targetId) : null;
 
       const fromChain = {
         value: sourceId != null ? sourceId.toString() : "",
-        label: bridgeSourceChain?.name || chain?.name || "Source",
+        label: sourceChainOption?.label || bridgeSourceChain?.name || chain?.name || "Source",
       };
       const toChain = {
         value: targetId != null ? targetId.toString() : "",
         label: targetChainOption?.label || bridgeTargetChain?.name || targetChain?.name || "Destination",
       };
 
-      const recipientAddressValue = (diffWallet && targetAddress) ? targetAddress : (address ?? undefined);
-      const sourceChainIdForResult = sourceId ?? (fromChain.value ? Number(fromChain.value) : undefined);
+      const recipientAddressValue = resolveRecipientForBridgingState({
+        submittedRecipientAddress,
+        diffWallet,
+        validationTargetAddress,
+        defaultTargetWalletAddress,
+      });
+      const sourceChainIdForResult = sourceId ?? undefined;
       // Use targetId directly - it's already the correct ChainId type (number for EVM, string for Solana)
       const targetChainIdForResult = targetId ?? undefined;
 
@@ -1214,14 +1522,79 @@ export function BridgeCard({
             }
             return undefined;
           })()}
+          onMessageExpiredNonce={(nonce) => {
+            if (!sourceChainIdForResult) return;
+            onMessageExpiredNonce?.({
+              sourceChainId: sourceChainIdForResult,
+              nonce,
+            });
+          }}
         />
+      );
+    } else if (mode === "executeIntent") {
+      return (
+        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+          <CardContent className="p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+              <h2 className="text-lg font-semibold">Submitting Burn Transaction</h2>
+            </div>
+            <p className="text-sm text-slate-400">
+              Approval and burn are in progress. You will be redirected to a shareable bridge URL once the burn hash is available.
+            </p>
+            <div>
+              <LoadingButton
+                variant="outline"
+                className="border-slate-600 text-slate-300 hover:bg-slate-700 bg-transparent"
+                onClick={handleBackToNew}
+                isLoading={false}
+              >
+                Cancel
+              </LoadingButton>
+            </div>
+          </CardContent>
+        </Card>
       );
     }
   }
 
+  if (mode === "executeIntent" && !bridgeTransactionHash && !loadedTransactionData) {
+    const isSubmitting = isLoading || isBridgeLoading || intentStarted;
+
+    return (
+      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6 space-y-4">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+            <h2 className="text-lg font-semibold">
+              {isSubmitting
+                ? "Preparing Bridge Transaction"
+                : "Waiting for Bridge Request"}
+            </h2>
+          </div>
+          <p className="text-sm text-slate-400">
+            {isSubmitting
+              ? "Waiting for wallet confirmations before submitting burn transaction."
+              : "Bridge request data is being initialized."}
+          </p>
+          <div>
+            <LoadingButton
+              variant="outline"
+              className="border-slate-600 text-slate-300 hover:bg-slate-700 bg-transparent"
+              onClick={handleBackToNew}
+              isLoading={false}
+            >
+              Cancel
+            </LoadingButton>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <>
-      <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+      <Card className="min-h-[520px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
         <CardContent className="p-4 md:p-6 space-y-4">
           {/* Chain Selectors */}
           <div className="flex items-center gap-3 md:flex-row flex-col">
@@ -1408,7 +1781,7 @@ export function BridgeCard({
                     onCheckedChange={(checked) => {
                       if (checked) {
                         setDiffWallet(true);
-                        setTargetAddress(address);
+                        setTargetAddress(defaultTargetWalletAddress);
                       } else {
                         setDiffWallet(false);
                         setTargetAddress(undefined);

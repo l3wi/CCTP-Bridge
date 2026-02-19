@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { usePublicClient } from "wagmi";
+import { useWalletClient } from "wagmi";
 import { ChainId, isSolanaChain } from "@/lib/types";
 import { createSolanaConnection } from "@/lib/solanaAdapter";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
 
 // Polling configuration
 const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
@@ -40,7 +41,11 @@ export function useBurnPolling({
   onBurnFailed,
   disabled = false,
 }: UseBurnPollingParams) {
-  const publicClient = usePublicClient();
+  const { data: walletClient } = useWalletClient();
+  const evmPublicClient = useMemo(() => {
+    if (!sourceChainId || isSolanaChain(sourceChainId)) return null;
+    return createEvmPublicClient(sourceChainId, { walletClient });
+  }, [sourceChainId, walletClient]);
 
   const [state, setState] = useState<BurnPollingState>({
     confirmed: false,
@@ -87,13 +92,13 @@ export function useBurnPolling({
 
   // EVM burn polling
   const checkEvmBurn = useCallback(async () => {
-    if (!burnTxHash || !publicClient || isSolanaChain(sourceChainId!)) return;
+    if (!burnTxHash || !evmPublicClient || isSolanaChain(sourceChainId!)) return;
     if (!isMountedRef.current) return;
 
     setState((prev) => ({ ...prev, checking: true }));
 
     try {
-      const receipt = await publicClient.getTransactionReceipt({
+      const receipt = await evmPublicClient.getTransactionReceipt({
         hash: burnTxHash as `0x${string}`,
       });
 
@@ -136,7 +141,7 @@ export function useBurnPolling({
         lastChecked: new Date(),
       }));
     }
-  }, [burnTxHash, publicClient, sourceChainId]);
+  }, [burnTxHash, evmPublicClient, sourceChainId]);
 
   // Solana burn polling
   const checkSolanaBurn = useCallback(async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, X } from "lucide-react";
@@ -23,7 +23,31 @@ import { BridgeInfo } from "./bridge-info";
 import { ProgressSpinner } from "./progress-spinner";
 import type { BridgingStateProps, BridgeResultWithMeta, ChainDisplay } from "./types";
 
-const CLAIMED_MESSAGE = "USDC claimed. Check your wallet for the USDC";
+const CLAIMED_MESSAGE = "success - check wallet";
+
+const getBridgeResultSyncKey = (
+  result: BridgeResultWithMeta | BridgeResult | undefined
+): string => {
+  if (!result) return "none";
+
+  const stepsKey = (result.steps ?? [])
+    .map(
+      (step) =>
+        `${step.name}:${step.state}:${step.txHash ?? ""}:${step.errorMessage ?? ""}:${String(
+          step.error ?? ""
+        )}`
+    )
+    .join("|");
+
+  return [
+    result.state,
+    result.amount,
+    result.provider,
+    result.source?.address ?? "",
+    result.destination?.address ?? "",
+    stepsKey,
+  ].join("::");
+};
 
 export function BridgingState({
   fromChain,
@@ -38,6 +62,7 @@ export function BridgingState({
   estimatedTimeLabel,
   finalityEstimate,
   onBridgeResultUpdate,
+  onMessageExpiredNonce,
 }: BridgingStateProps) {
   const { chain } = useAccount();
   const { isPending: isSwitchingChain } = useSwitchChain();
@@ -49,11 +74,26 @@ export function BridgingState({
   const [localBridgeResult, setLocalBridgeResult] = useState<BridgeResultWithMeta | undefined>(bridgeResult);
   const [burnCompletedAt, setBurnCompletedAt] = useState<Date | null>(null);
   const [mintCompletedAt, setMintCompletedAt] = useState<Date | null>(null);
+  const lastSyncedBridgeResultKeyRef = useRef<string>(
+    getBridgeResultSyncKey(bridgeResult)
+  );
+  const lastPersistedSuccessKeyRef = useRef<string | null>(null);
+  const lastParentSyncKeyRef = useRef<string | null>(null);
+
+  const incomingBridgeResultKey = useMemo(
+    () => getBridgeResultSyncKey(bridgeResult),
+    [bridgeResult]
+  );
 
   // Sync prop to local state
   useEffect(() => {
+    if (lastSyncedBridgeResultKeyRef.current === incomingBridgeResultKey) {
+      return;
+    }
+
+    lastSyncedBridgeResultKeyRef.current = incomingBridgeResultKey;
     setLocalBridgeResult(bridgeResult);
-  }, [bridgeResult]);
+  }, [bridgeResult, incomingBridgeResultKey]);
 
   const baseResult = localBridgeResult ?? bridgeResult;
 
@@ -243,7 +283,8 @@ export function BridgingState({
 
   const handleMessageExpired = useCallback((nonce: string) => {
     setMessageExpired(nonce);
-  }, [setMessageExpired]);
+    onMessageExpiredNonce?.(nonce);
+  }, [setMessageExpired, onMessageExpiredNonce]);
 
   const { handleClaim, isClaiming } = useClaimHandler({
     destinationChainId,
@@ -281,6 +322,14 @@ export function BridgingState({
       const burnHash = asTxHash(burnTxHash);
       const mintHash = displayResult.steps.find((s) => /mint|claim|receive/i.test(s.name))?.txHash;
       if (burnHash) {
+        const persistKey = `${burnHash}:${getBridgeResultSyncKey(displayResult)}:${mintHash ?? ""}:${
+          mintCompletedAt?.toISOString() ?? ""
+        }`;
+        if (lastPersistedSuccessKeyRef.current === persistKey) {
+          return;
+        }
+        lastPersistedSuccessKeyRef.current = persistKey;
+
         updateTransaction(burnHash, {
           bridgeResult: displayResult,
           bridgeState: "success",
@@ -301,6 +350,13 @@ export function BridgingState({
       baseResult.state !== displayResult.state &&
       onBridgeResultUpdate
     ) {
+      const syncKey = `${baseResult.state}->${displayResult.state}:${getBridgeResultSyncKey(
+        displayResult
+      )}`;
+      if (lastParentSyncKeyRef.current === syncKey) {
+        return;
+      }
+      lastParentSyncKeyRef.current = syncKey;
       onBridgeResultUpdate(displayResult);
     }
   }, [baseResult, displayResult, onBridgeResultUpdate]);

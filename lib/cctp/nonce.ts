@@ -3,9 +3,13 @@
  * Consolidates EVM and Solana nonce verification into a single interface.
  */
 
-import { createPublicClient, keccak256, encodePacked } from "viem";
-import { Connection, PublicKey } from "@solana/web3.js";
-import { getSupportedEvmChains, getSolanaRpcEndpoint, BRIDGEKIT_ENV } from "../bridgeKit";
+import { keccak256, encodePacked } from "viem";
+import { PublicKey } from "@solana/web3.js";
+import {
+  resolveBridgeChain,
+  BRIDGEKIT_ENV,
+} from "../bridgeKit";
+import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
 import type { ChainId, SolanaChainId, NonceCheckResult } from "./types";
 import { isSolanaChain } from "./types";
 
@@ -89,8 +93,12 @@ export function extractSourceDomainFromMessage(message: `0x${string}`): number {
  * Get MessageTransmitter address for an EVM chain.
  */
 function getMessageTransmitterAddress(chainId: number): `0x${string}` | null {
-  const chains = getSupportedEvmChains(BRIDGEKIT_ENV);
-  const chain = chains.find((c) => c.chainId === chainId);
+  let chain;
+  try {
+    chain = resolveBridgeChain(chainId, BRIDGEKIT_ENV);
+  } catch {
+    return null;
+  }
 
   if (!chain?.cctp?.contracts) return null;
 
@@ -108,17 +116,7 @@ function getMessageTransmitterAddress(chainId: number): `0x${string}` | null {
  * Create a public client for an EVM chain.
  */
 function createEvmClient(chainId: number) {
-  const chains = getSupportedEvmChains(BRIDGEKIT_ENV);
-  const chain = chains.find((c) => c.chainId === chainId);
-  if (!chain) throw new Error(`Unsupported EVM chain: ${chainId}`);
-
-  const rpcUrl = chain.rpcEndpoints?.[0] ?? chain.rpcUrls?.default?.http?.[0];
-  if (!rpcUrl) throw new Error(`No RPC URL for chain ${chainId}`);
-
-  const { http } = require("viem");
-  return createPublicClient({
-    transport: http(rpcUrl),
-  });
+  return createEvmPublicClient(chainId);
 }
 
 /**
@@ -187,8 +185,7 @@ async function checkSolanaNonceUsed(
   nonce: `0x${string}`
 ): Promise<NonceCheckResult> {
   try {
-    const endpoint = getSolanaRpcEndpoint(destinationChainId);
-    const connection = new Connection(endpoint, "confirmed");
+    const connection = createSolanaConnection(destinationChainId, "confirmed");
 
     const usedNoncePda = deriveUsedNoncePda(nonce);
     const accountInfo = await connection.getAccountInfo(usedNoncePda);

@@ -1,13 +1,7 @@
-import { createAdapterFromProvider } from "@circle-fin/adapter-solana";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
-import type { BridgeParams } from "@circle-fin/bridge-kit";
-import type { Adapter } from "@solana/wallet-adapter-base";
 import { getSolanaRpcEndpoint, BRIDGEKIT_ENV } from "./bridgeKit";
 import type { SolanaChainId } from "./types";
-
-// Bridge Kit adapter type (extracted from BridgeParams)
-type BridgeKitAdapter = BridgeParams["from"]["adapter"];
 
 // USDC token mint addresses on Solana
 const USDC_MINT: Record<SolanaChainId, string> = {
@@ -15,88 +9,6 @@ const USDC_MINT: Record<SolanaChainId, string> = {
   Solana_Devnet: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", // Devnet
 };
 
-// Type for raw browser wallet providers (Phantom, Solflare, etc.)
-interface SolanaWalletProvider {
-  isConnected: boolean;
-  publicKey: PublicKey | null;
-  connect(): Promise<{ publicKey: PublicKey }>;
-  disconnect(): Promise<void>;
-  signTransaction<T>(transaction: T): Promise<T>;
-  signAllTransactions<T>(transactions: T[]): Promise<T[]>;
-  signMessage?(message: Uint8Array): Promise<{ signature: Uint8Array }>;
-}
-
-// Extend Window to include wallet providers
-declare global {
-  interface Window {
-    phantom?: { solana?: SolanaWalletProvider };
-    solflare?: SolanaWalletProvider;
-    solana?: SolanaWalletProvider;
-    backpack?: { solana?: SolanaWalletProvider };
-  }
-}
-
-/**
- * Get the raw browser wallet provider based on the wallet adapter name.
- * Circle's SDK expects the raw provider (window.solana, window.phantom.solana, etc.),
- * NOT the @solana/wallet-adapter-react adapter.
- */
-const getRawWalletProvider = (walletName: string): SolanaWalletProvider | undefined => {
-  if (typeof window === "undefined") return undefined;
-
-  // Check specific wallet providers based on name
-  switch (walletName.toLowerCase()) {
-    case "phantom":
-      return window.phantom?.solana;
-    case "solflare":
-      return window.solflare;
-    case "backpack":
-      return window.backpack?.solana;
-    default:
-      // Fallback to generic window.solana (standard interface)
-      return window.solana;
-  }
-};
-
-/**
- * Create a Bridge Kit adapter from a Solana wallet adapter
- * @param walletAdapter - The connected Solana wallet adapter (e.g., from useWallet().wallet?.adapter)
- * @param chainId - Optional chain ID for RPC endpoint selection (defaults based on BRIDGEKIT_ENV)
- *
- * Note: Circle's SDK expects the raw browser wallet provider (window.solana, etc.),
- * not the @solana/wallet-adapter-react adapter. This function finds the correct provider.
- */
-export const createSolanaAdapter = async (
-  walletAdapter: Adapter,
-  chainId?: SolanaChainId
-): Promise<BridgeKitAdapter> => {
-  // Get the raw wallet provider from window based on wallet name
-  const provider = getRawWalletProvider(walletAdapter.name);
-
-  if (!provider) {
-    throw new Error(
-      `Could not find wallet provider for ${walletAdapter.name}. ` +
-      `Make sure the wallet extension is installed and the page has been refreshed.`
-    );
-  }
-
-  if (!provider.isConnected) {
-    throw new Error(
-      `Wallet ${walletAdapter.name} is not connected. Please connect your wallet first.`
-    );
-  }
-
-  // Create connection with our configured RPC endpoint to override SDK defaults
-  const resolvedChainId = chainId ?? (BRIDGEKIT_ENV === "mainnet" ? "Solana" : "Solana_Devnet");
-  const connection = createSolanaConnection(resolvedChainId);
-
-  const bridgeAdapter = await createAdapterFromProvider({
-    provider: provider as Parameters<typeof createAdapterFromProvider>[0]["provider"],
-    connection,
-  });
-
-  return bridgeAdapter as BridgeKitAdapter;
-};
 
 /**
  * Get the USDC balance for a Solana account

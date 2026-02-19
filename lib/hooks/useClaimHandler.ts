@@ -75,7 +75,7 @@ export function useClaimHandler({
             state: "success" as const,
             txHash: mintTxHash,
             errorMessage: alreadyMinted
-              ? "USDC claimed. Check your wallet for the USDC"
+              ? "success - check wallet"
               : undefined,
           };
         }
@@ -89,7 +89,7 @@ export function useClaimHandler({
           state: "success",
           txHash: mintTxHash,
           errorMessage: alreadyMinted
-            ? "USDC claimed. Check your wallet for the USDC"
+            ? "success - check wallet"
             : undefined,
         });
       }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -23,6 +24,7 @@ import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { PublicKey } from "@solana/web3.js";
 import { LocalTransaction, type UniversalTxHash, type ChainId, isValidTxHash, isValidEvmTxHash, isSolanaChain, getChainType } from "@/lib/types";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { buildBridgeRoute, getTransactionShareId } from "@/lib/bridgeRoute";
 import { ChainIcon } from "@/components/chain-icon";
 import { getExplorerTxUrlUniversal, getAllSupportedChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal, type UniversalChainDefinition } from "@/lib/bridgeKit";
 import { fetchAttestationUniversal } from "@/lib/iris";
@@ -47,6 +49,7 @@ export function HistoryModal({
   const [isOpen, setIsOpen] = useState(open || false);
   const [view, setView] = useState<ModalView>("history");
   const { transactions, updateTransaction, addTransaction, removeTransaction } = useTransactionStore();
+  const router = useRouter();
   const chains = useChains();
   const { address: evmAddress } = useAccount();
   const solanaWallet = useWallet();
@@ -80,7 +83,13 @@ export function HistoryModal({
     if (onLoadBridging) {
       onLoadBridging(transaction);
       handleOpenChange(false);
+      return;
     }
+
+    router.push(
+      buildBridgeRoute(transaction.originChain, getTransactionShareId(transaction))
+    );
+    handleOpenChange(false);
   };
 
   const pendingCount = useMemo(
@@ -616,7 +625,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
         hash: normalizedHash as UniversalTxHash,
         originChain: selectedChainId,
         targetChain: targetChainId,
-        targetAddress: resolvedTargetAddress as UniversalTxHash | undefined,
+        targetAddress: resolvedTargetAddress,
         amount: formattedAmount,
         status: txStatus,
         version: "v3",
@@ -624,6 +633,7 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
         steps,
         bridgeState,
         bridgeResult,
+        nonce: attestationData.nonce,
       };
 
       addTransaction(transaction);

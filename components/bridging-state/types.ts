@@ -28,6 +28,7 @@ export interface BridgingStateProps {
   startedAt?: Date;
   estimatedTimeLabel?: string;
   onBridgeResultUpdate?: (result: BridgeResultWithMeta) => void;
+  onMessageExpiredNonce?: (nonce: string) => void;
 }
 
 export interface StepListProps {

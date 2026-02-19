@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "[pre-commit] refreshing CCTP metadata and RPC candidates"
+bun run metadata:refresh || exit 1
+
+git add lib/metadata/cctp.generated.json
+git add lib/metadata/rpc.generated.json
+git add reports/rpc-validation-report.json
+
+echo "[pre-commit] metadata artifacts refreshed"
