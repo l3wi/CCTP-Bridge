@@ -7,11 +7,11 @@ import { checkMintReadiness } from "@/lib/simulation";
 import { fetchAttestationUniversal, requestReattestation } from "@/lib/iris";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 
 // Polling configuration
-const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
 const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour
-const EVM_MINT_POLL_INTERVAL_MS = 15_000; // Keep Iris pressure low for EVM-destination mint readiness checks
+const EVM_MINT_POLL_INTERVAL_MS = 5_000; // Fast transfers target sub-minute UX; keep EVM readiness checks responsive
 const SOLANA_POLL_INTERVAL_MS = 15_000; // Solana attestations settle slower; avoid over-polling Iris
 const REATTEST_POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds while awaiting re-attestation
 
@@ -370,7 +370,10 @@ export function useMintPolling({
           // Update transaction to reflect standard speed fallback
           updateTransaction(burnTxHash, {
             transferType: "standard",
-            estimatedTime: "~15 minutes",
+            estimatedTime: resolveEstimatedTimeLabel({
+              transferType: "standard",
+              sourceChainId,
+            }),
           });
         }
 
@@ -502,7 +505,10 @@ export function useMintPolling({
           // Update transaction to reflect standard speed fallback
           updateTransaction(burnTxHash, {
             transferType: "standard",
-            estimatedTime: "~15 minutes",
+            estimatedTime: resolveEstimatedTimeLabel({
+              transferType: "standard",
+              sourceChainId,
+            }),
           });
         }
 

@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo } from "react";
-import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { BridgingState } from "@/components/bridging-state";
 import { TransferSpeed } from "@/lib/cctp/transferSpeed";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   getBridgeChainByIdUniversal,
   getCctpConfirmationsUniversal,
@@ -86,11 +87,11 @@ export function BridgeTrackingCard({
       provider: "CCTPV2BridgingProvider",
       source: {
         address: transaction.targetAddress || "",
-        chain: sourceChainDef as unknown as ChainDefinition,
+        chain: toChainDefinition(sourceChainDef),
       },
       destination: {
         address: transaction.targetAddress || "",
-        chain: effectiveDestinationChain as unknown as ChainDefinition,
+        chain: toChainDefinition(effectiveDestinationChain),
       },
       steps: transaction.steps || [],
     } as BridgeResult;

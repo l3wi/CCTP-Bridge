@@ -6,9 +6,6 @@ export async function POST(request: NextRequest) {
     const {
       amount,
       meta,
-      sourceWallet,
-      displayedRecipient,
-      submittedRecipient,
       recipientResolution,
       sourceChainId,
       targetChainId,
@@ -17,9 +14,6 @@ export async function POST(request: NextRequest) {
     await track("bridge", {
       amount,
       meta,
-      sourceWallet,
-      displayedRecipient,
-      submittedRecipient,
       recipientResolution,
       sourceChainId,
       targetChainId,

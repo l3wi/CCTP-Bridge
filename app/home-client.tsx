@@ -35,7 +35,7 @@ export default function HomeClientPage() {
     sourceChainId: BridgeSubmissionIntent["sourceChainId"];
     hash: string;
   }) => {
-    router.replace(buildBridgeRoute(sourceChainId, hash));
+    router.replace(`${buildBridgeRoute(sourceChainId, hash)}?fresh=1`);
   };
 
   if (hasInvalidExecuteIntent) {

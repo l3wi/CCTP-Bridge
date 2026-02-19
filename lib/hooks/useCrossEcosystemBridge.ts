@@ -7,9 +7,10 @@ import { useCallback, useRef, useState } from "react";
 import { useWalletClient } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { formatUnits } from "viem";
-import { type BridgeResult, type ChainDefinition } from "@circle-fin/bridge-kit";
+import { type BridgeResult } from "@circle-fin/bridge-kit";
 import { useToast } from "@/components/ui/use-toast";
 import { getProviderFromWalletClient, resolveBridgeChainUniversal } from "@/lib/bridgeKit";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import { useBurn, type BurnProgressCallbacks } from "@/lib/cctp/hooks/useBurn";
 import {
   createInitialSteps,
@@ -108,11 +109,11 @@ export const useCrossEcosystemBridge = () => {
         provider: "CCTPV2BridgingProvider",
         source: {
           address: senderAddress ?? "",
-          chain: sourceChainDef as unknown as ChainDefinition,
+          chain: toChainDefinition(sourceChainDef),
         },
         destination: {
           address: recipientAddress ?? "",
-          chain: destinationChainDef as unknown as ChainDefinition,
+          chain: toChainDefinition(destinationChainDef),
         },
         steps,
       });

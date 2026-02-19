@@ -62,6 +62,7 @@ import {
   resolveRecipientForSend,
 } from "@/lib/recipientResolution";
 import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
 
@@ -810,7 +811,6 @@ export function BridgeCard({
         senderAddress,
       });
       const finalTargetAddress = resolvedRecipient.finalTargetAddress;
-      const displayedRecipient = resolvedRecipient.displayedRecipient;
       const recipientResolution = resolvedRecipient.recipientResolution;
 
       if (!finalTargetAddress) {
@@ -825,12 +825,12 @@ export function BridgeCard({
       let sourceBridgeDefinition: ChainDefinition;
       let targetBridgeDefinition: ChainDefinition;
       try {
-        sourceBridgeDefinition = resolveBridgeChainUniversal(
-          selectedSourceId
-        ) as unknown as ChainDefinition;
-        targetBridgeDefinition = resolveBridgeChainUniversal(
-          targetChainId
-        ) as unknown as ChainDefinition;
+        sourceBridgeDefinition = toChainDefinition(
+          resolveBridgeChainUniversal(selectedSourceId)
+        );
+        targetBridgeDefinition = toChainDefinition(
+          resolveBridgeChainUniversal(targetChainId)
+        );
       } catch (error) {
         toast({
           title: "Unsupported chain",
@@ -993,20 +993,22 @@ export function BridgeCard({
         // Server-side analytics
         const roundedAmount = Math.round(Number(amount.str));
         const txType = transferType === "fast" ? 1 : 0;
-        fetch("/api/meta", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: roundedAmount,
-            meta: `${roundedAmount},${selectedSourceId},${targetChainId},${txType}`,
-            sourceWallet: senderAddress,
-            displayedRecipient,
-            submittedRecipient: finalTargetAddress,
-            recipientResolution,
-            sourceChainId: String(selectedSourceId),
-            targetChainId: String(targetChainId),
-          }),
-        }).catch(() => {});
+        const analyticsDisabled =
+          process.env.NEXT_PUBLIC_DISABLE_META_ANALYTICS === "1";
+
+        if (!analyticsDisabled) {
+          fetch("/api/meta", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              amount: roundedAmount,
+              meta: `${roundedAmount},${selectedSourceId},${targetChainId},${txType}`,
+              recipientResolution,
+              sourceChainId: String(selectedSourceId),
+              targetChainId: String(targetChainId),
+            }),
+          }).catch(() => {});
+        }
 
         if (onBurn) {
           onBurn(true);
@@ -1425,11 +1427,11 @@ export function BridgeCard({
               provider: "CCTPV2BridgingProvider",
               source: {
                 address: loadedTransaction.targetAddress || "",
-                chain: sourceChainDef as unknown as ChainDefinition,
+                chain: toChainDefinition(sourceChainDef),
               },
               destination: {
                 address: loadedTransaction.targetAddress || "",
-                chain: destChainDef as unknown as ChainDefinition,
+                chain: toChainDefinition(destChainDef),
               },
               steps: loadedTransaction.steps || [],
             };

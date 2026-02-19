@@ -9,7 +9,7 @@ Built with Next.js App Router, Wagmi/RainbowKit (EVM), Solana Wallet Adapter, Zu
 ```bash
 bun install        # Install dependencies
 bun run dev        # Start dev server (localhost:3000)
-bun run lint       # Run TypeScript & ESLint checks
+bun run lint       # Run TypeScript checks (auto-creates placeholder generated metadata if missing)
 bun run build      # Build production bundle
 bun run metadata:refresh # Regenerate CCTP metadata + validated RPC candidates
 ```
@@ -29,7 +29,10 @@ NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: t
 NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED=FAST|SLOW   # Default transfer speed (default: FAST)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
+NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable bridge analytics event emission
 ```
+
+`/api/meta` analytics events include aggregate transfer metadata only (no raw wallet/recipient addresses).
 
 ## Architecture
 

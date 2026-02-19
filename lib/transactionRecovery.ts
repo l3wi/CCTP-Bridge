@@ -1,4 +1,4 @@
-import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 import {
   BRIDGEKIT_ENV,
   getBridgeChainByIdUniversal,
@@ -9,6 +9,7 @@ import {
   isNonceUsed,
 } from "@/lib/contracts";
 import { fetchAttestationUniversal } from "@/lib/iris";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   type ChainId,
   type LocalTransaction,
@@ -153,11 +154,11 @@ export async function recoverTransactionFromBurnHash(
     token: "USDC",
     source: {
       address: displayAddress,
-      chain: sourceChainDef as unknown as ChainDefinition,
+      chain: toChainDefinition(sourceChainDef),
     },
     destination: {
       address: displayAddress,
-      chain: destinationChainDef as unknown as ChainDefinition,
+      chain: toChainDefinition(destinationChainDef),
     },
     steps,
   };

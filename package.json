@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prelint": "bun run scripts/ensure-generated-metadata.ts",
     "prebuild": "bun run metadata:refresh",
     "build": "next build",
     "start": "next start",

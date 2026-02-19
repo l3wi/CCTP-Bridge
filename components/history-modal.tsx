@@ -30,8 +30,9 @@ import { getExplorerTxUrlUniversal, getAllSupportedChains, BRIDGEKIT_ENV, getBri
 import { fetchAttestationUniversal } from "@/lib/iris";
 import { getChainIdFromDomainUniversal, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
 import { getSolanaUsdcMint } from "@/lib/cctp/shared";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import type { SolanaChainId } from "@/lib/cctp/types";
-import type { BridgeResult, ChainDefinition } from "@circle-fin/bridge-kit";
+import type { BridgeResult } from "@circle-fin/bridge-kit";
 
 interface HistoryModalProps {
   open?: boolean;
@@ -519,6 +520,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
       // Get chain definitions for bridgeResult
       const sourceChain = getBridgeChainByIdUniversal(selectedChainId, BRIDGEKIT_ENV);
       const destChain = getBridgeChainByIdUniversal(targetChainId, BRIDGEKIT_ENV);
+      if (!sourceChain || !destChain) {
+        setError("Unsupported source or destination chain.");
+        setIsLoading(false);
+        return;
+      }
 
       // Determine step states based on attestation and claim status
       // Valid states: "error" | "success" | "pending" | "noop"
@@ -611,11 +617,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
         token: "USDC",
         source: {
           address: displayAddress as `0x${string}`,
-          chain: sourceChain as unknown as ChainDefinition,
+          chain: toChainDefinition(sourceChain),
         },
         destination: {
           address: displayAddress as `0x${string}`,
-          chain: destChain as unknown as ChainDefinition,
+          chain: toChainDefinition(destChain),
         },
         steps,
       };

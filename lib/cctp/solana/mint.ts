@@ -806,7 +806,11 @@ export async function sendTransactionNoConfirm(
   // Simulate first to capture logs on failure
   await simulateSignedTransaction(connection, signedTransaction);
 
-  // Simulation passed — send without preflight (already validated)
+  // Simulation passed — send without preflight (already validated).
+  // Trade-off: this is not fully atomic. We may simulate against one RPC view and
+  // submit against a node with slightly newer state, so a transaction can still fail
+  // after a successful simulation (TOCTOU window). We keep this to avoid wallet UX
+  // stalls from repeated preflight + confirmation round-trips.
   const rawTransaction = signedTransaction.serialize();
 
   const signature = await connection.sendRawTransaction(rawTransaction, {

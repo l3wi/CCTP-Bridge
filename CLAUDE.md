@@ -19,6 +19,7 @@ NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES=chainId=url  # Optional RPC overrides (comma
 NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED=FAST|SLOW   # Default transfer speed (default: FAST)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
+NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable /api/meta analytics
 ```
 
 ## Architecture Overview
@@ -134,8 +135,10 @@ isValidTxHash(value)       // Universal tx hash validation
 - All amounts use 6 decimal precision (USDC standard)
 - Transaction store persists full `BridgeResult` for resume capability
 - Path aliases use `@/*` pointing to project root
-- Run `bun run lint` after changes (build not required for every change)
+- Run `bun run lint` after changes; it auto-creates placeholder `.generated/metadata/*.generated.json` files if missing
+- Run `bun run metadata:refresh` (or `bun run build`) when you need fresh chain/RPC metadata
 - Solana burn returns immediately after send (no confirmation wait to avoid WebSocket hangs)
+- `/api/meta` payloads exclude raw wallet/recipient addresses
 
 ---
 

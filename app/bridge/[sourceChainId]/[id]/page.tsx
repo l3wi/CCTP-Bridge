@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { BridgePageShell } from "@/components/bridge-page-shell";
 import { BridgeTrackingCard } from "@/components/bridge-tracking-card";
@@ -40,8 +40,10 @@ const truncateHashForDisplay = (value: string): string => {
 
 export default function BridgeTrackingPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const params = useParams<{ sourceChainId: string; id: string }>();
   const { transactions, addTransaction } = useTransactionStore();
+  const isFreshNavigation = searchParams.get("fresh") === "1";
 
   const sourceParam = Array.isArray(params.sourceChainId)
     ? params.sourceChainId[0]
@@ -213,6 +215,7 @@ export default function BridgeTrackingPage() {
 
     let cancelled = false;
 
+    const recoveryDelayMs = isFreshNavigation ? STORE_GRACE_MS : 0;
     const timer = setTimeout(async () => {
       if (cancelled) return;
 
@@ -240,7 +243,7 @@ export default function BridgeTrackingPage() {
           setIsInitialLookupPending(false);
         }
       }
-    }, STORE_GRACE_MS);
+    }, recoveryDelayMs);
 
     return () => {
       cancelled = true;
@@ -253,6 +256,7 @@ export default function BridgeTrackingPage() {
     routeId.kind,
     routeId.normalizedId,
     sourceChainId,
+    isFreshNavigation,
   ]);
 
   useEffect(() => {
@@ -269,7 +273,10 @@ export default function BridgeTrackingPage() {
     const canonicalId =
       routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
 
-    router.replace(buildBridgeRoute(sourceChainId, canonicalId));
+    const canonicalPath = buildBridgeRoute(sourceChainId, canonicalId);
+    router.replace(
+      isFreshNavigation ? `${canonicalPath}?fresh=1` : canonicalPath
+    );
   }, [
     router,
     sourceChainId,
@@ -277,6 +284,7 @@ export default function BridgeTrackingPage() {
     routeId.kind,
     routeId.normalizedId,
     decodedId,
+    isFreshNavigation,
   ]);
 
   if (!isStoreHydrated) {

@@ -9,7 +9,7 @@ import {
   MESSAGE_TRANSMITTER_ABI,
 } from "./contracts";
 import { getCctpDomainSafe } from "./cctp/shared";
-import { createEvmPublicClient } from "@/lib/rpc/clients";
+import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
 import type { SolanaChainId } from "./types";
 
 // CCTP message format constants
@@ -20,6 +20,8 @@ const CCTP_SOURCE_DOMAIN_OFFSET = 4; // Source domain at byte 4
 const CCTP_SOURCE_DOMAIN_LENGTH = 4; // Domain is 4 bytes
 const CCTP_DEST_DOMAIN_OFFSET = 8; // Destination domain at byte 8
 const CCTP_DEST_DOMAIN_LENGTH = 4; // Domain is 4 bytes
+const CCTP_SOLANA_EXPIRATION_INDEX = 196; // BurnMessage offset to expirationBlock field
+const CCTP_U256_TO_U64_OFFSET = 24; // Last 8 bytes of EVM uint256 contain Solana u64 slot
 
 export interface SimulationResult {
   success: boolean;
@@ -141,6 +143,33 @@ export function extractDestinationDomainFromMessage(message: `0x${string}`): num
   const domainHex = message.slice(startChar, endChar);
 
   return parseInt(domainHex, 16);
+}
+
+/**
+ * Extract expiration block from a CCTP v2 message for Solana destinations.
+ * Returns 0 when the message does not carry an expiration block.
+ */
+function extractSolanaExpirationBlock(message: `0x${string}`): number {
+  if (!validateMessageFormat(message)) return 0;
+
+  const hex = message.slice(2);
+  const totalBytes = hex.length / 2;
+  const requiredBytes =
+    CCTP_MESSAGE_HEADER_BYTES + CCTP_SOLANA_EXPIRATION_INDEX + 32;
+
+  if (totalBytes < requiredBytes) return 0;
+
+  const byteOffset =
+    CCTP_MESSAGE_HEADER_BYTES +
+    CCTP_SOLANA_EXPIRATION_INDEX +
+    CCTP_U256_TO_U64_OFFSET;
+  const start = byteOffset * 2;
+  const end = start + 16; // u64 = 8 bytes
+  const expirationHex = hex.slice(start, end);
+
+  if (expirationHex.length !== 16) return 0;
+  const parsed = Number.parseInt(expirationHex, 16);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /**
@@ -378,11 +407,10 @@ export async function checkSolanaMintStatus(
 ): Promise<SimulationResult> {
   try {
     void sourceChainId;
-    void destinationChainId;
 
     // This helper is now metadata/RPC only and no longer relies on BridgeKit adapters.
-    // If we can fetch attestation data, user can proceed to claim; claim path performs
-    // the authoritative on-chain checks.
+    // Do lightweight freshness checks here so polling does not mark an expired
+    // message as ready-to-claim.
     if (!attestationData.message || !attestationData.attestation) {
       return {
         success: false,
@@ -390,6 +418,24 @@ export async function checkSolanaMintStatus(
         alreadyMinted: false,
         error: "Missing attestation payload",
       };
+    }
+
+    const expirationBlock = extractSolanaExpirationBlock(
+      attestationData.message as `0x${string}`
+    );
+    if (expirationBlock > 0) {
+      const connection = createSolanaConnection(destinationChainId, "confirmed");
+      const currentSlot = await connection.getSlot("confirmed");
+
+      if (currentSlot >= expirationBlock) {
+        return {
+          success: false,
+          canMint: false,
+          alreadyMinted: false,
+          messageExpired: true,
+          error: `Message expired at slot ${expirationBlock} (current: ${currentSlot})`,
+        };
+      }
     }
 
     return {

@@ -10,6 +10,7 @@ export interface NativeCurrency {
 
 export interface CctpContractConfig {
   type?: string;
+  contract?: string;
   tokenMessenger?: string;
   messageTransmitter?: string;
   confirmations?: number;
