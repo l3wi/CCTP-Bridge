@@ -2,6 +2,7 @@ import { type ChainId } from "@/lib/types";
 import { BRIDGEKIT_ENV } from "@/lib/bridgeKit";
 import { getChainIdFromDomainUniversal } from "@/lib/contracts";
 import { getSourceDomainForChain, parseRouteChainId } from "@/lib/bridgeRoute";
+import { validateAddressForChain } from "@/lib/validation";
 
 export interface BridgeIntent {
   sourceChainId: ChainId;
@@ -53,6 +54,11 @@ const isValidTransferType = (
   value: string | null
 ): value is BridgeIntent["transferType"] => value === "fast" || value === "standard";
 
+const isValidTargetAddressForChain = (
+  targetAddress: string,
+  targetChainId: ChainId
+): boolean => validateAddressForChain(targetAddress, targetChainId).isValid;
+
 const parseDomainChainValue = (
   raw: string | null
 ): ChainId | null => {
@@ -97,6 +103,7 @@ export const parseBridgeIntent = (
   if (source === target) return null;
   if (!isValidAmount(amount)) return null;
   if (!targetAddress) return null;
+  if (!isValidTargetAddressForChain(targetAddress, target)) return null;
   if (!isValidTransferType(transferType)) return null;
 
   return {
