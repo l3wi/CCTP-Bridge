@@ -77,7 +77,9 @@ function allowsOrigin(response: Response): boolean {
 
 function allowsPostMethod(response: Response): boolean {
   const allowMethods = response.headers.get("access-control-allow-methods");
-  if (!allowMethods) return false;
+  if (!allowMethods) {
+    return response.headers.get("access-control-allow-origin") === "*";
+  }
 
   const methods = allowMethods.toUpperCase();
   return methods.includes("POST") || methods.includes("*");

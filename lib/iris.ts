@@ -17,6 +17,7 @@ const IRIS_API_ENDPOINTS = {
 const IRIS_PENDING_CACHE_TTL_MS = 10_000;
 const IRIS_COMPLETE_CACHE_TTL_MS = 60_000;
 const IRIS_NOT_FOUND_CACHE_TTL_MS = 5_000;
+const IRIS_MAX_CACHE_ENTRIES = 200;
 
 interface CachedAttestationEntry {
   expiresAt: number;
@@ -40,6 +41,37 @@ const cachedUniversalNonceAttestationResponses = new Map<
     value: AttestationLookupByNonceResult | null;
   }
 >();
+
+type CachedEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+function setBoundedCacheEntry<T>(
+  cache: Map<string, CachedEntry<T>>,
+  key: string,
+  value: T,
+  ttlMs: number
+): void {
+  const now = Date.now();
+
+  for (const [cacheKey, entry] of cache) {
+    if (entry.expiresAt <= now) {
+      cache.delete(cacheKey);
+    }
+  }
+
+  cache.set(key, {
+    value,
+    expiresAt: now + ttlMs,
+  });
+
+  while (cache.size > IRIS_MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
 
 export interface IrisAttestationResponse {
   messages: Array<{
@@ -289,20 +321,24 @@ export async function fetchAttestationUniversal(
             `Iris API error: ${response.status} ${response.statusText}`
           );
         }
-        cachedUniversalAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
         return null;
       }
 
       const data: IrisAttestationResponse = await response.json();
 
       if (!data.messages || data.messages.length === 0) {
-        cachedUniversalAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
         return null;
       }
 
@@ -314,10 +350,12 @@ export async function fetchAttestationUniversal(
       if (!msg.decodedMessage) {
         if (msg.status === "complete") {
           console.error("Iris returned complete status without decodedMessage payload");
-          cachedUniversalAttestationResponses.set(requestKey, {
-            value: null,
-            expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-          });
+          setBoundedCacheEntry(
+            cachedUniversalAttestationResponses,
+            requestKey,
+            null,
+            IRIS_NOT_FOUND_CACHE_TTL_MS
+          );
           return null;
         }
 
@@ -326,10 +364,12 @@ export async function fetchAttestationUniversal(
           nonce: msg.eventNonce,
           delayReason: msg.delayReason,
         };
-        cachedUniversalAttestationResponses.set(requestKey, {
-          value: pendingResult,
-          expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          pendingResult,
+          IRIS_PENDING_CACHE_TTL_MS
+        );
         return pendingResult;
       }
 
@@ -355,17 +395,21 @@ export async function fetchAttestationUniversal(
         attestationResult.status === "complete"
           ? IRIS_COMPLETE_CACHE_TTL_MS
           : IRIS_PENDING_CACHE_TTL_MS;
-      cachedUniversalAttestationResponses.set(requestKey, {
-        value: attestationResult,
-        expiresAt: Date.now() + ttl,
-      });
+      setBoundedCacheEntry(
+        cachedUniversalAttestationResponses,
+        requestKey,
+        attestationResult,
+        ttl
+      );
       return attestationResult;
     } catch (error) {
       console.error("Failed to fetch attestation from Iris:", error);
-      cachedUniversalAttestationResponses.set(requestKey, {
-        value: null,
-        expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-      });
+      setBoundedCacheEntry(
+        cachedUniversalAttestationResponses,
+        requestKey,
+        null,
+        IRIS_NOT_FOUND_CACHE_TTL_MS
+      );
       return null;
     } finally {
       pendingUniversalAttestationRequests.delete(requestKey);
@@ -429,20 +473,24 @@ export async function fetchAttestationByNonceUniversal(
             `Iris nonce API error: ${response.status} ${response.statusText}`
           );
         }
-        cachedUniversalNonceAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
         return null;
       }
 
       const data: IrisAttestationResponse = await response.json();
 
       if (!data.messages || data.messages.length === 0) {
-        cachedUniversalNonceAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
         return null;
       }
 
@@ -452,10 +500,12 @@ export async function fetchAttestationByNonceUniversal(
       if (!msg.decodedMessage) {
         if (msg.status === "complete") {
           console.error("Iris returned complete status without decodedMessage payload");
-          cachedUniversalNonceAttestationResponses.set(requestKey, {
-            value: null,
-            expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-          });
+          setBoundedCacheEntry(
+            cachedUniversalNonceAttestationResponses,
+            requestKey,
+            null,
+            IRIS_NOT_FOUND_CACHE_TTL_MS
+          );
           return null;
         }
 
@@ -471,10 +521,12 @@ export async function fetchAttestationByNonceUniversal(
             msg.transactionHash ?? msg.txHash ?? msg.sourceTxHash
           ),
         };
-        cachedUniversalNonceAttestationResponses.set(requestKey, {
-          value: pendingResult,
-          expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
-        });
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          pendingResult,
+          IRIS_PENDING_CACHE_TTL_MS
+        );
         return pendingResult;
       }
 
@@ -509,17 +561,21 @@ export async function fetchAttestationByNonceUniversal(
         attestationResult.status === "complete"
           ? IRIS_COMPLETE_CACHE_TTL_MS
           : IRIS_PENDING_CACHE_TTL_MS;
-      cachedUniversalNonceAttestationResponses.set(requestKey, {
-        value: result,
-        expiresAt: Date.now() + ttl,
-      });
+      setBoundedCacheEntry(
+        cachedUniversalNonceAttestationResponses,
+        requestKey,
+        result,
+        ttl
+      );
       return result;
     } catch (error) {
       console.error("Failed to fetch nonce attestation from Iris:", error);
-      cachedUniversalNonceAttestationResponses.set(requestKey, {
-        value: null,
-        expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
-      });
+      setBoundedCacheEntry(
+        cachedUniversalNonceAttestationResponses,
+        requestKey,
+        null,
+        IRIS_NOT_FOUND_CACHE_TTL_MS
+      );
       return null;
     } finally {
       pendingUniversalNonceAttestationRequests.delete(requestKey);

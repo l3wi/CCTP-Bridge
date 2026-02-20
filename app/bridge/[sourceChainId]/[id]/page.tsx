@@ -144,8 +144,11 @@ export default function BridgeTrackingPage() {
 
       try {
         const { transaction } = await recoverTransactionFromBurnHash(sourceChainId, burnHash);
+        const hasExistingHash = transactions.some((tx) => tx.hash === transaction.hash);
         addTransaction(transaction);
-        updateTransaction(transaction.hash, transaction);
+        if (hasExistingHash) {
+          updateTransaction(transaction.hash, transaction);
+        }
 
         const nextId = routeId.kind === "nonce" && transaction.nonce
           ? transaction.nonce
@@ -158,7 +161,7 @@ export default function BridgeTrackingPage() {
         setIsRecovering(false);
       }
     },
-    [addTransaction, router, routeId.kind, sourceChainId, updateTransaction]
+    [addTransaction, router, routeId.kind, sourceChainId, transactions, updateTransaction]
   );
 
   useEffect(() => {
@@ -221,8 +224,11 @@ export default function BridgeTrackingPage() {
               );
 
         if (cancelled) return;
+        const hasExistingHash = transactions.some((tx) => tx.hash === transaction.hash);
         addTransaction(transaction);
-        updateTransaction(transaction.hash, transaction);
+        if (hasExistingHash) {
+          updateTransaction(transaction.hash, transaction);
+        }
       } catch (error) {
         if (cancelled) return;
 
@@ -254,6 +260,7 @@ export default function BridgeTrackingPage() {
     routeId.kind,
     routeId.normalizedId,
     sourceChainId,
+    transactions,
     updateTransaction,
   ]);
 

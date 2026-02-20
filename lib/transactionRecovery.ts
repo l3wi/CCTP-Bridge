@@ -48,11 +48,16 @@ const resolveTargetAddress = (
     return mintRecipient;
   }
 
-  if (!mintRecipient.startsWith("0x")) {
-    return mintRecipient.toLowerCase();
+  const normalized = mintRecipient.trim().toLowerCase();
+  const hex = normalized.startsWith("0x")
+    ? normalized.slice(2)
+    : normalized;
+
+  if (/^[0-9a-f]+$/.test(hex) && hex.length >= 40) {
+    return `0x${hex.slice(-40)}` as UniversalAddress;
   }
 
-  return (`0x${mintRecipient.slice(-40)}` as UniversalAddress).toLowerCase() as UniversalAddress;
+  return undefined;
 };
 
 export interface RecoverTransactionResult {

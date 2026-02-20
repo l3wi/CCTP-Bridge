@@ -11,6 +11,28 @@ const DEFAULT_ENV: BridgeEnvironment = BRIDGEKIT_ENV;
 const cursorByKey = new Map<string, number>();
 const MAX_RETRIES = 3;
 const isServerRuntime = () => typeof window === "undefined";
+const isReadableStreamBody = (value: unknown): value is ReadableStream =>
+  typeof ReadableStream !== "undefined" && value instanceof ReadableStream;
+
+const normalizeRetryBody = async (
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<BodyInit | undefined> => {
+  if (init?.body !== undefined) {
+    if (init.body === null) {
+      return undefined;
+    }
+    if (isReadableStreamBody(init.body)) {
+      return new Response(init.body).text();
+    }
+    return init.body;
+  }
+
+  const request = input instanceof Request ? input : undefined;
+  if (!request) return undefined;
+
+  return request.clone().text().catch(() => undefined);
+};
 
 function getNextStartIndex(key: string, size: number): number {
   if (size <= 1) return 0;
@@ -30,9 +52,7 @@ function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
 
     const request = input instanceof Request ? input : undefined;
     const method = init?.method ?? request?.method ?? "POST";
-    const body =
-      init?.body ??
-      (request ? await request.clone().text().catch(() => undefined) : undefined);
+    const body = await normalizeRetryBody(input, init);
     const headers = new Headers(init?.headers ?? request?.headers);
     const attempts = Math.min(Math.max(urls.length, 1), MAX_RETRIES);
     const startIndex = getNextStartIndex(key, urls.length);

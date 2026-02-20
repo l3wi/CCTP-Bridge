@@ -51,8 +51,7 @@ import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 // =============================================================================
 
 const ALREADY_CLAIMED_TOAST_TITLE = "USDC Successfully Claimed";
-const ALREADY_CLAIMED_TOAST_DESCRIPTION =
-  "USDC Successfully Claimed. Check your wallet for the USDC.";
+const ALREADY_CLAIMED_TOAST_DESCRIPTION = "Check your wallet for the USDC.";
 
 export function useMint() {
   // EVM wallet state
@@ -669,7 +668,8 @@ function handleSolanaMintError(
   const allText = `${errorMessage} ${txMessage} ${allLogs.join("\n")}`;
   if (
     /already in use/i.test(allText) ||
-    /account.*already.*allocated/i.test(allText)
+    /account.*already.*allocated/i.test(allText) ||
+    /"Custom":\s*0\b/.test(allText)
   ) {
     const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
     updateTransaction(burnTxHash, {

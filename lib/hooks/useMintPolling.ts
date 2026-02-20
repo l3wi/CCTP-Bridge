@@ -14,6 +14,7 @@ const MAX_POLL_DURATION_MS = 60 * 60 * 1000; // Stop polling after 1 hour
 const EVM_MINT_POLL_INTERVAL_MS = 5_000; // Fast transfers target sub-minute UX; keep EVM readiness checks responsive
 const SOLANA_POLL_INTERVAL_MS = 15_000; // Solana attestations settle slower; avoid over-polling Iris
 const REATTEST_POLL_INTERVAL_MS = 15_000; // Poll every 15 seconds while awaiting re-attestation
+const MAX_REATTEST_WAIT_MS = 10 * 60 * 1000; // Stop re-attestation polling after 10 minutes
 
 export interface MintPollingState {
   canMint: boolean;
@@ -80,6 +81,7 @@ export function useMintPolling({
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
   const solanaPollingRef = useRef<NodeJS.Timeout | null>(null);
   const reattestPollingRef = useRef<NodeJS.Timeout | null>(null);
+  const reattestStartedAtRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
 
   // Track re-attestation state
@@ -262,12 +264,41 @@ export function useMintPolling({
         clearInterval(reattestPollingRef.current);
         reattestPollingRef.current = null;
       }
+      reattestStartedAtRef.current = null;
       return;
+    }
+
+    if (!reattestStartedAtRef.current) {
+      reattestStartedAtRef.current = Date.now();
     }
 
     const pollForNewAttestation = async () => {
       if (!isMountedRef.current || !burnTxHash || !sourceChainId) return;
       if (!isDocumentVisible()) return;
+
+      if (
+        reattestStartedAtRef.current &&
+        Date.now() - reattestStartedAtRef.current >= MAX_REATTEST_WAIT_MS
+      ) {
+        setIsAwaitingReattestation(false);
+        reattestTriggeredRef.current = false;
+        reattestStartedAtRef.current = null;
+        setMintSimulation((prev) => ({
+          ...prev,
+          error: "Re-attestation is taking longer than expected. Please retry manually.",
+        }));
+        toast({
+          title: "Re-attestation delayed",
+          description:
+            "Circle is still processing. Please use the retry action to request re-attestation again.",
+          variant: "destructive",
+        });
+        if (reattestPollingRef.current) {
+          clearInterval(reattestPollingRef.current);
+          reattestPollingRef.current = null;
+        }
+        return;
+      }
 
       try {
         const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
@@ -278,6 +309,7 @@ export function useMintPolling({
           // Fresh attestation is ready — reset expired state and re-enable claim
           setIsAwaitingReattestation(false);
           reattestTriggeredRef.current = false;
+          reattestStartedAtRef.current = null;
 
           setMintSimulation((prev) => ({
             ...prev,
