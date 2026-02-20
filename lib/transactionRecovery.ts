@@ -6,13 +6,13 @@ import {
 import {
   getChainIdFromDomainUniversal,
   getChainInfoFromDomainAllChains,
-  isNonceUsed,
 } from "@/lib/contracts";
 import {
   fetchAttestationUniversal,
   fetchAttestationByNonceUniversal,
   type AttestationData,
 } from "@/lib/iris";
+import { checkNonceUsed } from "@/lib/cctp/nonce";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   type ChainId,
@@ -128,14 +128,12 @@ const buildRecoveredTransaction = async (
   const targetAddress = resolveTargetAddress(targetChainId, attestationData.mintRecipient);
 
   let isAlreadyClaimed = false;
-  if (!isSolanaChain(targetChainId)) {
-    const nonceUsed = await isNonceUsed(
-      targetChainId as number,
-      attestationData.sourceDomain,
-      attestationData.nonce,
-      BRIDGEKIT_ENV
+  if (attestationData.message) {
+    const nonceResult = await checkNonceUsed(
+      targetChainId,
+      attestationData.message
     );
-    isAlreadyClaimed = nonceUsed === true;
+    isAlreadyClaimed = nonceResult.isUsed;
   }
 
   const steps: BridgeResult["steps"] = [
@@ -157,7 +155,9 @@ const buildRecoveredTransaction = async (
   const status: LocalTransaction["status"] = isAlreadyClaimed ? "claimed" : "pending";
   const bridgeState: BridgeResult["state"] = isAlreadyClaimed ? "success" : "pending";
 
-  const displayAddress = (targetAddress || attestationData.mintRecipient || "") as string;
+  const destinationDisplayAddress = (targetAddress || attestationData.mintRecipient || "") as string;
+  // Iris attestation payloads do not include the original burn wallet sender.
+  const sourceDisplayAddress = "";
 
   const bridgeResult: BridgeResult = {
     state: bridgeState,
@@ -165,11 +165,11 @@ const buildRecoveredTransaction = async (
     amount: amount || "0",
     token: "USDC",
     source: {
-      address: displayAddress,
+      address: sourceDisplayAddress,
       chain: toChainDefinition(sourceChainDef),
     },
     destination: {
-      address: displayAddress,
+      address: destinationDisplayAddress,
       chain: toChainDefinition(destinationChainDef),
     },
     steps,
@@ -234,9 +234,12 @@ export async function recoverTransactionFromNonce(
   }
 
   const { attestation, burnTxHash } = lookupResult;
-  const normalizedHash =
-    (burnTxHash && normalizeTxHashForChain(sourceChainId, burnTxHash)) ??
-    normalizeTxHashForChain(sourceChainId, normalizedNonce);
+  if (!burnTxHash) {
+    throw new TransactionRecoveryError(
+      "Found nonce in Iris, but burn transaction hash is unavailable for this source chain."
+    );
+  }
+  const normalizedHash = normalizeTxHashForChain(sourceChainId, burnTxHash);
 
   if (!normalizedHash) {
     throw new TransactionRecoveryError(

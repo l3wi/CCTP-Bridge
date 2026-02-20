@@ -14,6 +14,7 @@ const POLL_TIMEOUT_ERROR =
 export interface BurnPollingState {
   confirmed: boolean;
   failed: boolean;
+  timedOut: boolean;
   checking: boolean;
   lastChecked: Date | null;
   error?: string;
@@ -55,6 +56,7 @@ export function useBurnPolling({
   const [state, setState] = useState<BurnPollingState>({
     confirmed: false,
     failed: false,
+    timedOut: false,
     checking: false,
     lastChecked: null,
   });
@@ -85,6 +87,7 @@ export function useBurnPolling({
     setState({
       confirmed: false,
       failed: false,
+      timedOut: false,
       checking: false,
       lastChecked: null,
     });
@@ -109,6 +112,7 @@ export function useBurnPolling({
           setState({
             confirmed: true,
             failed: false,
+            timedOut: false,
             checking: false,
             lastChecked: new Date(),
           });
@@ -118,6 +122,7 @@ export function useBurnPolling({
           setState({
             confirmed: false,
             failed: true,
+            timedOut: false,
             checking: false,
             lastChecked: new Date(),
             error: errorMsg,
@@ -167,6 +172,7 @@ export function useBurnPolling({
           setState({
             confirmed: false,
             failed: true,
+            timedOut: false,
             checking: false,
             lastChecked: new Date(),
             error: errorMsg,
@@ -180,6 +186,7 @@ export function useBurnPolling({
           setState({
             confirmed: true,
             failed: false,
+            timedOut: false,
             checking: false,
             lastChecked: new Date(),
           });
@@ -217,6 +224,7 @@ export function useBurnPolling({
       !disabled &&
       !state.confirmed &&
       !state.failed &&
+      !state.timedOut &&
       !!burnTxHash &&
       !!sourceChainId;
 
@@ -248,12 +256,12 @@ export function useBurnPolling({
           setState((prev) => ({
             ...prev,
             confirmed: false,
-            failed: true,
+            failed: false,
+            timedOut: true,
             checking: false,
             lastChecked: new Date(),
             error: POLL_TIMEOUT_ERROR,
           }));
-          onBurnFailedRef.current?.(POLL_TIMEOUT_ERROR);
           return;
         }
       }
@@ -279,6 +287,7 @@ export function useBurnPolling({
     disabled,
     state.confirmed,
     state.failed,
+    state.timedOut,
     burnTxHash,
     sourceChainId,
     checkEvmBurn,
@@ -290,6 +299,7 @@ export function useBurnPolling({
     setState({
       confirmed: false,
       failed: false,
+      timedOut: false,
       checking: false,
       lastChecked: null,
     });

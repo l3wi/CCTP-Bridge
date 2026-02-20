@@ -509,14 +509,6 @@ export function useMintPolling({
       return;
     }
 
-    if (mintSimulation.messageExpired || isAwaitingReattestation) {
-      if (solanaPollingRef.current) {
-        clearInterval(solanaPollingRef.current);
-        solanaPollingRef.current = null;
-      }
-      return;
-    }
-
     const checkAttestation = async () => {
       if (!burnTxHash || !sourceChainId) return;
       if (!isMountedRef.current) return;

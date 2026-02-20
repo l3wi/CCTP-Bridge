@@ -92,7 +92,9 @@ async function verifyDiscriminatorInDev(): Promise<void> {
 }
 
 // Run verification on module load in development
-verifyDiscriminatorInDev();
+if (process.env.NODE_ENV !== "production") {
+  void verifyDiscriminatorInDev();
+}
 
 // =============================================================================
 // Instruction Data Serialization
@@ -181,6 +183,9 @@ function serializeReceiveMessageData(
 // On-Chain State Fetching
 // =============================================================================
 
+const feeRecipientCache = new Map<string, PublicKey>();
+const pendingFeeRecipientLoads = new Map<string, Promise<PublicKey>>();
+
 /**
  * Fetch the feeRecipient from the on-chain TokenMessenger state.
  * Uses Anchor for account deserialization (only account reading, not instruction building).
@@ -191,6 +196,18 @@ async function fetchFeeRecipient(
   connection: Connection,
   tokenMessengerPda: PublicKey
 ): Promise<PublicKey> {
+  const cacheKey = `${connection.rpcEndpoint}:${tokenMessengerPda.toBase58()}`;
+  const cached = feeRecipientCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = pendingFeeRecipientLoads.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const loadPromise = (async () => {
   try {
     // Dynamic import to avoid Anchor in the main instruction path
     const { Program, AnchorProvider } = await import("@coral-xyz/anchor");
@@ -250,6 +267,16 @@ async function fetchFeeRecipient(
     throw new Error(
       `Failed to fetch feeRecipient from TokenMessenger: ${message}`
     );
+  }
+  })();
+
+  pendingFeeRecipientLoads.set(cacheKey, loadPromise);
+  try {
+    const feeRecipient = await loadPromise;
+    feeRecipientCache.set(cacheKey, feeRecipient);
+    return feeRecipient;
+  } finally {
+    pendingFeeRecipientLoads.delete(cacheKey);
   }
 }
 
@@ -492,10 +519,16 @@ export function extractExpirationBlock(message: string): number {
     return 0;
   }
 
-  // Parse as big-endian u64
-  // Use Number since Solana slots fit in JS safe integers
-  const value = parseInt(expirationHex, 16);
-  return isNaN(value) ? 0 : value;
+  // Parse as big-endian u64 via BigInt first to avoid precision loss during hex parsing.
+  try {
+    const parsed = BigInt(`0x${expirationHex}`);
+    if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    return Number(parsed);
+  } catch {
+    return 0;
+  }
 }
 
 /**
