@@ -47,10 +47,9 @@ const formatExplorerBaseUrl = (url?: string) => {
 };
 
 const mapMetadataToViemChain = (
-  chain: EvmChainMetadata,
-  env: BridgeEnvironment = BRIDGEKIT_ENV
+  chain: EvmChainMetadata
 ): Chain => {
-  const rpcUrl = getPreferredEvmRpcUrl(chain.chainId, env);
+  const rpcUrl = getPreferredEvmRpcUrl(chain.chainId);
   const explorerBase = formatExplorerBaseUrl(chain.explorerUrl);
 
   return {
@@ -76,9 +75,7 @@ const mapMetadataToViemChain = (
 export const getWagmiChainsForEnv = (
   env: BridgeEnvironment = BRIDGEKIT_ENV
 ): NonEmptyChains => {
-  const chains = getSupportedEvmChains(env).map((chain) =>
-    mapMetadataToViemChain(chain, env)
-  );
+  const chains = getSupportedEvmChains(env).map((chain) => mapMetadataToViemChain(chain));
   if (!chains.length) {
     throw new Error(`No supported EVM chains found for env ${env}`);
   }
@@ -93,7 +90,7 @@ export const getWagmiTransportsForEnv = (
   const chains = getSupportedEvmChains(env);
 
   return chains.reduce<Record<number, Transport>>((acc, chain) => {
-    const preferred = getPreferredEvmRpcUrl(chain.chainId, env);
+    const preferred = getPreferredEvmRpcUrl(chain.chainId);
     if (preferred) {
       acc[chain.chainId] = getRotatingEvmTransport(chain.chainId, env);
     } else {

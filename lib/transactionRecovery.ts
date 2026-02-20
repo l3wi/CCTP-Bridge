@@ -71,6 +71,22 @@ const buildRecoveredTransaction = async (
   burnTxHash: string,
   attestationData: AttestationData
 ): Promise<RecoverTransactionResult> => {
+  if (attestationData.status !== "complete") {
+    throw new TransactionRecoveryError("Attestation is not ready yet. Please try again shortly.");
+  }
+
+  if (attestationData.destinationDomain === undefined) {
+    throw new TransactionRecoveryError(
+      "Attestation payload is incomplete. Please wait and try recovery again."
+    );
+  }
+
+  if (attestationData.sourceDomain === undefined) {
+    throw new TransactionRecoveryError(
+      "Attestation source domain is unavailable. Please try recovery again."
+    );
+  }
+
   const targetChainId = getChainIdFromDomainUniversal(
     attestationData.destinationDomain,
     BRIDGEKIT_ENV
@@ -107,7 +123,7 @@ const buildRecoveredTransaction = async (
   const targetAddress = resolveTargetAddress(targetChainId, attestationData.mintRecipient);
 
   let isAlreadyClaimed = false;
-  if (attestationData.status === "complete" && !isSolanaChain(targetChainId)) {
+  if (!isSolanaChain(targetChainId)) {
     const nonceUsed = await isNonceUsed(
       targetChainId as number,
       attestationData.sourceDomain,
@@ -117,7 +133,6 @@ const buildRecoveredTransaction = async (
     isAlreadyClaimed = nonceUsed === true;
   }
 
-  const attestationReady = attestationData.status === "complete";
   const steps: BridgeResult["steps"] = [
     {
       name: "Burn",
@@ -126,7 +141,7 @@ const buildRecoveredTransaction = async (
     },
     {
       name: "Fetch Attestation",
-      state: attestationReady ? "success" : "pending",
+      state: "success",
     },
     {
       name: "Mint",

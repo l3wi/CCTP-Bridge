@@ -2,6 +2,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
 import { getSolanaRpcEndpoint, BRIDGEKIT_ENV } from "./bridgeKit";
 import type { SolanaChainId } from "./types";
+export { createSolanaConnection } from "@/lib/rpc/clients";
 
 // USDC token mint addresses on Solana
 const USDC_MINT: Record<SolanaChainId, string> = {
@@ -93,16 +94,6 @@ export const isValidSolanaAddress = (address: string): boolean => {
  */
 export const getSolanaUsdcMint = (chainId: SolanaChainId): string => {
   return USDC_MINT[chainId];
-};
-
-/**
- * Create a Solana Connection instance for a given chain
- */
-export const createSolanaConnection = (
-  chainId: SolanaChainId = BRIDGEKIT_ENV === "mainnet" ? "Solana" : "Solana_Devnet"
-): Connection => {
-  const endpoint = getSolanaRpcEndpoint(chainId);
-  return new Connection(endpoint, "confirmed");
 };
 
 // Re-export PublicKey for convenience

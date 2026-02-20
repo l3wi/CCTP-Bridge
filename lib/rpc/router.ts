@@ -64,10 +64,8 @@ function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
 }
 
 export const getPreferredEvmRpcUrl = (
-  chainId: number,
-  env: BridgeEnvironment = DEFAULT_ENV
+  chainId: number
 ): string | undefined => {
-  void env;
   const urls = getConfiguredEvmRpcUrls(chainId);
   return urls[0];
 };

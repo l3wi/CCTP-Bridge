@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { BridgePageShell } from "@/components/bridge-page-shell";
 import { BridgeTrackingCard } from "@/components/bridge-tracking-card";
@@ -23,8 +23,6 @@ import {
 } from "@/lib/transactionRecovery";
 import { getErrorMessage } from "@/lib/cctp/errors";
 
-const STORE_GRACE_MS = 1_250;
-
 const normalizeNonceValue = (value: string): string => {
   try {
     return BigInt(value).toString();
@@ -41,10 +39,8 @@ const truncateHashForDisplay = (value: string): string => {
 
 export default function BridgeTrackingPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const params = useParams<{ sourceChainId: string; id: string }>();
   const { transactions, addTransaction, updateTransaction } = useTransactionStore();
-  const isFreshNavigation = searchParams.get("fresh") === "1";
 
   const sourceParam = params.sourceChainId;
   const idParam = params.id;
@@ -207,9 +203,7 @@ export default function BridgeTrackingPage() {
 
     let cancelled = false;
 
-    const recoveryDelayMs =
-      routeId.kind === "txHash" && isFreshNavigation ? STORE_GRACE_MS : 0;
-    const timer = setTimeout(async () => {
+    void (async () => {
       if (cancelled) return;
 
       try {
@@ -248,11 +242,10 @@ export default function BridgeTrackingPage() {
           setIsInitialLookupPending(false);
         }
       }
-    }, recoveryDelayMs);
+    })();
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
     };
   }, [
     addTransaction,
@@ -261,7 +254,6 @@ export default function BridgeTrackingPage() {
     routeId.kind,
     routeId.normalizedId,
     sourceChainId,
-    isFreshNavigation,
     updateTransaction,
   ]);
 
@@ -280,9 +272,7 @@ export default function BridgeTrackingPage() {
       routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
 
     const canonicalPath = buildBridgeRoute(sourceChainId, canonicalId);
-    router.replace(
-      isFreshNavigation ? `${canonicalPath}?fresh=1` : canonicalPath
-    );
+    router.replace(canonicalPath);
   }, [
     router,
     sourceChainId,
@@ -290,7 +280,6 @@ export default function BridgeTrackingPage() {
     routeId.kind,
     routeId.normalizedId,
     decodedId,
-    isFreshNavigation,
   ]);
 
   if (!isStoreHydrated) {

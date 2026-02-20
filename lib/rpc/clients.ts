@@ -7,6 +7,7 @@ import { getWalletFirstEvmTransport, getSolanaRpcEndpoint } from "@/lib/rpc/rout
 import type { SolanaChainId } from "@/lib/types";
 
 const DEFAULT_ENV: BridgeEnvironment = BRIDGEKIT_ENV;
+const solanaConnectionCache = new Map<string, Connection>();
 
 const formatExplorerBaseUrl = (url?: string) => {
   if (!url) return undefined;
@@ -94,5 +95,13 @@ export const createSolanaConnection = (
   env: BridgeEnvironment = DEFAULT_ENV
 ) => {
   const endpoint = getSolanaRpcEndpoint(chainId, env);
-  return new Connection(endpoint, commitment);
+  const cacheKey = `${endpoint}:${commitment}`;
+  const cached = solanaConnectionCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const connection = new Connection(endpoint, commitment);
+  solanaConnectionCache.set(cacheKey, connection);
+  return connection;
 };

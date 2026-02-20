@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useWalletClient } from "wagmi";
 import { ChainId, isSolanaChain } from "@/lib/types";
-import { createSolanaConnection } from "@/lib/solanaAdapter";
-import { createEvmPublicClient } from "@/lib/rpc/clients";
+import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
 
 // Polling configuration
 const POLL_INTERVAL_MS = 5_000; // Poll every 5 seconds
 const MAX_POLL_DURATION_MS = 60 * 1000; // Stop polling after 1 minute
+const POLL_TIMEOUT_ERROR =
+  "Burn confirmation is taking longer than expected. Please check your transaction status and retry if needed.";
 
 export interface BurnPollingState {
   confirmed: boolean;
@@ -46,6 +47,10 @@ export function useBurnPolling({
     if (!sourceChainId || isSolanaChain(sourceChainId)) return null;
     return createEvmPublicClient(sourceChainId, { walletClient });
   }, [sourceChainId, walletClient]);
+  const solanaConnection = useMemo(() => {
+    if (!sourceChainId || !isSolanaChain(sourceChainId)) return null;
+    return createSolanaConnection(sourceChainId);
+  }, [sourceChainId]);
 
   const [state, setState] = useState<BurnPollingState>({
     confirmed: false,
@@ -75,20 +80,15 @@ export function useBurnPolling({
     onBurnFailedRef.current = onBurnFailed;
   }, [onBurnConfirmed, onBurnFailed]);
 
-  // Determine if we should poll
-  const shouldPoll = useMemo(() => {
-    if (disabled) return false;
-    if (state.confirmed || state.failed) return false;
-    if (!burnTxHash || !sourceChainId) return false;
-
-    // Check if we've exceeded max poll duration
-    if (startTimeRef.current) {
-      const ageMs = Date.now() - startTimeRef.current;
-      if (ageMs >= MAX_POLL_DURATION_MS) return false;
-    }
-
-    return true;
-  }, [disabled, state.confirmed, state.failed, burnTxHash, sourceChainId]);
+  useEffect(() => {
+    startTimeRef.current = null;
+    setState({
+      confirmed: false,
+      failed: false,
+      checking: false,
+      lastChecked: null,
+    });
+  }, [burnTxHash, sourceChainId]);
 
   // EVM burn polling
   const checkEvmBurn = useCallback(async () => {
@@ -146,20 +146,24 @@ export function useBurnPolling({
   // Solana burn polling
   const checkSolanaBurn = useCallback(async () => {
     if (!burnTxHash || !sourceChainId || !isSolanaChain(sourceChainId)) return;
+    if (!solanaConnection) return;
     if (!isMountedRef.current) return;
 
     setState((prev) => ({ ...prev, checking: true }));
 
     try {
-      const connection = createSolanaConnection(sourceChainId);
-      const status = await connection.getSignatureStatus(burnTxHash);
+      const statusResult = await solanaConnection.getSignatureStatuses(
+        [burnTxHash],
+        { searchTransactionHistory: true }
+      );
+      const status = statusResult.value[0] ?? null;
 
       if (!isMountedRef.current) return;
 
-      if (status?.value) {
-        if (status.value.err) {
+      if (status) {
+        if (status.err) {
           // Transaction failed
-          const errorMsg = `Burn transaction failed: ${JSON.stringify(status.value.err)}`;
+          const errorMsg = `Burn transaction failed: ${JSON.stringify(status.err)}`;
           setState({
             confirmed: false,
             failed: true,
@@ -169,8 +173,8 @@ export function useBurnPolling({
           });
           onBurnFailedRef.current?.(errorMsg);
         } else if (
-          status.value.confirmationStatus === "confirmed" ||
-          status.value.confirmationStatus === "finalized"
+          status.confirmationStatus === "confirmed" ||
+          status.confirmationStatus === "finalized"
         ) {
           // Transaction confirmed
           setState({
@@ -205,10 +209,17 @@ export function useBurnPolling({
         lastChecked: new Date(),
       }));
     }
-  }, [burnTxHash, sourceChainId]);
+  }, [burnTxHash, sourceChainId, solanaConnection]);
 
   // Main polling effect
   useEffect(() => {
+    const shouldPoll =
+      !disabled &&
+      !state.confirmed &&
+      !state.failed &&
+      !!burnTxHash &&
+      !!sourceChainId;
+
     if (!shouldPoll) {
       if (pollingRef.current) {
         clearInterval(pollingRef.current);
@@ -223,12 +234,40 @@ export function useBurnPolling({
     }
 
     const checkBurn = isSolanaChain(sourceChainId!) ? checkSolanaBurn : checkEvmBurn;
+    const checkBurnWithTimeout = async () => {
+      if (!isMountedRef.current) return;
+
+      if (startTimeRef.current) {
+        const ageMs = Date.now() - startTimeRef.current;
+        if (ageMs >= MAX_POLL_DURATION_MS) {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+
+          setState((prev) => ({
+            ...prev,
+            confirmed: false,
+            failed: true,
+            checking: false,
+            lastChecked: new Date(),
+            error: POLL_TIMEOUT_ERROR,
+          }));
+          onBurnFailedRef.current?.(POLL_TIMEOUT_ERROR);
+          return;
+        }
+      }
+
+      await checkBurn();
+    };
 
     // Run initial check
-    checkBurn();
+    void checkBurnWithTimeout();
 
     // Start polling
-    pollingRef.current = setInterval(checkBurn, POLL_INTERVAL_MS);
+    pollingRef.current = setInterval(() => {
+      void checkBurnWithTimeout();
+    }, POLL_INTERVAL_MS);
 
     return () => {
       if (pollingRef.current) {
@@ -236,7 +275,15 @@ export function useBurnPolling({
         pollingRef.current = null;
       }
     };
-  }, [shouldPoll, sourceChainId, checkEvmBurn, checkSolanaBurn]);
+  }, [
+    disabled,
+    state.confirmed,
+    state.failed,
+    burnTxHash,
+    sourceChainId,
+    checkEvmBurn,
+    checkSolanaBurn,
+  ]);
 
   // Reset function for new transactions
   const reset = useCallback(() => {

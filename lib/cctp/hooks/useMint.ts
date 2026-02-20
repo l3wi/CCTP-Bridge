@@ -52,7 +52,7 @@ import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 
 const ALREADY_CLAIMED_TOAST_TITLE = "USDC Successfully Claimed";
 const ALREADY_CLAIMED_TOAST_DESCRIPTION =
-  "USDC Successfully Claimed. Check you wallet for the USDC.";
+  "USDC Successfully Claimed. Check your wallet for the USDC.";
 
 export function useMint() {
   // EVM wallet state
@@ -157,6 +157,12 @@ export function useMint() {
         return {
           success: false,
           error: "Attestation not ready yet. Please wait a few more minutes.",
+        };
+      }
+      if (!attestationData.message || !attestationData.attestation) {
+        return {
+          success: false,
+          error: "Attestation payload is incomplete. Please try again.",
         };
       }
 
@@ -368,6 +374,12 @@ export function useMint() {
           error: "Attestation not ready yet. Please wait a few more minutes.",
         };
       }
+      if (!attestationData.message || !attestationData.attestation) {
+        return {
+          success: false,
+          error: "Attestation payload is incomplete. Please try again.",
+        };
+      }
 
       // Store nonce for error handler (needed for re-attestation)
       attestationNonce = attestationData.nonce;
@@ -547,7 +559,12 @@ function handleMintError(
 ): MintResult {
   const errorMessage = extractErrorMessage(error, 500);
 
-  // ── 0. Always log full debug info ──────────────────────────────────
+  // ── 0. User rejection ─────────────────────────────────────────────
+  if (isUserRejection(error)) {
+    return { success: false, error: "Transaction cancelled by user" };
+  }
+
+  // ── 1. Always log full debug info for non-user errors ─────────────
   console.error("EVM mint failed:", {
     ecosystem: "evm",
     burnTxHash,
@@ -556,11 +573,6 @@ function handleMintError(
     shortMessage: (error as { shortMessage?: string })?.shortMessage,
     rawError: error,
   });
-
-  // ── 1. User rejection ─────────────────────────────────────────────
-  if (isUserRejection(error)) {
-    return { success: false, error: "Transaction cancelled by user" };
-  }
 
   // ── 2. Try to match a known CCTP revert reason ────────────────────
   const { info } = parseEvmCctpError(error);
@@ -629,19 +641,20 @@ function handleSolanaMintError(
   toast: ToastFn,
   attestationNonce?: string
 ): MintResult {
-  // ── 0. Gather all available error context ──────────────────────────────
-  const errorMessage = extractErrorMessage(error, 500);
+  // ── 0. User rejection (before any other checks) ───────────────────────
+  if (isUserRejection(error)) {
+    return { success: false, error: "Transaction cancelled by user" };
+  }
 
-  // Logs from our explicit simulateSignedTransaction (attached as .simulationLogs)
+  // ── 1. Gather all available error context ──────────────────────────────
+  const errorMessage = extractErrorMessage(error, 500);
   const simLogs = (error as { simulationLogs?: string[] })?.simulationLogs ?? [];
-  // Legacy .logs / .transactionLogs from SendTransactionError
   const txLogs = (error as { transactionLogs?: string[] })?.transactionLogs ?? [];
   const legacyLogs = (error as { logs?: string[] })?.logs ?? [];
   const allLogs = [...simLogs, ...txLogs, ...legacyLogs];
-
   const txMessage = (error as { transactionMessage?: string })?.transactionMessage ?? "";
 
-  // ── 1. Always log full debug info ──────────────────────────────────────
+  // ── 2. Always log full debug info for non-user errors ──────────────────
   console.error("Solana mint failed:", {
     ecosystem: "solana",
     burnTxHash,
@@ -651,11 +664,6 @@ function handleSolanaMintError(
     logs: allLogs.length > 0 ? allLogs : "(no logs captured)",
     rawError: error,
   });
-
-  // ── 2. User rejection (before any other checks) ───────────────────────
-  if (isUserRejection(error)) {
-    return { success: false, error: "Transaction cancelled by user" };
-  }
 
   // ── 3. Nonce already used (account-already-in-use from init) ──────────
   const allText = `${errorMessage} ${txMessage} ${allLogs.join("\n")}`;

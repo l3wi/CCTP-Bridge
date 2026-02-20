@@ -106,8 +106,8 @@ function normalizeChain(chain: ChainWithOptionalRpcUrls): UniversalChainMetadata
     return normalized;
   }
 
-  const chainKey = String(chain.chain);
-  if (!chainKey.startsWith("Solana")) return null;
+  const chainKey = String(chain.chain).trim();
+  if (!chainKey) return null;
 
   const normalized: SolanaChainMetadata = {
     ...base,

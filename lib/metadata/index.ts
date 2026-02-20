@@ -22,6 +22,22 @@ const DEFAULT_ENV: BridgeEnvironment =
 export const BRIDGEKIT_ENV: BridgeEnvironment = DEFAULT_ENV;
 
 const metadata = generatedCctp as GeneratedCctpMetadata;
+const warnedCrossEnvFallbacks = new Set<string>();
+
+const warnCrossEnvFallback = (
+  chainType: "evm" | "solana",
+  chainIdentifier: number | string,
+  requestedEnv: BridgeEnvironment,
+  fallbackEnv: BridgeEnvironment
+) => {
+  const key = `${chainType}:${chainIdentifier}:${requestedEnv}->${fallbackEnv}`;
+  if (warnedCrossEnvFallbacks.has(key)) return;
+
+  warnedCrossEnvFallbacks.add(key);
+  console.warn(
+    `[metadata] Missing ${chainType} chain ${chainIdentifier} in ${requestedEnv}; falling back to ${fallbackEnv} metadata.`
+  );
+};
 
 const byEnv = (env: BridgeEnvironment): UniversalChainMetadata[] =>
   metadata.chains.filter((chain) => chain.isTestnet === (env === "testnet"));
@@ -37,10 +53,14 @@ const findEvmChainById = (
   if (primary) return primary;
 
   const fallbackEnv: BridgeEnvironment = env === "mainnet" ? "testnet" : "mainnet";
-  return byEnv(fallbackEnv).find(
+  const fallback = byEnv(fallbackEnv).find(
     (chain): chain is EvmChainMetadata =>
       chain.type === "evm" && chain.chainId === chainId
   );
+  if (fallback) {
+    warnCrossEnvFallback("evm", chainId, env, fallbackEnv);
+  }
+  return fallback;
 };
 
 const findSolanaChainById = (
@@ -54,10 +74,14 @@ const findSolanaChainById = (
   if (primary) return primary;
 
   const fallbackEnv: BridgeEnvironment = env === "mainnet" ? "testnet" : "mainnet";
-  return byEnv(fallbackEnv).find(
+  const fallback = byEnv(fallbackEnv).find(
     (chain): chain is SolanaChainMetadata =>
       chain.type === "solana" && chain.chain === chainId
   );
+  if (fallback) {
+    warnCrossEnvFallback("solana", chainId, env, fallbackEnv);
+  }
+  return fallback;
 };
 
 export const getAllSupportedChains = (

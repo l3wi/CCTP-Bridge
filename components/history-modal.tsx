@@ -455,6 +455,18 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
         return;
       }
 
+      if (attestationData.destinationDomain === undefined) {
+        setError("Attestation is still pending. Please wait and try again.");
+        setIsLoading(false);
+        return;
+      }
+
+      if (attestationData.sourceDomain === undefined) {
+        setError("Attestation payload is incomplete. Please try again shortly.");
+        setIsLoading(false);
+        return;
+      }
+
       // Get target chain from destination domain (supports both EVM and Solana)
       const targetChainId = getChainIdFromDomainUniversal(attestationData.destinationDomain, BRIDGEKIT_ENV);
 

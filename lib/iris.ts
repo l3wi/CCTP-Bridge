@@ -71,11 +71,11 @@ export interface IrisAttestationResponse {
 }
 
 export interface AttestationData {
-  message: `0x${string}`;
-  attestation: `0x${string}`;
+  message?: `0x${string}`;
+  attestation?: `0x${string}`;
   status: "pending" | "pending_confirmations" | "complete";
-  sourceDomain: number;
-  destinationDomain: number;
+  sourceDomain?: number;
+  destinationDomain?: number;
   nonce: string;
   amount?: string;
   mintRecipient?: string;
@@ -179,20 +179,16 @@ export async function fetchAttestation(
 
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
-      // Attestation still in progress - expected during attestation window
-      // Return partial data with delayReason if available
-      if (msg.delayReason) {
-        return {
-          message: "0x" as `0x${string}`,
-          attestation: "0x" as `0x${string}`,
-          status: msg.status,
-          sourceDomain: 0,
-          destinationDomain: 0,
-          nonce: msg.eventNonce,
-          delayReason: msg.delayReason,
-        };
+      // Attestation still in progress - expected during attestation window.
+      if (msg.status === "complete") {
+        console.error("Iris returned complete status without decodedMessage payload");
+        return null;
       }
-      return null;
+      return {
+        status: msg.status,
+        nonce: msg.eventNonce,
+        delayReason: msg.delayReason,
+      };
     }
 
     // Ensure message and attestation have 0x prefix
@@ -316,29 +312,25 @@ export async function fetchAttestationUniversal(
       logDelayReason(msg.delayReason);
 
       if (!msg.decodedMessage) {
-        // Attestation still in progress - expected during attestation window
-        // Return partial data with delayReason if available
-        if (msg.delayReason) {
-          const pendingResult: AttestationData = {
-            message: "0x" as `0x${string}`,
-            attestation: "0x" as `0x${string}`,
-            status: msg.status,
-            sourceDomain: 0,
-            destinationDomain: 0,
-            nonce: msg.eventNonce,
-            delayReason: msg.delayReason,
-          };
+        if (msg.status === "complete") {
+          console.error("Iris returned complete status without decodedMessage payload");
           cachedUniversalAttestationResponses.set(requestKey, {
-            value: pendingResult,
-            expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
+            value: null,
+            expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
           });
-          return pendingResult;
+          return null;
         }
+
+        const pendingResult: AttestationData = {
+          status: msg.status,
+          nonce: msg.eventNonce,
+          delayReason: msg.delayReason,
+        };
         cachedUniversalAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+          value: pendingResult,
+          expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
         });
-        return null;
+        return pendingResult;
       }
 
       const message = (
@@ -458,35 +450,32 @@ export async function fetchAttestationByNonceUniversal(
       logDelayReason(msg.delayReason);
 
       if (!msg.decodedMessage) {
-        if (msg.delayReason) {
-          const pendingAttestation: AttestationData = {
-            message: "0x" as `0x${string}`,
-            attestation: "0x" as `0x${string}`,
-            status: msg.status,
-            sourceDomain: 0,
-            destinationDomain: 0,
-            nonce: msg.eventNonce,
-            delayReason: msg.delayReason,
-          };
-          const pendingResult: AttestationLookupByNonceResult = {
-            attestation: pendingAttestation,
-            burnTxHash: normalizeSourceTxHash(
-              sourceChainId,
-              msg.transactionHash ?? msg.txHash ?? msg.sourceTxHash
-            ),
-          };
+        if (msg.status === "complete") {
+          console.error("Iris returned complete status without decodedMessage payload");
           cachedUniversalNonceAttestationResponses.set(requestKey, {
-            value: pendingResult,
-            expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
+            value: null,
+            expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
           });
-          return pendingResult;
+          return null;
         }
 
+        const pendingAttestation: AttestationData = {
+          status: msg.status,
+          nonce: msg.eventNonce,
+          delayReason: msg.delayReason,
+        };
+        const pendingResult: AttestationLookupByNonceResult = {
+          attestation: pendingAttestation,
+          burnTxHash: normalizeSourceTxHash(
+            sourceChainId,
+            msg.transactionHash ?? msg.txHash ?? msg.sourceTxHash
+          ),
+        };
         cachedUniversalNonceAttestationResponses.set(requestKey, {
-          value: null,
-          expiresAt: Date.now() + IRIS_NOT_FOUND_CACHE_TTL_MS,
+          value: pendingResult,
+          expiresAt: Date.now() + IRIS_PENDING_CACHE_TTL_MS,
         });
-        return null;
+        return pendingResult;
       }
 
       const message = (
@@ -579,12 +568,10 @@ export interface ReattestResult {
  * @returns Result indicating success or failure
  */
 export async function requestReattestation(
-  sourceChainId: number | string,
+  sourceChainId: ChainId,
   nonce: string
 ): Promise<ReattestResult> {
-  const isTestnet = typeof sourceChainId === "number"
-    ? isTestnetChain(sourceChainId)
-    : isTestnetChainUniversal(sourceChainId as any);
+  const isTestnet = isTestnetChainUniversal(sourceChainId);
 
   const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
 

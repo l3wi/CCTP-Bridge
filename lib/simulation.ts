@@ -356,6 +356,18 @@ export async function checkMintReadiness(
     };
   }
 
+  if (!attestationData.message || !attestationData.attestation) {
+    return {
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
+      attestationReady: false,
+      error: "Attestation payload is incomplete",
+      delayReason: attestationData.delayReason,
+      nonce: attestationData.nonce,
+    };
+  }
+
   // Skip RPC simulation if requested (for Solana sources)
   // Once attestation is ready, we know the user can mint - they just need to click Claim
   if (skipSimulation) {
