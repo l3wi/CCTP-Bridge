@@ -54,6 +54,8 @@ export interface ClaimSectionProps {
   isReattesting?: boolean;
   /** True if we're polling for the new attestation after re-request */
   isAwaitingReattestation?: boolean;
+  /** True when re-attestation polling timed out and needs manual retry */
+  reattestTimedOut?: boolean;
 }
 
 export interface BridgeInfoProps {

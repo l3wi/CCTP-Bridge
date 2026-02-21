@@ -29,6 +29,8 @@ export interface MintPollingState {
   messageExpired?: boolean;
   /** The nonce for the message (needed for re-attestation) */
   nonce?: string;
+  /** True when re-attestation polling exceeded the max wait window */
+  reattestTimedOut?: boolean;
 }
 
 interface UseMintPollingParams {
@@ -76,6 +78,7 @@ export function useMintPolling({
     delayReason: undefined,
     messageExpired: false,
     nonce: undefined,
+    reattestTimedOut: false,
   });
 
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
@@ -210,6 +213,11 @@ export function useMintPolling({
       if (!isMountedRef.current) return;
 
       setIsReattesting(true);
+      setMintSimulation((prev) => ({
+        ...prev,
+        reattestTimedOut: false,
+        error: undefined,
+      }));
 
       toast({
         title: "Attestation expired",
@@ -285,6 +293,7 @@ export function useMintPolling({
         reattestStartedAtRef.current = null;
         setMintSimulation((prev) => ({
           ...prev,
+          reattestTimedOut: true,
           error: "Re-attestation is taking longer than expected. Please retry manually.",
         }));
         toast({
@@ -317,6 +326,7 @@ export function useMintPolling({
             error: undefined,
             canMint: true,
             attestationReady: true,
+            reattestTimedOut: false,
           }));
 
           // Update steps
@@ -419,6 +429,7 @@ export function useMintPolling({
           delayReason: result.delayReason,
           messageExpired: result.messageExpired,
           nonce: result.nonce,
+          reattestTimedOut: false,
         });
 
         if (result.nonce && burnTxHash) {
@@ -616,6 +627,7 @@ export function useMintPolling({
       messageExpired: true,
       nonce,
       canMint: false,
+      reattestTimedOut: false,
     }));
     if (burnTxHash) {
       updateTransaction(burnTxHash, { nonce });
@@ -634,6 +646,11 @@ export function useMintPolling({
     }
 
     setIsReattesting(true);
+    setMintSimulation((prev) => ({
+      ...prev,
+      reattestTimedOut: false,
+      error: undefined,
+    }));
 
     try {
       const result = await requestReattestation(sourceChainId, mintSimulation.nonce);

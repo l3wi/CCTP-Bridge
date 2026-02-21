@@ -15,6 +15,7 @@ export function ClaimSection({
   onReattest,
   isReattesting,
   isAwaitingReattestation,
+  reattestTimedOut,
 }: ClaimSectionProps) {
   // Awaiting new attestation after auto re-request — show polling spinner
   if (isAwaitingReattestation) {
@@ -63,6 +64,11 @@ export function ClaimSection({
         >
           Attestation expired — request new attestation
         </Button>
+        {reattestTimedOut && (
+          <p className="text-xs text-amber-600 text-center">
+            Automatic re-attestation timed out after 10 minutes. Retry manually.
+          </p>
+        )}
       </div>
     );
   }

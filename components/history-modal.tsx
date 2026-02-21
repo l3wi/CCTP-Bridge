@@ -28,6 +28,7 @@ import { buildBridgeRoute, getTransactionShareId } from "@/lib/bridgeRoute";
 import { ChainIcon } from "@/components/chain-icon";
 import { getExplorerTxUrlUniversal, getAllSupportedChains, BRIDGEKIT_ENV, getBridgeChainByIdUniversal, type UniversalChainDefinition } from "@/lib/bridgeKit";
 import { fetchAttestationUniversal } from "@/lib/iris";
+import type { AttestationData } from "@/lib/iris";
 import { getChainIdFromDomainUniversal, getChainInfoFromDomainAllChains, isNonceUsed } from "@/lib/contracts";
 import { getSolanaUsdcMint } from "@/lib/cctp/shared";
 import { toChainDefinition } from "@/lib/chainDefinition";
@@ -393,6 +394,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [walletMismatchWarning, setWalletMismatchWarning] = useState<string | null>(null);
+  const [cachedAttestation, setCachedAttestation] = useState<{
+    sourceChainId: ChainId;
+    burnTxHash: string;
+    attestation: AttestationData;
+  } | null>(null);
 
   // Get all supported chains (EVM + Solana)
   const supportedChains = useMemo(() => getAllSupportedChains(BRIDGEKIT_ENV), []);
@@ -414,6 +420,8 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
   const isSolanaSelected = selectedChainId !== null && isSolanaChain(selectedChainId);
 
   const handleSubmit = async (forceSkipWalletCheck = false) => {
+    if (isLoading) return;
+
     if (!selectedChainId || !txHash) {
       setError("Please select a chain and enter a transaction hash");
       return;
@@ -447,13 +455,27 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
     setError(null);
 
     try {
-      const attestationData = await fetchAttestationUniversal(selectedChainId, normalizedHash);
+      const cachedMatches =
+        cachedAttestation?.sourceChainId === selectedChainId &&
+        cachedAttestation?.burnTxHash === normalizedHash;
+
+      const attestationData =
+        forceSkipWalletCheck && cachedMatches
+          ? cachedAttestation.attestation
+          : await fetchAttestationUniversal(selectedChainId, normalizedHash);
 
       if (!attestationData) {
+        setCachedAttestation(null);
         setError("Transaction not found. Make sure the chain and hash are correct.");
         setIsLoading(false);
         return;
       }
+
+      setCachedAttestation({
+        sourceChainId: selectedChainId,
+        burnTxHash: normalizedHash,
+        attestation: attestationData,
+      });
 
       if (attestationData.destinationDomain === undefined) {
         setError("Attestation is still pending. Please wait and try again.");
@@ -655,6 +677,8 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
       };
 
       addTransaction(transaction);
+      setCachedAttestation(null);
+      setWalletMismatchWarning(null);
       onSuccess();
     } catch (err) {
       console.error("Failed to fetch transaction:", err);
@@ -682,7 +706,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
           <label className="text-sm font-medium text-slate-300">Source Chain</label>
           <Select
             value={selectedChainId !== null ? (typeof selectedChainId === "string" ? selectedChainId : String(selectedChainId)) : ""}
-            onValueChange={(value) => setSelectedChainId(parseChainSelectId(value))}
+            onValueChange={(value) => {
+              setSelectedChainId(parseChainSelectId(value));
+              setWalletMismatchWarning(null);
+              setCachedAttestation(null);
+            }}
           >
             <SelectTrigger className="bg-slate-700/50 border-slate-600 text-white">
               <SelectValue placeholder="Select Chain...">
@@ -734,7 +762,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
             type="text"
             placeholder={isSolanaSelected ? "Enter Solana signature (e.g., 2bX4P87La...)" : "0x..."}
             value={txHash}
-            onChange={(e) => setTxHash(e.target.value)}
+            onChange={(e) => {
+              setTxHash(e.target.value);
+              setWalletMismatchWarning(null);
+              setCachedAttestation(null);
+            }}
             className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
           />
           <p className="text-xs text-slate-400">
@@ -760,10 +792,11 @@ function AddTransactionView({ onBack, onSuccess, addTransaction, existingHashes,
               variant="outline"
               size="sm"
               className="w-full bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20"
+              disabled={isLoading}
               onClick={() => {
                 setWalletMismatchWarning(null);
-                // Re-trigger submit with wallet check bypassed
-                handleSubmit(true);
+                // Re-trigger submit with wallet check bypassed.
+                void handleSubmit(true);
               }}
             >
               Add Anyway (without wallet verification)

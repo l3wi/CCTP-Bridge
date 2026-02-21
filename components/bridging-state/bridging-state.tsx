@@ -237,6 +237,7 @@ export function BridgingState({
     requestReattest,
     isReattesting,
     isAwaitingReattestation,
+    reattestTimedOut,
   } = useMintPolling({
     burnTxHash,
     sourceChainId,
@@ -531,6 +532,7 @@ export function BridgingState({
             onReattest={requestReattest}
             isReattesting={isReattesting}
             isAwaitingReattestation={isAwaitingReattestation}
+            reattestTimedOut={reattestTimedOut}
           />
 
           <BridgeInfo
