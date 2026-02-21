@@ -25,6 +25,7 @@ interface TransactionState {
   isLoading: boolean;
   error: string | null;
   addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
+  upsertTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
   updateTransaction: (
     hash: UniversalTxHash,
     updates: Partial<LocalTransaction>
@@ -278,6 +279,43 @@ export const useTransactionStore = create<TransactionState>()(
             : [newTransaction, ...state.transactions],
           error: null,
         }));
+      },
+
+      upsertTransaction: (transaction) => {
+        const incoming = {
+          ...transaction,
+          date: new Date(),
+        } as LocalTransaction;
+        const nextTransaction = sanitizeForStorage(normalizeTransaction(incoming));
+
+        set((state) => {
+          const existingIndex = state.transactions.findIndex(
+            (tx) => tx.hash === nextTransaction.hash
+          );
+
+          if (existingIndex < 0) {
+            return {
+              transactions: [nextTransaction, ...state.transactions],
+              error: null,
+            };
+          }
+
+          const existing = state.transactions[existingIndex];
+          const merged = sanitizeForStorage({
+            ...existing,
+            ...nextTransaction,
+            date: existing.date,
+            version: "v3",
+          } as LocalTransaction);
+
+          const updatedTransactions = [...state.transactions];
+          updatedTransactions[existingIndex] = merged;
+
+          return {
+            transactions: updatedTransactions,
+            error: null,
+          };
+        });
       },
 
       updateTransaction: (hash, updates) => {

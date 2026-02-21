@@ -40,7 +40,7 @@ const truncateHashForDisplay = (value: string): string => {
 export default function BridgeTrackingPage() {
   const router = useRouter();
   const params = useParams<{ sourceChainId: string; id: string }>();
-  const { transactions, addTransaction, updateTransaction } = useTransactionStore();
+  const { transactions, upsertTransaction } = useTransactionStore();
 
   const sourceParam = params.sourceChainId;
   const idParam = params.id;
@@ -68,8 +68,12 @@ export default function BridgeTrackingPage() {
     useTransactionStore.persist.hasHydrated()
   );
   const [isInitialLookupPending, setIsInitialLookupPending] = useState(true);
+  const [recoveryRetryNonce, setRecoveryRetryNonce] = useState(0);
 
   const recoveryAttemptRef = useRef<string | null>(null);
+  const lastAutoFilledHashRef = useRef<string | null>(null);
+  const manualBurnHashDirtyRef = useRef(false);
+  const manualBurnHashRef = useRef("");
 
   useEffect(() => {
     const persistApi = useTransactionStore.persist;
@@ -144,11 +148,7 @@ export default function BridgeTrackingPage() {
 
       try {
         const { transaction } = await recoverTransactionFromBurnHash(sourceChainId, burnHash);
-        const hasExistingHash = transactions.some((tx) => tx.hash === transaction.hash);
-        addTransaction(transaction);
-        if (hasExistingHash) {
-          updateTransaction(transaction.hash, transaction);
-        }
+        upsertTransaction(transaction);
 
         const nextId = routeId.kind === "nonce" && transaction.nonce
           ? transaction.nonce
@@ -161,14 +161,23 @@ export default function BridgeTrackingPage() {
         setIsRecovering(false);
       }
     },
-    [addTransaction, router, routeId.kind, sourceChainId, transactions, updateTransaction]
+    [router, routeId.kind, sourceChainId, upsertTransaction]
   );
 
   useEffect(() => {
     if (routeId.kind === "txHash") {
       setManualBurnHash(routeId.normalizedId);
+      manualBurnHashRef.current = routeId.normalizedId;
+      manualBurnHashDirtyRef.current = false;
+      lastAutoFilledHashRef.current = routeId.normalizedId;
     } else {
-      setManualBurnHash("");
+      if (
+        !manualBurnHashDirtyRef.current &&
+        manualBurnHashRef.current === lastAutoFilledHashRef.current
+      ) {
+        setManualBurnHash("");
+        manualBurnHashRef.current = "";
+      }
     }
   }, [routeId.kind, routeId.normalizedId]);
 
@@ -195,7 +204,7 @@ export default function BridgeTrackingPage() {
       return;
     }
 
-    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}`;
+    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}:${recoveryRetryNonce}`;
     if (recoveryAttemptRef.current === attemptKey) {
       setIsInitialLookupPending(false);
       return;
@@ -224,11 +233,7 @@ export default function BridgeTrackingPage() {
               );
 
         if (cancelled) return;
-        const hasExistingHash = transactions.some((tx) => tx.hash === transaction.hash);
-        addTransaction(transaction);
-        if (hasExistingHash) {
-          updateTransaction(transaction.hash, transaction);
-        }
+        upsertTransaction(transaction);
       } catch (error) {
         if (cancelled) return;
 
@@ -254,15 +259,21 @@ export default function BridgeTrackingPage() {
       cancelled = true;
     };
   }, [
-    addTransaction,
     isStoreHydrated,
     matchedTransaction,
+    recoveryRetryNonce,
     routeId.kind,
     routeId.normalizedId,
     sourceChainId,
-    transactions,
-    updateTransaction,
+    upsertTransaction,
   ]);
+
+  const handleRetryRecovery = useCallback(() => {
+    recoveryAttemptRef.current = null;
+    setRecoveryError(null);
+    setIsInitialLookupPending(true);
+    setRecoveryRetryNonce((prev) => prev + 1);
+  }, []);
 
   useEffect(() => {
     if (!sourceChainId) return;
@@ -354,7 +365,11 @@ export default function BridgeTrackingPage() {
               <label className="text-sm text-slate-300">Burn Transaction Hash</label>
               <Input
                 value={manualBurnHash}
-                onChange={(event) => setManualBurnHash(event.target.value)}
+                onChange={(event) => {
+                  manualBurnHashDirtyRef.current = true;
+                  manualBurnHashRef.current = event.target.value;
+                  setManualBurnHash(event.target.value);
+                }}
                 placeholder="0x... or Solana signature"
                 className="bg-slate-700/50 border-slate-600 text-white"
                 disabled={isRecovering}
@@ -382,6 +397,15 @@ export default function BridgeTrackingPage() {
               >
                 Back to Bridge
               </Button>
+              {!!recoveryError && !isRecovering && (
+                <Button
+                  variant="outline"
+                  className="border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
+                  onClick={handleRetryRecovery}
+                >
+                  Retry Lookup
+                </Button>
+              )}
             </div>
           </CardContent>
         </Card>

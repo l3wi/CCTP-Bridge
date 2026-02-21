@@ -32,7 +32,10 @@ const formatAmount = (rawAmount?: string): string | undefined => {
       return undefined;
     }
 
-    return (Number(amountBigInt) / 1_000_000).toFixed(2);
+    const scale = 1_000_000n;
+    const whole = amountBigInt / scale;
+    const fractional = (amountBigInt % scale) / 10_000n;
+    return `${whole.toString()}.${fractional.toString().padStart(2, "0")}`;
   } catch {
     return undefined;
   }
@@ -129,11 +132,15 @@ const buildRecoveredTransaction = async (
 
   let isAlreadyClaimed = false;
   if (attestationData.message) {
-    const nonceResult = await checkNonceUsed(
-      targetChainId,
-      attestationData.message
-    );
-    isAlreadyClaimed = nonceResult.isUsed;
+    try {
+      const nonceResult = await checkNonceUsed(
+        targetChainId,
+        attestationData.message
+      );
+      isAlreadyClaimed = nonceResult.isUsed;
+    } catch (error) {
+      console.warn("Nonce status check failed during recovery, assuming pending:", error);
+    }
   }
 
   const steps: BridgeResult["steps"] = [
@@ -243,7 +250,7 @@ export async function recoverTransactionFromNonce(
 
   if (!normalizedHash) {
     throw new TransactionRecoveryError(
-      "Found nonce in Iris, but burn transaction hash is unavailable for this source chain."
+      "Found nonce in Iris, but burn transaction hash has an invalid format for this source chain."
     );
   }
 
