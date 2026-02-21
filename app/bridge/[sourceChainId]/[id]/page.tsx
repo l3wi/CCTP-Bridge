@@ -13,6 +13,7 @@ import type { ChainId } from "@/lib/types";
 import {
   buildBridgeRoute,
   classifyBridgeRouteId,
+  normalizeTxHashForChain,
   parseBridgeRouteSource,
   type BridgeRouteIdKind,
 } from "@/lib/bridgeRoute";
@@ -385,7 +386,20 @@ export default function BridgeTrackingPage() {
                 disabled={!manualBurnHash.trim() || isRecovering || !sourceChainId}
                 onClick={() => {
                   if (!sourceChainId) return;
-                  void runRecovery(manualBurnHash.trim());
+                  const normalizedHash = normalizeTxHashForChain(
+                    sourceChainId,
+                    manualBurnHash
+                  );
+                  if (!normalizedHash) {
+                    setRecoveryError(
+                      typeof sourceChainId === "string"
+                        ? "Invalid Solana signature for the selected source chain."
+                        : "Invalid EVM transaction hash for the selected source chain."
+                    );
+                    return;
+                  }
+
+                  void runRecovery(normalizedHash);
                 }}
               >
                 {isRecovering ? "Recovering..." : "Add Transaction"}

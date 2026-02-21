@@ -403,7 +403,6 @@ export async function checkMintReadiness(
  * @param sourceChainId - The source EVM chain ID
  * @param destinationChainId - The destination Solana chain ID
  * @param attestationData - The attestation data from Iris
- * @param walletAdapter - The Solana wallet adapter
  * @returns Simulation result with alreadyMinted status
  */
 export async function checkSolanaMintStatus(
@@ -414,8 +413,7 @@ export async function checkSolanaMintStatus(
     attestation: string;
     message: string;
     mintRecipient?: string;
-  },
-  _walletAdapter: unknown
+  }
 ): Promise<SimulationResult> {
   try {
     void sourceChainId;
