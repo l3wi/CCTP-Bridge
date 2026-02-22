@@ -322,7 +322,9 @@ export function useMintPolling({
       }
 
       try {
-        const result = await fetchAttestationUniversal(sourceChainId, burnTxHash);
+        const result = await fetchAttestationUniversal(sourceChainId, burnTxHash, {
+          forceRefresh: true,
+        });
 
         if (!isMountedRef.current) return;
 

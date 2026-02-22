@@ -28,19 +28,13 @@ Next.js 15 app router application for bridging USDC across **EVM and Solana** us
 
 | Route | Implementation |
 |-------|----------------|
-| EVM → EVM | Circle Bridge Kit SDK |
+| EVM → EVM | Custom CCTP library (`lib/cctp/`) |
 | EVM → Solana | Custom CCTP library (`lib/cctp/`) |
 | Solana → EVM | Custom CCTP library (`lib/cctp/`) |
 
 ### Core Bridge Flow
 
-**EVM → EVM (Bridge Kit):**
-1. `kit.estimate` → fees/gas for route
-2. Bridge Kit handles approval + burn
-3. Bridge Kit fetches attestation + mints
-4. Steps surfaced via `BridgeResult`
-
-**Cross-Ecosystem (Custom CCTP):**
+**All routes (Custom CCTP):**
 1. `useBurn` → direct CCTP v2 depositForBurn
 2. Poll Circle Iris API for attestation
 3. `useMint` → direct CCTP v2 receiveMessage
@@ -76,7 +70,7 @@ lib/cctp/
 1. **Universal Interfaces** — `BurnParams`/`MintParams` work for both chains via type guards
 2. **PDA Derivation** — Solana Program Derived Addresses computed programmatically
 3. **Nonce Checking** — Prevents duplicate mints by verifying nonce usage on-chain
-4. **No Bridge Kit for Solana** — Direct Anchor calls avoid WebSocket hangs
+4. **No Bridge Kit execution path** — All routes use direct CCTP calls
 5. **Step Normalization** — Consistent step tracking across all bridge directions
 
 ### Type Guards
@@ -94,7 +88,7 @@ isValidTxHash(value)       // Universal tx hash validation
 ## Key Files
 
 ### Bridge Infrastructure
-- `lib/bridgeKit.ts` — Bridge Kit singleton, chain metadata, RPC config
+- `lib/bridgeKit.ts` — Compatibility facade backed by app-owned metadata + RPC config
 - `lib/cctp/hooks/useBurn.ts` — Unified burn hook (EVM + Solana)
 - `lib/cctp/hooks/useMint.ts` — Unified mint hook (EVM + Solana)
 - `lib/hooks/useCrossEcosystemBridge.ts` — Orchestrates burn + persistence
@@ -120,7 +114,7 @@ isValidTxHash(value)       // Universal tx hash validation
 
 **EVM:** Wagmi v2 + RainbowKit
 - Chains generated from `getWagmiChainsForEnv()`
-- Viem adapter via Bridge Kit
+- Viem adapter via app-owned metadata/RPC routing
 
 **Solana:** `@solana/wallet-adapter-react`
 - Phantom, Solflare, etc.

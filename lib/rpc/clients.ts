@@ -95,6 +95,8 @@ const buildSolanaFetch = (urls: string[]) => async (
 
     try {
       const response = await fetch(endpoint, requestInit);
+      // Read from a clone so the original response body remains untouched when
+      // we return non-retryable failures directly.
       const responseText = response.ok ? await response.clone().text() : null;
       const isTransient = shouldRetrySolanaRequest(response, responseText);
 
@@ -106,6 +108,8 @@ const buildSolanaFetch = (urls: string[]) => async (
       }
 
       if (responseText !== null) {
+        // We consumed the clone body above; return a fresh Response so callers
+        // can read the payload exactly once.
         return new Response(responseText, {
           status: response.status,
           statusText: response.statusText,

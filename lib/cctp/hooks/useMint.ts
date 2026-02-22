@@ -691,8 +691,8 @@ function handleMintError(
       return { success: true, alreadyMinted: true };
     }
 
-    // Message expired / fee issues → trigger auto re-attestation
-    if (info.isExpired) {
+    // Only explicit re-attestation errors should trigger auto retry.
+    if (info.needsReattestation) {
       return {
         success: false,
         messageExpired: true,

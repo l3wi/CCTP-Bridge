@@ -828,7 +828,9 @@ export async function simulateSignedTransaction(
  * This avoids WebSocket confirmation hangs in the browser.
  *
  * Performs an explicit simulation first to capture program logs on failure.
- * If simulation succeeds, sends with skipPreflight=true (already validated).
+ * If simulation succeeds, sends with skipPreflight=true to avoid repeating
+ * preflight work on congested RPCs. Callers must still poll signature status
+ * and treat post-simulation failures as expected TOCTOU behavior.
  *
  * Supports both legacy Transaction and VersionedTransaction.
  */
@@ -843,7 +845,8 @@ export async function sendTransactionNoConfirm(
   // Trade-off: this is not fully atomic. We may simulate against one RPC view and
   // submit against a node with slightly newer state, so a transaction can still fail
   // after a successful simulation (TOCTOU window). We keep this to avoid wallet UX
-  // stalls from repeated preflight + confirmation round-trips.
+  // stalls from repeated preflight + confirmation round-trips and surface failures
+  // via signature-status polling in the mint hook.
   const rawTransaction = signedTransaction.serialize();
 
   const signature = await connection.sendRawTransaction(rawTransaction, {

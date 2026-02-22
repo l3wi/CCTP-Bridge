@@ -79,7 +79,10 @@ export async function trackVerifiedBridgeView({
       sourceChainId: recovered.transaction.originChain,
       targetChainId: recovered.transaction.targetChain,
     });
-  } catch {
+  } catch (error) {
     // Never block rendering for analytics telemetry.
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("[analytics] trackVerifiedBridgeView failed:", error);
+    }
   }
 }

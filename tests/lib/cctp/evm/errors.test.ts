@@ -9,6 +9,14 @@ describe("evm CCTP errors", () => {
 
     expect(parsed.info?.title).toBe("Attestation expired");
     expect(parsed.info?.isExpired).toBe(true);
+    expect(parsed.info?.needsReattestation).toBe(true);
+  });
+
+  it("does not auto-trigger re-attestation for fee-cap errors", () => {
+    const parsed = parseEvmCctpError(new Error("execution reverted: fee exceeds max fee"));
+
+    expect(parsed.info?.title).toBe("Fee too high");
+    expect(parsed.info?.needsReattestation).toBeUndefined();
   });
 
   it("detects already-claimed nonce errors", () => {

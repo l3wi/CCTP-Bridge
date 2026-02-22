@@ -15,8 +15,10 @@ export interface EvmCctpErrorInfo {
   title: string;
   /** Toast description — 1-2 short sentences fitting a 420px toast */
   userMessage: string;
-  /** If true, the message has expired and needs re-attestation */
+  /** If true, the attestation is expired */
   isExpired?: boolean;
+  /** If true, auto-trigger a re-attestation request */
+  needsReattestation?: boolean;
   /** If true, treat as already-claimed */
   isAlreadyClaimed?: boolean;
 }
@@ -83,6 +85,7 @@ const EVM_CCTP_ERRORS: Array<{
       title: "Attestation expired",
       userMessage: "Automatically requesting a new attestation…",
       isExpired: true,
+      needsReattestation: true,
     },
   },
   {
@@ -91,22 +94,21 @@ const EVM_CCTP_ERRORS: Array<{
       title: "Attestation expired",
       userMessage: "Automatically requesting a new attestation…",
       isExpired: true,
+      needsReattestation: true,
     },
   },
   {
     pattern: /fee equals or exceeds amount/i,
     info: {
       title: "Fee too high",
-      userMessage: "Relay fee equals or exceeds the transfer amount. Re-attestation needed.",
-      isExpired: true,
+      userMessage: "Relay fee equals or exceeds the transfer amount. Retry with a higher amount.",
     },
   },
   {
     pattern: /fee exceeds max fee/i,
     info: {
       title: "Fee too high",
-      userMessage: "Relay fee exceeds the max fee. Re-attestation needed.",
-      isExpired: true,
+      userMessage: "Relay fee exceeds the max fee. Retry with standard speed or a higher max fee.",
     },
   },
   {

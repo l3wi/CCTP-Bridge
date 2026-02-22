@@ -42,6 +42,32 @@ const cachedUniversalNonceAttestationResponses = new Map<
   }
 >();
 
+const resolveIrisNetworkKey = (isTestnet: boolean): "testnet" | "mainnet" =>
+  isTestnet ? "testnet" : "mainnet";
+
+const buildUniversalAttestationRequestKey = (
+  sourceDomain: number,
+  normalizedHash: string,
+  isTestnet: boolean
+): string =>
+  `${sourceDomain}:${normalizedHash}:${resolveIrisNetworkKey(isTestnet)}`;
+
+const buildUniversalNonceRequestKey = (
+  sourceDomain: number,
+  normalizedNonce: string,
+  isTestnet: boolean
+): string =>
+  `${sourceDomain}:${normalizedNonce}:${resolveIrisNetworkKey(isTestnet)}`;
+
+const isRequestKeyForNetwork = (
+  requestKey: string,
+  sourceDomain: number,
+  isTestnet: boolean
+): boolean => {
+  const [domain, , network] = requestKey.split(":");
+  return domain === String(sourceDomain) && network === resolveIrisNetworkKey(isTestnet);
+};
+
 type CachedEntry<T> = {
   expiresAt: number;
   value: T;
@@ -70,6 +96,35 @@ function setBoundedCacheEntry<T>(
     const oldestKey = cache.keys().next().value;
     if (!oldestKey) break;
     cache.delete(oldestKey);
+  }
+}
+
+function invalidateUniversalAttestationCacheForReattestation(
+  sourceDomain: number,
+  isTestnet: boolean,
+  nonce: string,
+  updatedNonce?: string
+): void {
+  // Re-attestation invalidates prior attestations for this source domain/network pair.
+  for (const requestKey of cachedUniversalAttestationResponses.keys()) {
+    if (isRequestKeyForNetwork(requestKey, sourceDomain, isTestnet)) {
+      cachedUniversalAttestationResponses.delete(requestKey);
+    }
+  }
+
+  for (const requestKey of pendingUniversalAttestationRequests.keys()) {
+    if (isRequestKeyForNetwork(requestKey, sourceDomain, isTestnet)) {
+      pendingUniversalAttestationRequests.delete(requestKey);
+    }
+  }
+
+  const nonceKeys = [nonce, updatedNonce]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .map((value) => buildUniversalNonceRequestKey(sourceDomain, value.trim(), isTestnet));
+
+  for (const nonceKey of nonceKeys) {
+    cachedUniversalNonceAttestationResponses.delete(nonceKey);
+    pendingUniversalNonceAttestationRequests.delete(nonceKey);
   }
 }
 
@@ -298,9 +353,14 @@ export async function fetchAttestation(
  * @param burnTxHash - The burn transaction hash/signature
  * @returns Attestation data if found, null otherwise
  */
+export interface FetchAttestationUniversalOptions {
+  forceRefresh?: boolean;
+}
+
 export async function fetchAttestationUniversal(
   sourceChainId: ChainId,
-  burnTxHash: string
+  burnTxHash: string,
+  options?: FetchAttestationUniversalOptions
 ): Promise<AttestationData | null> {
   const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
   if (sourceDomain === null) {
@@ -332,16 +392,30 @@ export async function fetchAttestationUniversal(
   }
 
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
-  const requestKey = `${sourceDomain}:${normalizedHash}:${isTestnet ? "testnet" : "mainnet"}`;
-  const now = Date.now();
-  const cached = cachedUniversalAttestationResponses.get(requestKey);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
+  const requestKey = buildUniversalAttestationRequestKey(
+    sourceDomain,
+    normalizedHash,
+    isTestnet
+  );
+
+  if (options?.forceRefresh) {
+    cachedUniversalAttestationResponses.delete(requestKey);
+    pendingUniversalAttestationRequests.delete(requestKey);
   }
 
-  const existingRequest = pendingUniversalAttestationRequests.get(requestKey);
-  if (existingRequest) {
-    return existingRequest;
+  const now = Date.now();
+  if (!options?.forceRefresh) {
+    const cached = cachedUniversalAttestationResponses.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+  }
+
+  if (!options?.forceRefresh) {
+    const existingRequest = pendingUniversalAttestationRequests.get(requestKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
   }
 
   const requestPromise = (async (): Promise<AttestationData | null> => {
@@ -493,7 +567,7 @@ export async function fetchAttestationByNonceUniversal(
   const url = `${baseUrl}/v2/messages/${sourceDomain}?nonce=${encodeURIComponent(
     normalizedNonce
   )}`;
-  const requestKey = `${sourceDomain}:${normalizedNonce}:${isTestnet ? "testnet" : "mainnet"}`;
+  const requestKey = buildUniversalNonceRequestKey(sourceDomain, normalizedNonce, isTestnet);
   const now = Date.now();
   const cached = cachedUniversalNonceAttestationResponses.get(requestKey);
   if (cached && cached.expiresAt > now) {
@@ -668,13 +742,28 @@ export async function requestReattestation(
   sourceChainId: ChainId,
   nonce: string
 ): Promise<ReattestResult> {
+  const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
+  if (sourceDomain === null) {
+    return {
+      success: false,
+      error: `Unknown CCTP domain for chain ${sourceChainId}`,
+    };
+  }
+
   const isTestnet = isTestnetChainUniversal(sourceChainId);
+  const normalizedNonce = nonce.trim();
+  if (!normalizedNonce) {
+    return {
+      success: false,
+      error: "Nonce is required for re-attestation",
+    };
+  }
 
   const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
 
   // The API expects the nonce in the path
   // Nonce should be the eventNonce from the attestation response
-  const url = `${baseUrl}/v2/reattest/${nonce}`;
+  const url = `${baseUrl}/v2/reattest/${normalizedNonce}`;
 
   try {
     const response = await irisRateLimiter.throttle(() =>
@@ -712,6 +801,14 @@ export async function requestReattestation(
     }
 
     const data = await response.json();
+    const responseNonce =
+      typeof data?.nonce === "string" ? data.nonce.trim() : undefined;
+    invalidateUniversalAttestationCacheForReattestation(
+      sourceDomain,
+      isTestnet,
+      normalizedNonce,
+      responseNonce
+    );
 
     return {
       success: true,

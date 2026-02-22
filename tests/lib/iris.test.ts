@@ -199,6 +199,48 @@ describe("iris attestation fetching", () => {
     expect(result).toBeNull();
   });
 
+  it("bypasses universal attestation cache when forceRefresh is enabled", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const hash = makeHash(77);
+
+    fetchMock
+      .mockResolvedValueOnce(toIrisResponse([buildCompleteMessage({ eventNonce: "77" })]))
+      .mockResolvedValueOnce(toIrisResponse([buildCompleteMessage({ eventNonce: "78" })]));
+
+    const cachedResult = await fetchAttestationUniversal(1, hash);
+    const refreshedResult = await fetchAttestationUniversal(1, hash, {
+      forceRefresh: true,
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(cachedResult?.nonce).toBe("77");
+    expect(refreshedResult?.nonce).toBe("78");
+  });
+
+  it("invalidates cached universal attestations after re-attestation request", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    const hash = makeHash(88);
+
+    fetchMock
+      .mockResolvedValueOnce(toIrisResponse([buildCompleteMessage({ eventNonce: "88" })]))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ message: "ok", nonce: "88" }),
+      } as Response)
+      .mockResolvedValueOnce(toIrisResponse([buildCompleteMessage({ eventNonce: "89" })]));
+
+    const first = await fetchAttestationUniversal(1, hash);
+    expect(first?.nonce).toBe("88");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await requestReattestation(1, "88");
+    const refreshed = await fetchAttestationUniversal(1, hash);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(refreshed?.nonce).toBe("89");
+  });
+
   it("does not send JSON content-type for bodyless re-attestation POST", async () => {
     const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockResolvedValue({

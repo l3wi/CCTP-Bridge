@@ -66,9 +66,6 @@ import { toChainDefinition } from "@/lib/chainDefinition";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
 
-// Prevent duplicate auto-submits for the same execute intent (e.g., StrictMode remounts).
-const executedIntentKeys = new Set<string>();
-
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
   loadedTransaction?: LocalTransaction | null;
@@ -149,6 +146,8 @@ export function BridgeCard({
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
   const [intentHydrated, setIntentHydrated] = useState(false);
   const [intentStarted, setIntentStarted] = useState(false);
+  // StrictMode can mount/unmount effects twice; keep dedupe scoped to this instance only.
+  const executedIntentKeysRef = useRef(new Set<string>());
   const executeIntentKey = useMemo(
     () => (initialIntent ? JSON.stringify(initialIntent) : null),
     [initialIntent]
@@ -1036,7 +1035,7 @@ export function BridgeCard({
 
   const handleBackToNew = () => {
     if (executeIntentKey) {
-      executedIntentKeys.delete(executeIntentKey);
+      executedIntentKeysRef.current.delete(executeIntentKey);
     }
     setIsBridging(false);
     setIsLoading(false);
@@ -1152,11 +1151,11 @@ export function BridgeCard({
       return;
     }
 
-    if (executedIntentKeys.has(executeIntentKey)) {
+    if (executedIntentKeysRef.current.has(executeIntentKey)) {
       return;
     }
 
-    executedIntentKeys.add(executeIntentKey);
+    executedIntentKeysRef.current.add(executeIntentKey);
     setIntentStarted(true);
 
     void (async () => {
@@ -1164,7 +1163,7 @@ export function BridgeCard({
         const didStart = await handleSend(speed);
         setIntentStarted(didStart);
       } finally {
-        executedIntentKeys.delete(executeIntentKey);
+        executedIntentKeysRef.current.delete(executeIntentKey);
       }
     })();
   }, [

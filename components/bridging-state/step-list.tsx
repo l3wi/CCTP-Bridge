@@ -6,7 +6,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { getExplorerTxUrlUniversal } from "@/lib/bridgeKit";
 import type { StepListProps } from "./types";
 
-const CLAIMED_MESSAGE = "success - check wallet";
+const CLAIMED_MESSAGE = "Success - Check wallet";
 
 export function StepList({
   steps,
