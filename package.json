@@ -4,15 +4,19 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prelint": "bun run scripts/ensure-generated-metadata.ts",
+    "prebuild": "bun run metadata:refresh",
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "metadata:generate": "bun run scripts/generate-cctp-metadata.ts",
+    "rpc:generate": "bun run scripts/generate-rpc-candidates.ts",
+    "metadata:refresh": "bun run metadata:generate && bun run rpc:generate",
+    "prepare": "husky"
   },
   "dependencies": {
-    "@circle-fin/adapter-solana": "^1.2.0",
-    "@circle-fin/adapter-viem-v2": "^1.2.0",
     "@circle-fin/bridge-kit": "^1.2.0",
     "@coral-xyz/anchor": "^0.32.1",
     "@radix-ui/react-checkbox": "^1.3.3",
@@ -47,12 +51,17 @@
     "tailwindcss": "^4.1.18",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "5.8.3",
-    "viem": "^2.43.5",
-    "wagmi": "^2.19.5",
+    "viem": "^2.46.2",
+    "wagmi": "2.19.5",
     "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "husky": "^9.1.7",
+    "jsdom": "^28.1.0",
     "postcss": "^8.5.6",
+    "vercel": "^50.18.2",
     "vitest": "^4.0.17"
   }
 }

@@ -159,7 +159,7 @@ export function updateStepsWithMint(
     state: "success",
     txHash: mintTxHash,
     errorMessage: alreadyMinted
-      ? "USDC claimed. Check your wallet for the USDC"
+      ? "success - check wallet"
       : undefined,
   };
 

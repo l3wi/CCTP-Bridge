@@ -28,6 +28,7 @@ export interface BridgingStateProps {
   startedAt?: Date;
   estimatedTimeLabel?: string;
   onBridgeResultUpdate?: (result: BridgeResultWithMeta) => void;
+  onMessageExpiredNonce?: (nonce: string) => void;
 }
 
 export interface StepListProps {
@@ -47,10 +48,14 @@ export interface ClaimSectionProps {
   onClaim: () => void;
   /** True if the message attestation has expired and needs re-signing */
   messageExpired?: boolean;
-  /** Callback to request re-attestation */
+  /** Callback to request re-attestation (fallback manual trigger) */
   onReattest?: () => void;
-  /** True if re-attestation is in progress */
+  /** True if the re-attestation API call is in-flight */
   isReattesting?: boolean;
+  /** True if we're polling for the new attestation after re-request */
+  isAwaitingReattestation?: boolean;
+  /** True when re-attestation polling timed out and needs manual retry */
+  reattestTimedOut?: boolean;
 }
 
 export interface BridgeInfoProps {

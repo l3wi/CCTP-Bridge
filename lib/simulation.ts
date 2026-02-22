@@ -3,20 +3,15 @@
  * Simulates the receiveMessage call to check if a mint can be executed.
  */
 
-import { createPublicClient, keccak256, encodePacked } from "viem";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
 } from "./contracts";
-import {
-  getWagmiChainsForEnv,
-  getWagmiTransportsForEnv,
-  getBridgeChainByIdUniversal,
-  BRIDGEKIT_ENV,
-} from "./bridgeKit";
-import { createSolanaAdapter } from "./solanaAdapter";
+import { getCctpDomainSafe } from "./cctp/shared";
+import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
+import { checkEvmNonceUsedDirect } from "@/lib/cctp/nonce";
+import { fetchAttestationUniversal, isCompleteAttestationData } from "@/lib/iris";
 import type { SolanaChainId } from "./types";
-import type { Adapter } from "@solana/wallet-adapter-base";
 
 // CCTP message format constants
 const CCTP_MESSAGE_HEADER_BYTES = 148; // Minimum header size
@@ -24,6 +19,10 @@ const CCTP_NONCE_OFFSET = 12; // Nonce starts at byte 12
 const CCTP_NONCE_LENGTH = 32; // Nonce is 32 bytes
 const CCTP_SOURCE_DOMAIN_OFFSET = 4; // Source domain at byte 4
 const CCTP_SOURCE_DOMAIN_LENGTH = 4; // Domain is 4 bytes
+const CCTP_DEST_DOMAIN_OFFSET = 8; // Destination domain at byte 8
+const CCTP_DEST_DOMAIN_LENGTH = 4; // Domain is 4 bytes
+const CCTP_SOLANA_EXPIRATION_INDEX = 196; // BurnMessage offset to expirationBlock field
+const CCTP_U256_TO_U64_OFFSET = 24; // Last 8 bytes of EVM uint256 contain Solana u64 slot
 
 export interface SimulationResult {
   success: boolean;
@@ -38,53 +37,7 @@ export interface SimulationResult {
  * Create a public client for a given chain ID using app's RPC config.
  */
 function getPublicClient(chainId: number) {
-  const chains = getWagmiChainsForEnv();
-  const transports = getWagmiTransportsForEnv();
-
-  const chain = chains.find((c) => c.id === chainId);
-  if (!chain) {
-    throw new Error(`Unsupported chain: ${chainId}`);
-  }
-
-  const transport = transports[chainId];
-  if (!transport) {
-    throw new Error(`No RPC transport configured for chain ${chainId}`);
-  }
-
-  return createPublicClient({
-    chain,
-    transport,
-  });
-}
-
-/**
- * Check if a nonce has already been used (mint already executed)
- */
-export async function checkNonceUsed(
-  destinationChainId: number,
-  sourceDomain: number,
-  nonce: `0x${string}`
-): Promise<boolean> {
-  const messageTransmitter = getMessageTransmitterAddress(destinationChainId);
-  if (!messageTransmitter) {
-    throw new Error(`No MessageTransmitter for chain ${destinationChainId}`);
-  }
-
-  const client = getPublicClient(destinationChainId);
-
-  // Compute the source nonce hash: keccak256(abi.encodePacked(uint32(sourceDomain), bytes32(nonce)))
-  const sourceNonceHash = keccak256(
-    encodePacked(["uint32", "bytes32"], [sourceDomain, nonce])
-  );
-
-  const usedNonce = await client.readContract({
-    address: messageTransmitter,
-    abi: MESSAGE_TRANSMITTER_ABI,
-    functionName: "usedNonces",
-    args: [sourceNonceHash],
-  });
-
-  return usedNonce > BigInt(0);
+  return createEvmPublicClient(chainId);
 }
 
 /**
@@ -146,6 +99,51 @@ export function extractSourceDomainFromMessage(message: `0x${string}`): number {
 }
 
 /**
+ * Extract destination domain from CCTP message bytes.
+ * Destination domain is at bytes 8-12 (0-indexed, exclusive end)
+ */
+export function extractDestinationDomainFromMessage(message: `0x${string}`): number {
+  if (!validateMessageFormat(message)) {
+    throw new Error(
+      `Invalid CCTP message format: expected at least ${CCTP_MESSAGE_HEADER_BYTES} bytes`
+    );
+  }
+
+  const startChar = 2 + CCTP_DEST_DOMAIN_OFFSET * 2;
+  const endChar = startChar + CCTP_DEST_DOMAIN_LENGTH * 2;
+  const domainHex = message.slice(startChar, endChar);
+
+  return parseInt(domainHex, 16);
+}
+
+/**
+ * Extract expiration block from a CCTP v2 message for Solana destinations.
+ * Returns 0 when the message does not carry an expiration block.
+ */
+function extractSolanaExpirationBlock(message: `0x${string}`): number {
+  if (!validateMessageFormat(message)) return 0;
+
+  const hex = message.slice(2);
+  const totalBytes = hex.length / 2;
+  const requiredBytes =
+    CCTP_MESSAGE_HEADER_BYTES + CCTP_SOLANA_EXPIRATION_INDEX + 32;
+
+  if (totalBytes < requiredBytes) return 0;
+
+  const byteOffset =
+    CCTP_MESSAGE_HEADER_BYTES +
+    CCTP_SOLANA_EXPIRATION_INDEX +
+    CCTP_U256_TO_U64_OFFSET;
+  const start = byteOffset * 2;
+  const end = start + 16; // u64 = 8 bytes
+  const expirationHex = hex.slice(start, end);
+
+  if (expirationHex.length !== 16) return 0;
+  const parsed = Number.parseInt(expirationHex, 16);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
  * Simulate a mint (receiveMessage) transaction to check if it will succeed.
  *
  * @param destinationChainId - The chain ID where mint will occur
@@ -178,6 +176,30 @@ export async function simulateMint(
     };
   }
 
+  // Validate destination domain matches the target chain
+  try {
+    const messageDomain = extractDestinationDomainFromMessage(message);
+    const expectedDomain = getCctpDomainSafe(destinationChainId);
+
+    if (expectedDomain !== null && messageDomain !== expectedDomain) {
+      console.error(
+        `[simulateMint] Domain mismatch: message destination domain=${messageDomain}, ` +
+        `but target chain ${destinationChainId} has domain=${expectedDomain}. ` +
+        `The mint must be executed on the chain matching domain ${messageDomain}.`
+      );
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        error: `Destination chain mismatch: this transfer targets domain ${messageDomain}, ` +
+          `not chain ${destinationChainId} (domain ${expectedDomain}). ` +
+          `Please switch to the correct destination chain.`,
+      };
+    }
+  } catch {
+    // Don't block on validation errors — continue with simulation
+  }
+
   const client = getPublicClient(destinationChainId);
 
   // Extract nonce and source domain for nonce check
@@ -185,14 +207,21 @@ export async function simulateMint(
   const sourceDomain = extractSourceDomainFromMessage(message);
 
   try {
-    const isUsed = await checkNonceUsed(destinationChainId, sourceDomain, nonce);
-    if (isUsed) {
+    const nonceResult = await checkEvmNonceUsedDirect(
+      destinationChainId,
+      sourceDomain,
+      nonce
+    );
+    if (nonceResult.isUsed) {
       return {
         success: true,
         canMint: false,
         alreadyMinted: true,
         error: "Nonce already used - mint was already executed",
       };
+    }
+    if (nonceResult.error) {
+      console.warn("Nonce check failed, continuing to simulation:", nonceResult.error);
     }
   } catch (error) {
     // Continue to simulation if nonce check fails
@@ -274,10 +303,6 @@ export async function checkMintReadiness(
   burnTxHash: string,
   skipSimulation: boolean = false
 ): Promise<SimulationResult & { attestationReady: boolean; delayReason?: string; nonce?: string }> {
-  // Import dynamically to avoid circular deps
-  const { fetchAttestationUniversal } = await import("./iris");
-
-  // fetchAttestationUniversal accepts ChainId (number | string)
   const attestationData = await fetchAttestationUniversal(
     sourceChainId as import("./types").ChainId,
     burnTxHash
@@ -293,13 +318,25 @@ export async function checkMintReadiness(
     };
   }
 
-  if (attestationData.status !== "complete") {
+  if (!isCompleteAttestationData(attestationData)) {
+    if (attestationData.status !== "complete") {
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        attestationReady: false,
+        error: "Attestation pending",
+        delayReason: attestationData.delayReason,
+        nonce: attestationData.nonce,
+      };
+    }
+
     return {
       success: false,
       canMint: false,
       alreadyMinted: false,
       attestationReady: false,
-      error: "Attestation pending",
+      error: "Attestation payload is incomplete",
       delayReason: attestationData.delayReason,
       nonce: attestationData.nonce,
     };
@@ -337,64 +374,50 @@ export async function checkMintReadiness(
  * Uses transaction simulation to detect "account already in use" error,
  * which indicates the nonce account was already allocated (mint happened).
  *
- * @param sourceChainId - The source EVM chain ID
  * @param destinationChainId - The destination Solana chain ID
  * @param attestationData - The attestation data from Iris
- * @param walletAdapter - The Solana wallet adapter
  * @returns Simulation result with alreadyMinted status
  */
 export async function checkSolanaMintStatus(
-  sourceChainId: number,
   destinationChainId: SolanaChainId,
   attestationData: {
     nonce: string;
     attestation: string;
     message: string;
     mintRecipient?: string;
-  },
-  walletAdapter: Adapter
+  }
 ): Promise<SimulationResult> {
   try {
-    const sourceChain = getBridgeChainByIdUniversal(sourceChainId, BRIDGEKIT_ENV);
-    const destChain = getBridgeChainByIdUniversal(destinationChainId, BRIDGEKIT_ENV);
-
-    if (!sourceChain || !destChain) {
+    // This helper is now metadata/RPC only and no longer relies on BridgeKit adapters.
+    // Do lightweight freshness checks here so polling does not mark an expired
+    // message as ready-to-claim.
+    if (!attestationData.message || !attestationData.attestation) {
       return {
         success: false,
         canMint: false,
         alreadyMinted: false,
-        error: "Could not resolve chain definitions",
+        error: "Missing attestation payload",
       };
     }
 
-    const adapter = await createSolanaAdapter(walletAdapter);
-
-    // Cast adapter to access prepareAction method
-    const adapterWithActions = adapter as unknown as {
-      prepareAction: (
-        action: string,
-        params: Record<string, unknown>,
-        ctx: { chain: string }
-      ) => Promise<{ estimate: () => Promise<unknown> }>;
-    };
-
-    const preparedRequest = await adapterWithActions.prepareAction(
-      "cctp.v2.receiveMessage",
-      {
-        eventNonce: attestationData.nonce,
-        attestation: attestationData.attestation,
-        message: attestationData.message,
-        fromChain: sourceChain,
-        toChain: destChain,
-        mintRecipient: attestationData.mintRecipient,
-      },
-      { chain: destinationChainId }
+    const expirationBlock = extractSolanaExpirationBlock(
+      attestationData.message as `0x${string}`
     );
+    if (expirationBlock > 0) {
+      const connection = createSolanaConnection(destinationChainId, "confirmed");
+      const currentSlot = await connection.getSlot("confirmed");
 
-    // Try to simulate (estimate) the transaction
-    await preparedRequest.estimate();
+      if (currentSlot >= expirationBlock) {
+        return {
+          success: false,
+          canMint: false,
+          alreadyMinted: false,
+          messageExpired: true,
+          error: `Message expired at slot ${expirationBlock} (current: ${currentSlot})`,
+        };
+      }
+    }
 
-    // Simulation succeeded - mint can be executed
     return {
       success: true,
       canMint: true,

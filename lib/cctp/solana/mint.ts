@@ -92,7 +92,9 @@ async function verifyDiscriminatorInDev(): Promise<void> {
 }
 
 // Run verification on module load in development
-verifyDiscriminatorInDev();
+if (process.env.NODE_ENV !== "production") {
+  void verifyDiscriminatorInDev();
+}
 
 // =============================================================================
 // Instruction Data Serialization
@@ -181,6 +183,9 @@ function serializeReceiveMessageData(
 // On-Chain State Fetching
 // =============================================================================
 
+const feeRecipientCache = new Map<string, PublicKey>();
+const pendingFeeRecipientLoads = new Map<string, Promise<PublicKey>>();
+
 /**
  * Fetch the feeRecipient from the on-chain TokenMessenger state.
  * Uses Anchor for account deserialization (only account reading, not instruction building).
@@ -191,6 +196,18 @@ async function fetchFeeRecipient(
   connection: Connection,
   tokenMessengerPda: PublicKey
 ): Promise<PublicKey> {
+  const cacheKey = `${connection.rpcEndpoint}:${tokenMessengerPda.toBase58()}`;
+  const cached = feeRecipientCache.get(cacheKey);
+  if (cached) {
+    return cached;
+  }
+
+  const pending = pendingFeeRecipientLoads.get(cacheKey);
+  if (pending) {
+    return pending;
+  }
+
+  const loadPromise = (async () => {
   try {
     // Dynamic import to avoid Anchor in the main instruction path
     const { Program, AnchorProvider } = await import("@coral-xyz/anchor");
@@ -251,6 +268,16 @@ async function fetchFeeRecipient(
       `Failed to fetch feeRecipient from TokenMessenger: ${message}`
     );
   }
+  })();
+
+  pendingFeeRecipientLoads.set(cacheKey, loadPromise);
+  try {
+    const feeRecipient = await loadPromise;
+    feeRecipientCache.set(cacheKey, feeRecipient);
+    return feeRecipient;
+  } finally {
+    pendingFeeRecipientLoads.delete(cacheKey);
+  }
 }
 
 // =============================================================================
@@ -266,7 +293,7 @@ function getSourceUsdcAddress(
   isTestnet: boolean
 ): string | null {
   const env: BridgeEnvironment = isTestnet ? "testnet" : "mainnet";
-  return getUsdcAddressByDomain(sourceDomain, env);
+  return getUsdcAddressByDomain(sourceDomain, env) ?? null;
 }
 
 // =============================================================================
@@ -439,6 +466,100 @@ export function extractEventNonceFromMessage(message: string): string {
   const nonceStart = 12 * 2;
   const nonceEnd = nonceStart + 32 * 2;
   return hex.slice(nonceStart, nonceEnd);
+}
+
+// =============================================================================
+// Message Expiration Check
+// =============================================================================
+
+/**
+ * CCTP v2 message header size (bytes).
+ * version(4) + sourceDomain(4) + destinationDomain(4) + nonce(32)
+ * + sender(32) + recipient(32) + destinationCaller(32)
+ * + minFinalityThreshold(4) + finalityThresholdExecuted(4)
+ */
+const CCTP_V2_HEADER_SIZE = 148;
+
+/**
+ * BurnMessage field offsets within the message body.
+ * Fields use EVM uint256 (32 bytes), but Solana reads the last 8 bytes (u64 BE).
+ * The first 24 bytes must be zero (OFFSET = 24).
+ *
+ * Layout: version(4) + burnToken(32) + mintRecipient(32) + amount(32)
+ *         + messageSender(32) + maxFee(32) + feeExecuted(32) + expirationBlock(32)
+ *         + hookData(variable)
+ */
+const BURN_MSG_EXPIRATION_BLOCK_INDEX = 196; // Offset within burn message body
+const EVM_U256_TO_U64_OFFSET = 24; // Skip 24 leading zero bytes to get u64
+
+/**
+ * Extract the expirationBlock (Solana slot) from a CCTP v2 message.
+ * Returns 0 if no expiration is set (meaning the message never expires).
+ *
+ * @param message - Full CCTP message hex string (with or without 0x prefix)
+ * @returns expirationBlock as a number (Solana slot), 0 means no expiration
+ */
+export function extractExpirationBlock(message: string): number {
+  const hex = message.replace(/^0x/, "");
+  const totalBytes = hex.length / 2;
+
+  // Need at least header + 228 bytes of burn message body
+  const minRequired = CCTP_V2_HEADER_SIZE + BURN_MSG_EXPIRATION_BLOCK_INDEX + 32;
+  if (totalBytes < minRequired) {
+    return 0; // Message too short, assume no expiration
+  }
+
+  // expirationBlock u64 starts at: header + field_offset + u256_offset
+  const byteOffset = CCTP_V2_HEADER_SIZE + BURN_MSG_EXPIRATION_BLOCK_INDEX + EVM_U256_TO_U64_OFFSET;
+  const hexStart = byteOffset * 2;
+  const hexEnd = hexStart + 16; // 8 bytes = 16 hex chars
+
+  const expirationHex = hex.slice(hexStart, hexEnd);
+  if (!expirationHex || expirationHex.length !== 16) {
+    return 0;
+  }
+
+  // Parse as big-endian u64 via BigInt first to avoid precision loss during hex parsing.
+  try {
+    const parsed = BigInt(`0x${expirationHex}`);
+    if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return Number.MAX_SAFE_INTEGER;
+    }
+    return Number(parsed);
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Check if a CCTP v2 message has expired based on the current Solana slot.
+ *
+ * @param connection - Solana connection
+ * @param message - Full CCTP message hex string
+ * @returns Object with isExpired status and details
+ */
+export async function checkMessageExpiration(
+  connection: Connection,
+  message: string
+): Promise<{
+  isExpired: boolean;
+  expirationBlock: number;
+  currentSlot: number;
+}> {
+  const expirationBlock = extractExpirationBlock(message);
+
+  // 0 means no expiration
+  if (expirationBlock === 0) {
+    return { isExpired: false, expirationBlock: 0, currentSlot: 0 };
+  }
+
+  const currentSlot = await connection.getSlot("confirmed");
+
+  return {
+    isExpired: currentSlot >= expirationBlock,
+    expirationBlock,
+    currentSlot,
+  };
 }
 
 // =============================================================================
@@ -665,9 +786,51 @@ export async function buildReceiveMessageTransaction(
 // =============================================================================
 
 /**
+ * Simulate a signed transaction and return the program logs.
+ * Used for debugging before sending.
+ *
+ * @returns logs array on success, throws enriched error on failure
+ */
+export async function simulateSignedTransaction(
+  connection: Connection,
+  signedTransaction: Transaction | VersionedTransaction
+): Promise<string[]> {
+  let result;
+
+  if (isVersionedTransaction(signedTransaction)) {
+    result = await connection.simulateTransaction(signedTransaction, {
+      commitment: "confirmed",
+      replaceRecentBlockhash: false,
+    });
+  } else {
+    result = await connection.simulateTransaction(signedTransaction, undefined, undefined);
+  }
+
+  const logs = result.value.logs ?? [];
+
+  if (result.value.err) {
+    // Build a rich error with logs attached
+    const errJson = JSON.stringify(result.value.err);
+    const error = new Error(
+      `Simulation failed: ${errJson}`
+    ) as Error & { simulationLogs: string[]; simulationError: unknown };
+    error.simulationLogs = logs;
+    error.simulationError = result.value.err;
+    throw error;
+  }
+
+  return logs;
+}
+
+/**
  * Send a signed transaction WITHOUT waiting for confirmation.
  * Returns the signature immediately after sending.
  * This avoids WebSocket confirmation hangs in the browser.
+ *
+ * Performs an explicit simulation first to capture program logs on failure.
+ * If simulation succeeds, sends with skipPreflight=true to avoid repeating
+ * preflight work on congested RPCs. Callers must still poll signature status
+ * and treat post-simulation failures as expected TOCTOU behavior.
  *
  * Supports both legacy Transaction and VersionedTransaction.
  */
@@ -675,10 +838,19 @@ export async function sendTransactionNoConfirm(
   connection: Connection,
   signedTransaction: Transaction | VersionedTransaction
 ): Promise<string> {
+  // Simulate first to capture logs on failure
+  await simulateSignedTransaction(connection, signedTransaction);
+
+  // Simulation passed — send without preflight (already validated).
+  // Trade-off: this is not fully atomic. We may simulate against one RPC view and
+  // submit against a node with slightly newer state, so a transaction can still fail
+  // after a successful simulation (TOCTOU window). We keep this to avoid wallet UX
+  // stalls from repeated preflight + confirmation round-trips and surface failures
+  // via signature-status polling in the mint hook.
   const rawTransaction = signedTransaction.serialize();
 
   const signature = await connection.sendRawTransaction(rawTransaction, {
-    skipPreflight: false,
+    skipPreflight: true,
     preflightCommitment: "confirmed",
   });
 

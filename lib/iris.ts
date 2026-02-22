@@ -14,10 +14,127 @@ const IRIS_API_ENDPOINTS = {
   testnet: "https://iris-api-sandbox.circle.com",
 } as const;
 
+const IRIS_PENDING_CACHE_TTL_MS = 10_000;
+const IRIS_COMPLETE_CACHE_TTL_MS = 60_000;
+const IRIS_NOT_FOUND_CACHE_TTL_MS = 5_000;
+const IRIS_MAX_CACHE_ENTRIES = 200;
+
+interface CachedAttestationEntry {
+  expiresAt: number;
+  value: AttestationData | null;
+}
+
+// Prevent duplicate concurrent Iris calls for identical sourceDomain+txHash requests.
+const pendingUniversalAttestationRequests = new Map<
+  string,
+  Promise<AttestationData | null>
+>();
+const cachedUniversalAttestationResponses = new Map<string, CachedAttestationEntry>();
+const pendingUniversalNonceAttestationRequests = new Map<
+  string,
+  Promise<AttestationLookupByNonceResult | null>
+>();
+const cachedUniversalNonceAttestationResponses = new Map<
+  string,
+  {
+    expiresAt: number;
+    value: AttestationLookupByNonceResult | null;
+  }
+>();
+
+const resolveIrisNetworkKey = (isTestnet: boolean): "testnet" | "mainnet" =>
+  isTestnet ? "testnet" : "mainnet";
+
+const buildUniversalAttestationRequestKey = (
+  sourceDomain: number,
+  normalizedHash: string,
+  isTestnet: boolean
+): string =>
+  `${sourceDomain}:${normalizedHash}:${resolveIrisNetworkKey(isTestnet)}`;
+
+const buildUniversalNonceRequestKey = (
+  sourceDomain: number,
+  normalizedNonce: string,
+  isTestnet: boolean
+): string =>
+  `${sourceDomain}:${normalizedNonce}:${resolveIrisNetworkKey(isTestnet)}`;
+
+const isRequestKeyForNetwork = (
+  requestKey: string,
+  sourceDomain: number,
+  isTestnet: boolean
+): boolean => {
+  const [domain, , network] = requestKey.split(":");
+  return domain === String(sourceDomain) && network === resolveIrisNetworkKey(isTestnet);
+};
+
+type CachedEntry<T> = {
+  expiresAt: number;
+  value: T;
+};
+
+function setBoundedCacheEntry<T>(
+  cache: Map<string, CachedEntry<T>>,
+  key: string,
+  value: T,
+  ttlMs: number
+): void {
+  const now = Date.now();
+
+  for (const [cacheKey, entry] of cache) {
+    if (entry.expiresAt <= now) {
+      cache.delete(cacheKey);
+    }
+  }
+
+  cache.set(key, {
+    value,
+    expiresAt: now + ttlMs,
+  });
+
+  while (cache.size > IRIS_MAX_CACHE_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (!oldestKey) break;
+    cache.delete(oldestKey);
+  }
+}
+
+function invalidateUniversalAttestationCacheForReattestation(
+  sourceDomain: number,
+  isTestnet: boolean,
+  nonce: string,
+  updatedNonce?: string
+): void {
+  // Re-attestation invalidates prior attestations for this source domain/network pair.
+  for (const requestKey of cachedUniversalAttestationResponses.keys()) {
+    if (isRequestKeyForNetwork(requestKey, sourceDomain, isTestnet)) {
+      cachedUniversalAttestationResponses.delete(requestKey);
+    }
+  }
+
+  for (const requestKey of pendingUniversalAttestationRequests.keys()) {
+    if (isRequestKeyForNetwork(requestKey, sourceDomain, isTestnet)) {
+      pendingUniversalAttestationRequests.delete(requestKey);
+    }
+  }
+
+  const nonceKeys = [nonce, updatedNonce]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .map((value) => buildUniversalNonceRequestKey(sourceDomain, value.trim(), isTestnet));
+
+  for (const nonceKey of nonceKeys) {
+    cachedUniversalNonceAttestationResponses.delete(nonceKey);
+    pendingUniversalNonceAttestationRequests.delete(nonceKey);
+  }
+}
+
 export interface IrisAttestationResponse {
   messages: Array<{
     attestation: string;
     message: string;
+    transactionHash?: string;
+    txHash?: string;
+    sourceTxHash?: string;
     eventNonce: string;
     status: "pending" | "pending_confirmations" | "complete";
     cctpVersion: number;
@@ -41,16 +158,60 @@ export interface IrisAttestationResponse {
 }
 
 export interface AttestationData {
-  message: `0x${string}`;
-  attestation: `0x${string}`;
+  message?: `0x${string}`;
+  attestation?: `0x${string}`;
   status: "pending" | "pending_confirmations" | "complete";
-  sourceDomain: number;
-  destinationDomain: number;
+  sourceDomain?: number;
+  destinationDomain?: number;
   nonce: string;
   amount?: string;
   mintRecipient?: string;
   /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
   delayReason?: string;
+}
+
+export interface CompleteAttestationData extends AttestationData {
+  status: "complete";
+  message: `0x${string}`;
+  attestation: `0x${string}`;
+  sourceDomain: number;
+  destinationDomain: number;
+}
+
+export interface AttestationLookupByNonceResult {
+  attestation: AttestationData;
+  burnTxHash?: string;
+}
+
+const toPrefixedHex = (value: unknown): `0x${string}` | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const prefixed = trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`;
+  return prefixed as `0x${string}`;
+};
+
+const parseDomainValue = (value: unknown): number | null => {
+  if (typeof value !== "string") return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export function isCompleteAttestationData(
+  data: AttestationData | null | undefined
+): data is CompleteAttestationData {
+  return Boolean(
+    data &&
+      data.status === "complete" &&
+      typeof data.message === "string" &&
+      data.message.startsWith("0x") &&
+      typeof data.attestation === "string" &&
+      data.attestation.startsWith("0x") &&
+      typeof data.sourceDomain === "number" &&
+      Number.isFinite(data.sourceDomain) &&
+      typeof data.destinationDomain === "number" &&
+      Number.isFinite(data.destinationDomain)
+  );
 }
 
 /**
@@ -62,6 +223,24 @@ function logDelayReason(delayReason: string | undefined): void {
       `[CCTP] Attestation delayed: ${delayReason}. Transfer will proceed at standard speed.`
     );
   }
+}
+
+function normalizeSourceTxHash(
+  sourceChainId: ChainId,
+  maybeHash: unknown
+): string | undefined {
+  if (typeof maybeHash !== "string") return undefined;
+  const trimmed = maybeHash.trim();
+  if (!trimmed) return undefined;
+
+  if (isSolanaChain(sourceChainId)) {
+    return isValidSolanaTxHash(trimmed) ? trimmed : undefined;
+  }
+
+  const normalized = trimmed.startsWith("0x")
+    ? trimmed.toLowerCase()
+    : `0x${trimmed.toLowerCase()}`;
+  return isValidEvmTxHash(normalized) ? normalized : undefined;
 }
 
 /**
@@ -126,36 +305,34 @@ export async function fetchAttestation(
 
     // Domains are inside decodedMessage
     if (!msg.decodedMessage) {
-      // Attestation still in progress - expected during attestation window
-      // Return partial data with delayReason if available
-      if (msg.delayReason) {
-        return {
-          message: "0x" as `0x${string}`,
-          attestation: "0x" as `0x${string}`,
-          status: msg.status,
-          sourceDomain: 0,
-          destinationDomain: 0,
-          nonce: msg.eventNonce,
-          delayReason: msg.delayReason,
-        };
+      // Attestation still in progress - expected during attestation window.
+      if (msg.status === "complete") {
+        console.error("Iris returned complete status without decodedMessage payload");
+        return null;
       }
-      return null;
+      return {
+        status: msg.status,
+        nonce: msg.eventNonce,
+        delayReason: msg.delayReason,
+      };
     }
 
-    // Ensure message and attestation have 0x prefix
-    const message = (
-      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-    ) as `0x${string}`;
-    const attestation = (
-      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-    ) as `0x${string}`;
+    const message = toPrefixedHex(msg.message);
+    const attestation = toPrefixedHex(msg.attestation);
+    const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+    const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+
+    if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+      console.error("Iris returned complete status with malformed attestation payload");
+      return null;
+    }
 
     return {
       message,
       attestation,
       status: msg.status,
-      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+      sourceDomain,
+      destinationDomain,
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
@@ -176,9 +353,14 @@ export async function fetchAttestation(
  * @param burnTxHash - The burn transaction hash/signature
  * @returns Attestation data if found, null otherwise
  */
+export interface FetchAttestationUniversalOptions {
+  forceRefresh?: boolean;
+}
+
 export async function fetchAttestationUniversal(
   sourceChainId: ChainId,
-  burnTxHash: string
+  burnTxHash: string,
+  options?: FetchAttestationUniversalOptions
 ): Promise<AttestationData | null> {
   const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
   if (sourceDomain === null) {
@@ -210,93 +392,329 @@ export async function fetchAttestationUniversal(
   }
 
   const url = `${baseUrl}/v2/messages/${sourceDomain}?transactionHash=${normalizedHash}`;
+  const requestKey = buildUniversalAttestationRequestKey(
+    sourceDomain,
+    normalizedHash,
+    isTestnet
+  );
 
-  try {
-    // Rate limit API calls to stay under 35 req/s limit
-    const response = await irisRateLimiter.throttle(() =>
-      fetch(url, {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      })
-    );
+  if (options?.forceRefresh) {
+    cachedUniversalAttestationResponses.delete(requestKey);
+    pendingUniversalAttestationRequests.delete(requestKey);
+  }
 
-    if (!response.ok) {
-      if (response.status !== 404) {
-        console.error(
-          `Iris API error: ${response.status} ${response.statusText}`
+  const now = Date.now();
+  if (!options?.forceRefresh) {
+    const cached = cachedUniversalAttestationResponses.get(requestKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+  }
+
+  if (!options?.forceRefresh) {
+    const existingRequest = pendingUniversalAttestationRequests.get(requestKey);
+    if (existingRequest) {
+      return existingRequest;
+    }
+  }
+
+  const requestPromise = (async (): Promise<AttestationData | null> => {
+    try {
+      // Rate limit API calls to stay under 35 req/s limit
+      const response = await irisRateLimiter.throttle(() =>
+        fetch(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        })
+      );
+
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.error(
+            `Iris API error: ${response.status} ${response.statusText}`
+          );
+        }
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
         );
+        return null;
       }
-      return null;
-    }
 
-    const data: IrisAttestationResponse = await response.json();
+      const data: IrisAttestationResponse = await response.json();
 
-    if (!data.messages || data.messages.length === 0) {
-      return null;
-    }
+      if (!data.messages || data.messages.length === 0) {
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
 
-    const msg = data.messages[0];
+      const msg = data.messages[0];
 
-    // Log delay reason if present (insufficient fee means fallback to standard speed)
-    logDelayReason(msg.delayReason);
+      // Log delay reason if present (insufficient fee means fallback to standard speed)
+      logDelayReason(msg.delayReason);
 
-    if (!msg.decodedMessage) {
-      // Attestation still in progress - expected during attestation window
-      // Return partial data with delayReason if available
-      if (msg.delayReason) {
-        return {
-          message: "0x" as `0x${string}`,
-          attestation: "0x" as `0x${string}`,
+      if (!msg.decodedMessage) {
+        if (msg.status === "complete") {
+          console.error("Iris returned complete status without decodedMessage payload");
+          setBoundedCacheEntry(
+            cachedUniversalAttestationResponses,
+            requestKey,
+            null,
+            IRIS_NOT_FOUND_CACHE_TTL_MS
+          );
+          return null;
+        }
+
+        const pendingResult: AttestationData = {
           status: msg.status,
-          sourceDomain: 0,
-          destinationDomain: 0,
           nonce: msg.eventNonce,
           delayReason: msg.delayReason,
         };
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          pendingResult,
+          IRIS_PENDING_CACHE_TTL_MS
+        );
+        return pendingResult;
       }
+
+      const message = toPrefixedHex(msg.message);
+      const attestation = toPrefixedHex(msg.attestation);
+      const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+      const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+      if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+        console.error("Iris returned complete status with malformed attestation payload");
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
+
+      const attestationResult: AttestationData = {
+        message,
+        attestation,
+        status: msg.status,
+        sourceDomain,
+        destinationDomain,
+        nonce: msg.eventNonce,
+        amount: msg.decodedMessage.decodedMessageBody?.amount,
+        mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+        delayReason: msg.delayReason,
+      };
+      const ttl =
+        attestationResult.status === "complete"
+          ? IRIS_COMPLETE_CACHE_TTL_MS
+          : IRIS_PENDING_CACHE_TTL_MS;
+      setBoundedCacheEntry(
+        cachedUniversalAttestationResponses,
+        requestKey,
+        attestationResult,
+        ttl
+      );
+      return attestationResult;
+    } catch (error) {
+      console.error("Failed to fetch attestation from Iris:", error);
+      setBoundedCacheEntry(
+        cachedUniversalAttestationResponses,
+        requestKey,
+        null,
+        IRIS_NOT_FOUND_CACHE_TTL_MS
+      );
       return null;
+    } finally {
+      pendingUniversalAttestationRequests.delete(requestKey);
     }
+  })();
 
-    const message = (
-      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-    ) as `0x${string}`;
-    const attestation = (
-      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-    ) as `0x${string}`;
-
-    return {
-      message,
-      attestation,
-      status: msg.status,
-      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
-      nonce: msg.eventNonce,
-      amount: msg.decodedMessage.decodedMessageBody?.amount,
-      mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
-      delayReason: msg.delayReason,
-    };
-  } catch (error) {
-    console.error("Failed to fetch attestation from Iris:", error);
-    return null;
-  }
+  pendingUniversalAttestationRequests.set(requestKey, requestPromise);
+  return requestPromise;
 }
 
 /**
- * Check if attestation is ready for a given burn transaction.
- * This is a lighter-weight check that just verifies status.
- *
- * @param sourceChainId - The chain ID where the burn occurred
- * @param burnTxHash - The burn transaction hash
- * @returns true if attestation is complete and ready for mint
+ * Fetch attestation data from Iris API by source chain + nonce.
+ * Useful for restoring share links that only include a nonce.
  */
-export async function isAttestationReady(
-  sourceChainId: number,
-  burnTxHash: string
-): Promise<boolean> {
-  const data = await fetchAttestation(sourceChainId, burnTxHash);
-  return data?.status === "complete";
+export async function fetchAttestationByNonceUniversal(
+  sourceChainId: ChainId,
+  nonce: string
+): Promise<AttestationLookupByNonceResult | null> {
+  const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
+  if (sourceDomain === null) {
+    console.error(`Unknown CCTP domain for chain ${sourceChainId}`);
+    return null;
+  }
+
+  const normalizedNonce = nonce.trim();
+  if (!normalizedNonce) {
+    return null;
+  }
+
+  const isTestnet = isTestnetChainUniversal(sourceChainId);
+  const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
+  const url = `${baseUrl}/v2/messages/${sourceDomain}?nonce=${encodeURIComponent(
+    normalizedNonce
+  )}`;
+  const requestKey = buildUniversalNonceRequestKey(sourceDomain, normalizedNonce, isTestnet);
+  const now = Date.now();
+  const cached = cachedUniversalNonceAttestationResponses.get(requestKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const existingRequest = pendingUniversalNonceAttestationRequests.get(requestKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const requestPromise = (async (): Promise<AttestationLookupByNonceResult | null> => {
+    try {
+      const response = await irisRateLimiter.throttle(() =>
+        fetch(url, {
+          method: "GET",
+          headers: {
+            Accept: "application/json",
+          },
+        })
+      );
+
+      if (!response.ok) {
+        if (response.status !== 404) {
+          console.error(
+            `Iris nonce API error: ${response.status} ${response.statusText}`
+          );
+        }
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
+
+      const data: IrisAttestationResponse = await response.json();
+
+      if (!data.messages || data.messages.length === 0) {
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
+
+      const msg = data.messages[0];
+      logDelayReason(msg.delayReason);
+
+      if (!msg.decodedMessage) {
+        if (msg.status === "complete") {
+          console.error("Iris returned complete status without decodedMessage payload");
+          setBoundedCacheEntry(
+            cachedUniversalNonceAttestationResponses,
+            requestKey,
+            null,
+            IRIS_NOT_FOUND_CACHE_TTL_MS
+          );
+          return null;
+        }
+
+        const pendingAttestation: AttestationData = {
+          status: msg.status,
+          nonce: msg.eventNonce,
+          delayReason: msg.delayReason,
+        };
+        const pendingResult: AttestationLookupByNonceResult = {
+          attestation: pendingAttestation,
+          burnTxHash: normalizeSourceTxHash(
+            sourceChainId,
+            msg.transactionHash ?? msg.txHash ?? msg.sourceTxHash
+          ),
+        };
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          pendingResult,
+          IRIS_PENDING_CACHE_TTL_MS
+        );
+        return pendingResult;
+      }
+
+      const message = toPrefixedHex(msg.message);
+      const attestation = toPrefixedHex(msg.attestation);
+      const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+      const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+      if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+        console.error("Iris returned complete status with malformed nonce lookup payload");
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
+
+      const attestationResult: AttestationData = {
+        message,
+        attestation,
+        status: msg.status,
+        sourceDomain,
+        destinationDomain,
+        nonce: msg.eventNonce,
+        amount: msg.decodedMessage.decodedMessageBody?.amount,
+        mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+        delayReason: msg.delayReason,
+      };
+
+      const result: AttestationLookupByNonceResult = {
+        attestation: attestationResult,
+        burnTxHash: normalizeSourceTxHash(
+          sourceChainId,
+          msg.transactionHash ?? msg.txHash ?? msg.sourceTxHash
+        ),
+      };
+
+      const ttl =
+        attestationResult.status === "complete"
+          ? IRIS_COMPLETE_CACHE_TTL_MS
+          : IRIS_PENDING_CACHE_TTL_MS;
+      setBoundedCacheEntry(
+        cachedUniversalNonceAttestationResponses,
+        requestKey,
+        result,
+        ttl
+      );
+      return result;
+    } catch (error) {
+      console.error("Failed to fetch nonce attestation from Iris:", error);
+      setBoundedCacheEntry(
+        cachedUniversalNonceAttestationResponses,
+        requestKey,
+        null,
+        IRIS_NOT_FOUND_CACHE_TTL_MS
+      );
+      return null;
+    } finally {
+      pendingUniversalNonceAttestationRequests.delete(requestKey);
+    }
+  })();
+
+  pendingUniversalNonceAttestationRequests.set(requestKey, requestPromise);
+  return requestPromise;
 }
 
 export interface ReattestResult {
@@ -321,18 +739,31 @@ export interface ReattestResult {
  * @returns Result indicating success or failure
  */
 export async function requestReattestation(
-  sourceChainId: number | string,
+  sourceChainId: ChainId,
   nonce: string
 ): Promise<ReattestResult> {
-  const isTestnet = typeof sourceChainId === "number"
-    ? isTestnetChain(sourceChainId)
-    : isTestnetChainUniversal(sourceChainId as any);
+  const sourceDomain = getCctpDomainIdUniversal(sourceChainId);
+  if (sourceDomain === null) {
+    return {
+      success: false,
+      error: `Unknown CCTP domain for chain ${sourceChainId}`,
+    };
+  }
+
+  const isTestnet = isTestnetChainUniversal(sourceChainId);
+  const normalizedNonce = nonce.trim();
+  if (!normalizedNonce) {
+    return {
+      success: false,
+      error: "Nonce is required for re-attestation",
+    };
+  }
 
   const baseUrl = isTestnet ? IRIS_API_ENDPOINTS.testnet : IRIS_API_ENDPOINTS.mainnet;
 
   // The API expects the nonce in the path
   // Nonce should be the eventNonce from the attestation response
-  const url = `${baseUrl}/v2/reattest/${nonce}`;
+  const url = `${baseUrl}/v2/reattest/${normalizedNonce}`;
 
   try {
     const response = await irisRateLimiter.throttle(() =>
@@ -340,7 +771,6 @@ export async function requestReattestation(
         method: "POST",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/json",
         },
       })
     );
@@ -371,6 +801,14 @@ export async function requestReattestation(
     }
 
     const data = await response.json();
+    const responseNonce =
+      typeof data?.nonce === "string" ? data.nonce.trim() : undefined;
+    invalidateUniversalAttestationCacheForReattestation(
+      sourceDomain,
+      isTestnet,
+      normalizedNonce,
+      responseNonce
+    );
 
     return {
       success: true,

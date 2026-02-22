@@ -28,6 +28,9 @@ interface UseClaimHandlerResult {
 /**
  * Handles claim execution for both EVM and Solana destinations.
  * Uses the unified useMint hook internally.
+ *
+ * When a message is expired, sets the expired state via onMessageExpired.
+ * The parent (useMintPolling) handles auto re-attestation and polling.
  */
 export function useClaimHandler({
   destinationChainId,
@@ -72,7 +75,7 @@ export function useClaimHandler({
             state: "success" as const,
             txHash: mintTxHash,
             errorMessage: alreadyMinted
-              ? "USDC claimed. Check your wallet for the USDC"
+              ? "success - check wallet"
               : undefined,
           };
         }
@@ -86,12 +89,36 @@ export function useClaimHandler({
           state: "success",
           txHash: mintTxHash,
           errorMessage: alreadyMinted
-            ? "USDC claimed. Check your wallet for the USDC"
+            ? "success - check wallet"
             : undefined,
         });
       }
 
       return updatedSteps;
+    };
+
+    /**
+     * Handle mint result consistently for both EVM and Solana.
+     * If expired, signals the parent to auto re-attest.
+     */
+    const handleMintResult = (result: Awaited<ReturnType<typeof executeMint>>) => {
+      if (result.success || result.alreadyMinted) {
+        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
+        onSuccess(updatedSteps);
+
+        if (result.alreadyMinted) {
+          onAlreadyMinted?.();
+        }
+      } else if (result.messageExpired && result.nonce) {
+        // Signal parent — useMintPolling will auto re-attest and poll
+        onMessageExpired?.(result.nonce);
+      } else {
+        toast({
+          title: result.errorTitle || "Claim failed",
+          description: result.error || "Unable to complete mint",
+          variant: "destructive",
+        });
+      }
     };
 
     if (isDestSolana) {
@@ -112,35 +139,24 @@ export function useClaimHandler({
         existingSteps: currentSteps,
       });
 
-      if (result.success || result.alreadyMinted) {
-        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
-        onSuccess(updatedSteps);
-
-        if (result.alreadyMinted) {
-          onAlreadyMinted?.();
-        }
-      } else if (result.error) {
-        toast({
-          title: "Claim failed",
-          description: result.error,
-          variant: "destructive",
-        });
-      }
+      handleMintResult(result);
     } else {
       // EVM DESTINATION
       if (!onDestinationChain) {
         try {
           await switchChain({ chainId: destinationChainId as number });
-          // Wait for chain switch to complete
-          await new Promise((resolve) => setTimeout(resolve, 1000));
+          toast({
+            title: "Network switched",
+            description: "Click claim again to mint on the destination chain.",
+          });
         } catch {
           toast({
             title: "Chain switch required",
             description: "Please switch to the destination chain to claim",
             variant: "destructive",
           });
-          return;
         }
+        return;
       }
 
       const result = await executeMint({
@@ -150,28 +166,7 @@ export function useClaimHandler({
         existingSteps: currentSteps,
       });
 
-      if (result.success || result.alreadyMinted) {
-        const updatedSteps = buildUpdatedSteps(result.mintTxHash, result.alreadyMinted ?? false);
-        onSuccess(updatedSteps);
-
-        if (result.alreadyMinted) {
-          onAlreadyMinted?.();
-        }
-      } else if (result.messageExpired && result.nonce) {
-        // Message expired - trigger re-attestation flow
-        onMessageExpired?.(result.nonce);
-        toast({
-          title: "Attestation expired",
-          description: "Please request re-attestation to continue.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Claim failed",
-          description: result.error || "Unable to complete mint",
-          variant: "destructive",
-        });
-      }
+      handleMintResult(result);
     }
   }, [
     destinationChainId,

@@ -14,25 +14,61 @@ export function ClaimSection({
   messageExpired,
   onReattest,
   isReattesting,
+  isAwaitingReattestation,
+  reattestTimedOut,
 }: ClaimSectionProps) {
-  // Show re-attest button if message has expired
+  // Awaiting new attestation after auto re-request — show polling spinner
+  if (isAwaitingReattestation) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Button
+          className="w-full bg-amber-600/80 text-white cursor-default"
+          disabled
+        >
+          <span className="flex items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Waiting for new attestation…
+          </span>
+        </Button>
+        <p className="text-xs text-amber-600 text-center">
+          Polling Circle every 15 s for a fresh attestation.
+        </p>
+      </div>
+    );
+  }
+
+  // Re-attestation API call in-flight
+  if (isReattesting) {
+    return (
+      <div className="flex flex-col gap-2">
+        <Button
+          className="w-full bg-amber-600/80 text-white cursor-default"
+          disabled
+        >
+          <span className="flex items-center justify-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Requesting new attestation…
+          </span>
+        </Button>
+      </div>
+    );
+  }
+
+  // Expired but auto-reattest hasn't kicked in yet (or failed) — manual fallback
   if (messageExpired && onReattest) {
     return (
       <div className="flex flex-col gap-2">
         <Button
           className="w-full bg-amber-600 hover:bg-amber-700 text-white"
-          disabled={isReattesting}
           onClick={onReattest}
         >
-          {isReattesting ? (
-            <span className="flex items-center justify-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Requesting new attestation...
-            </span>
-          ) : (
-            "Attestation Expired. Request a new Attestation."
-          )}
+          Attestation expired — request new attestation
         </Button>
+        {reattestTimedOut && (
+          <p className="text-xs text-amber-600 text-center">
+            Automatic re-attestation timed out after 10 minutes. Retry manually.
+          </p>
+        )}
       </div>
     );
   }

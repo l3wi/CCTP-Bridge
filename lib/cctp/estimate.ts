@@ -6,7 +6,7 @@
 import { getCctpDomainSafe, IRIS_API_ENDPOINTS } from "./shared";
 import { getChainName, BRIDGEKIT_ENV } from "../bridgeKit";
 import { getFinalityEstimate } from "../cctpFinality";
-import { TransferSpeed as BridgeKitSpeed } from "@circle-fin/bridge-kit";
+import { TransferSpeed as BridgeKitSpeed } from "@/lib/cctp/transferSpeed";
 import type {
   ChainId,
   TransferSpeed,

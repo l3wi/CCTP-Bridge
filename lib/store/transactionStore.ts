@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import {
   LegacyLocalTransaction,
   LegacyV2Transaction,
@@ -8,14 +8,24 @@ import {
   type UniversalTxHash,
   getChainType,
 } from "@/lib/types";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 
-const DEFAULT_ESTIMATED_TIME_LABEL = "13-19 minutes";
+const serverStorage: StateStorage = {
+  getItem: (_name) => null,
+  setItem: (_name, _value) => {},
+  removeItem: (_name) => {},
+};
+
+const transactionStorage = createJSONStorage(() =>
+  typeof window === "undefined" ? serverStorage : localStorage
+);
 
 interface TransactionState {
   transactions: LocalTransaction[];
   isLoading: boolean;
   error: string | null;
   addTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
+  upsertTransaction: (transaction: Omit<LocalTransaction, "date">) => void;
   updateTransaction: (
     hash: UniversalTxHash,
     updates: Partial<LocalTransaction>
@@ -28,6 +38,55 @@ interface TransactionState {
   migrateFromLegacy: () => void;
 }
 
+// Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
+const extractChainId = (chain: unknown): ChainId | undefined => {
+  if (!chain || typeof chain !== "object") return undefined;
+
+  // EVM chains have numeric chainId
+  if ("chainId" in chain) {
+    const value = (chain as { chainId?: unknown }).chainId;
+    if (typeof value === "number") return value;
+  }
+
+  // Solana chains have string 'chain' identifier (e.g., "Solana_Devnet")
+  if ("chain" in chain && "type" in chain) {
+    const chainObj = chain as { chain?: unknown; type?: unknown };
+    if (chainObj.type === "solana" && typeof chainObj.chain === "string") {
+      return chainObj.chain as ChainId;
+    }
+  }
+
+  return undefined;
+};
+
+const normalizeHashCandidate = (hash: string): string => {
+  const trimmed = hash.trim();
+  if (/^(0x)?[0-9a-fA-F]{64}$/.test(trimmed)) {
+    const lower = trimmed.toLowerCase();
+    return lower.startsWith("0x") ? lower : `0x${lower}`;
+  }
+  return trimmed;
+};
+
+const normalizeHashForChain = (hash: string, chainId: ChainId): UniversalTxHash => {
+  if (getChainType(chainId) === "solana") {
+    return hash.trim();
+  }
+
+  const cleaned = hash.toLowerCase().trim();
+  return cleaned.startsWith("0x") ? cleaned : `0x${cleaned}`;
+};
+
+const findTransactionIndexByHash = (
+  transactions: LocalTransaction[],
+  hash: string
+): number => {
+  const candidate = normalizeHashCandidate(hash);
+  if (!candidate) return -1;
+
+  return transactions.findIndex((tx) => normalizeHashCandidate(tx.hash) === candidate);
+};
+
 /**
  * Normalize a transaction to v3 format.
  * Handles both new transactions and migrations from v2.
@@ -36,48 +95,20 @@ const normalizeTransaction = (
   tx: Partial<LocalTransaction> | Partial<LegacyV2Transaction> | Partial<LegacyLocalTransaction>
 ): LocalTransaction => {
   const bridgeResult = (tx as Partial<LocalTransaction>).bridgeResult;
-
-  // Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
-  const extractChainId = (chain: unknown): ChainId | undefined => {
-    if (!chain || typeof chain !== "object") return undefined;
-
-    // EVM chains have numeric chainId
-    if ("chainId" in chain) {
-      const value = (chain as { chainId?: unknown }).chainId;
-      if (typeof value === "number") return value;
-    }
-
-    // Solana chains have string 'chain' identifier (e.g., "Solana_Devnet")
-    if ("chain" in chain && "type" in chain) {
-      const chainObj = chain as { chain?: unknown; type?: unknown };
-      if (chainObj.type === "solana" && typeof chainObj.chain === "string") {
-        return chainObj.chain as ChainId;
-      }
-    }
-
-    return undefined;
-  };
-
-  const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain) ?? 1;
+  const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain);
+  if (originChain === undefined) {
+    throw new Error("Cannot normalize transaction without originChain");
+  }
   const targetChain = tx.targetChain ?? extractChainId(bridgeResult?.destination?.chain);
 
-  // Normalize hash based on chain type
-  const normalizeHash = (hash: string, chainId: ChainId): UniversalTxHash => {
-    if (getChainType(chainId) === "solana") {
-      return hash.trim();
-    }
-    // EVM: ensure lowercase with 0x prefix
-    const cleaned = hash.toLowerCase().trim();
-    return cleaned.startsWith("0x") ? cleaned : `0x${cleaned}`;
-  };
-
   const hash = tx.hash
-    ? normalizeHash(tx.hash as string, originChain)
+    ? normalizeHashForChain(tx.hash as string, originChain)
     : ("" as UniversalTxHash);
 
   const claimHash = tx.claimHash && targetChain
-    ? normalizeHash(tx.claimHash as string, targetChain)
+    ? normalizeHashForChain(tx.claimHash as string, targetChain)
     : undefined;
+  const transferType = (tx as Partial<LocalTransaction>).transferType ?? "standard";
 
   return {
     date: tx.date ? new Date(tx.date) : new Date(),
@@ -93,14 +124,19 @@ const normalizeTransaction = (
       (bridgeResult?.destination?.address as string | undefined),
     claimHash,
     version: "v3",
-    transferType: (tx as Partial<LocalTransaction>).transferType ?? "standard",
+    transferType,
     fee: (tx as Partial<LocalTransaction>).fee,
-    estimatedTime: (tx as Partial<LocalTransaction>).estimatedTime ?? DEFAULT_ESTIMATED_TIME_LABEL,
+    estimatedTime: resolveEstimatedTimeLabel({
+      transferType,
+      sourceChainId: originChain,
+      estimatedTime: (tx as Partial<LocalTransaction>).estimatedTime,
+    }),
     completedAt: (tx as Partial<LocalTransaction>).completedAt
       ? new Date((tx as Partial<LocalTransaction>).completedAt!)
       : undefined,
     bridgeResult,
     transferId: (tx as Partial<LocalTransaction>).transferId,
+    nonce: (tx as Partial<LocalTransaction>).nonce,
   };
 };
 
@@ -159,7 +195,10 @@ const migrateLegacyV1Transaction = (
     claimHash: legacyTx.claimHash,
     version: "v3",
     transferType: "standard",
-    estimatedTime: DEFAULT_ESTIMATED_TIME_LABEL,
+    estimatedTime: resolveEstimatedTimeLabel({
+      transferType: "standard",
+      sourceChainId: legacyTx.originChain,
+    }),
   };
 };
 
@@ -246,20 +285,80 @@ export const useTransactionStore = create<TransactionState>()(
       error: null,
 
       addTransaction: (transaction) => {
-        const incoming = {
-          ...transaction,
-          date: new Date(),
-        } as LocalTransaction;
-        const newTransaction = sanitizeForStorage(normalizeTransaction(incoming));
+        try {
+          const incoming = {
+            ...transaction,
+            date: new Date(),
+          } as LocalTransaction;
+          const newTransaction = sanitizeForStorage(normalizeTransaction(incoming));
 
-        set((state) => ({
-          transactions: state.transactions.some(
-            (tx) => tx.hash === newTransaction.hash
-          )
-            ? state.transactions
-            : [newTransaction, ...state.transactions],
-          error: null,
-        }));
+          set((state) => ({
+            transactions: state.transactions.some(
+              (tx) => tx.hash === newTransaction.hash
+            )
+              ? state.transactions
+              : [newTransaction, ...state.transactions],
+            error: null,
+          }));
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error("Failed to add transaction:", error);
+          set({ error: errorMessage });
+        }
+      },
+
+      upsertTransaction: (transaction) => {
+        set((state) => {
+          const incoming = {
+            ...transaction,
+            date: new Date(),
+          } as Partial<LocalTransaction>;
+
+          const existingIndex = incoming.hash
+            ? findTransactionIndexByHash(state.transactions, String(incoming.hash))
+            : -1;
+          const existing = existingIndex >= 0 ? state.transactions[existingIndex] : null;
+
+          try {
+            // Merge existing state with the raw patch before normalization so sparse
+            // recovery updates do not clobber richer local fields with defaults.
+            const normalizedInput = existing
+              ? ({
+                  ...existing,
+                  ...incoming,
+                  date: existing.date,
+                  version: "v3",
+                } as Partial<LocalTransaction>)
+              : incoming;
+
+            const nextTransaction = sanitizeForStorage(
+              normalizeTransaction(normalizedInput)
+            );
+
+            if (!existing) {
+              return {
+                transactions: [nextTransaction, ...state.transactions],
+                error: null,
+              };
+            }
+
+            const updatedTransactions = [...state.transactions];
+            updatedTransactions[existingIndex] = nextTransaction;
+
+            return {
+              transactions: updatedTransactions,
+              error: null,
+            };
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : "Failed to upsert transaction";
+            console.error("Failed to upsert transaction:", error);
+            return {
+              transactions: state.transactions,
+              error: errorMessage,
+            };
+          }
+        });
       },
 
       updateTransaction: (hash, updates) => {
@@ -329,6 +428,7 @@ export const useTransactionStore = create<TransactionState>()(
     }),
     {
       name: "cctp-transactions-v3",
+      storage: transactionStorage,
       partialize: (state) => ({ transactions: state.transactions }),
       onRehydrateStorage: () => (state) => {
         if (state) {

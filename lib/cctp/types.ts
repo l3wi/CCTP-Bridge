@@ -143,6 +143,8 @@ export interface MintResult {
   success: boolean;
   mintTxHash?: UniversalTxHash;
   error?: string;
+  /** Short toast title when there's an error (e.g. "Wrong wallet") */
+  errorTitle?: string;
   /** True if mint was already executed (nonce used) */
   alreadyMinted?: boolean;
   /** True if the attestation has expired and needs re-signing */

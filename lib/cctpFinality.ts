@@ -1,4 +1,4 @@
-import { TransferSpeed } from "@circle-fin/bridge-kit";
+import { TransferSpeed, type TransferSpeedValue } from "@/lib/cctp/transferSpeed";
 
 type FinalityEstimate = {
   fast?: { blocks: number; averageTime: string };
@@ -107,7 +107,7 @@ const FINALITY_BY_CHAIN: Record<string, FinalityEstimate> = {
 
 export const getFinalityEstimate = (
   chainName: string,
-  speed: TransferSpeed
+  speed: TransferSpeedValue
 ): FinalityEstimate[keyof FinalityEstimate] | undefined => {
   // Normalize chain name: lowercase, trim, handle common variants
   let key = chainName.trim().toLowerCase();

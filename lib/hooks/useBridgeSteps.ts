@@ -80,7 +80,6 @@ export function useBridgeSteps({
     const srcChainId = chainDef?.chainId ?? chainDef?.chain ?? sourceChainId;
     const isSourceSolana = srcChainId && isSolanaChain(srcChainId as ChainId);
 
-    let previousCompleted = true;
     const filled: DerivedStep[] = [];
 
     for (const entry of STEP_ORDER) {
@@ -92,8 +91,7 @@ export function useBridgeSteps({
       const existing = existingSteps.find((s) => s.id === entry.id);
       if (existing) {
         filled.push(existing as DerivedStep);
-        previousCompleted = existing.state === "success" || existing.state === "noop";
-      } else if (previousCompleted) {
+      } else {
         // If approve step is missing but burn succeeded, infer approve succeeded
         if (entry.id === "approve" && burnSucceeded) {
           filled.push({
@@ -102,15 +100,14 @@ export function useBridgeSteps({
             name: entry.label,
             state: "success",
           });
-          previousCompleted = true;
         } else {
+          // Always render the full pipeline so users can see all upcoming steps.
           filled.push({
             id: entry.id,
             label: entry.label,
             name: entry.label,
             state: "pending",
           });
-          previousCompleted = false;
         }
       }
     }

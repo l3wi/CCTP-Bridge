@@ -11,7 +11,7 @@ import {
   estimateSolanaMintGas,
   estimateEvmMintGas,
   type GasEstimate,
-} from "./gasEstimation";
+} from "@/lib/cctp/gasEstimation";
 
 // =============================================================================
 // formatSol Tests

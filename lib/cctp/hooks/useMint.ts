@@ -5,24 +5,27 @@
  */
 
 import { useCallback, useState } from "react";
-import { useWalletClient, usePublicClient, useBalance } from "wagmi";
+import { useWalletClient, useBalance } from "wagmi";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+import type { Connection } from "@solana/web3.js";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
-import { fetchAttestationUniversal } from "@/lib/iris";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
+import { fetchAttestationUniversal, isCompleteAttestationData } from "@/lib/iris";
 import { simulateMint } from "@/lib/simulation";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
 } from "@/lib/contracts";
 import { getExplorerTxUrl, getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
-import { getCctpDomain } from "../shared";
+import { getCctpDomain, getCctpDomainSafe } from "../shared";
 import { checkNonceUsed } from "../nonce";
 import { updateStepsWithMint } from "../steps";
 import {
   buildReceiveMessageTransaction,
   sendTransactionNoConfirm,
   isVersionedTransaction,
+  checkMessageExpiration,
 } from "../solana/mint";
 import {
   isSolanaChain,
@@ -34,21 +37,90 @@ import {
   type UniversalTxHash,
 } from "../types";
 import { isUserRejection, extractErrorMessage } from "../shared";
+import { parseSolanaCctpError, extractCctpErrorCode } from "../solana/errors";
+import { parseEvmCctpError } from "../evm/errors";
 import {
   estimateSolanaMintGas,
   estimateEvmMintGas,
   formatSol,
   formatNative,
 } from "../gasEstimation";
+import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 
 // =============================================================================
 // Hook
 // =============================================================================
 
+const ALREADY_CLAIMED_TOAST_TITLE = "USDC Successfully Claimed";
+const ALREADY_CLAIMED_TOAST_DESCRIPTION = "Check your wallet for the USDC.";
+const SOLANA_MINT_CONFIRMATION_TIMEOUT_MS = 45_000;
+const SOLANA_MINT_CONFIRMATION_POLL_MS = 2_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const markMintStepPending = (
+  existingSteps: MintParams["existingSteps"],
+  mintTxHash: UniversalTxHash
+): MintParams["existingSteps"] => {
+  const steps = existingSteps ? [...existingSteps] : [];
+  const mintIndex = steps.findIndex((step) => /mint|claim|receive/i.test(step.name));
+
+  const pendingMintStep = {
+    name: "Mint",
+    state: "pending" as const,
+    txHash: mintTxHash,
+  };
+
+  if (mintIndex >= 0) {
+    steps[mintIndex] = {
+      ...steps[mintIndex],
+      ...pendingMintStep,
+    };
+  } else {
+    steps.push(pendingMintStep);
+  }
+
+  return steps;
+};
+
+async function waitForSolanaMintConfirmation(
+  connection: Connection,
+  signature: string
+): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < SOLANA_MINT_CONFIRMATION_TIMEOUT_MS) {
+    try {
+      const statusResponse = await connection.getSignatureStatuses(
+        [signature],
+        { searchTransactionHistory: true }
+      );
+      const status = statusResponse.value[0];
+
+      if (status?.err) {
+        return false;
+      }
+
+      if (
+        status?.confirmationStatus === "confirmed" ||
+        status?.confirmationStatus === "finalized"
+      ) {
+        return true;
+      }
+    } catch (error) {
+      console.warn("[useMint] Failed to read Solana signature status:", error);
+    }
+
+    await sleep(SOLANA_MINT_CONFIRMATION_POLL_MS);
+  }
+
+  return false;
+}
+
 export function useMint() {
   // EVM wallet state
   const { data: walletClient } = useWalletClient();
-  const publicClient = usePublicClient();
 
   // EVM native balance for gas checks
   const { data: evmNativeBalance } = useBalance({
@@ -100,7 +172,7 @@ export function useMint() {
         setIsMinting(false);
       }
     },
-    [walletClient, publicClient, solanaWallet, connection, updateTransaction, toast, evmNativeBalance?.value]
+    [walletClient, solanaWallet, connection, updateTransaction, toast, evmNativeBalance?.value]
   );
 
   /**
@@ -118,9 +190,7 @@ export function useMint() {
       return { success: false, error: "EVM wallet not connected" };
     }
 
-    if (!publicClient) {
-      return { success: false, error: "Public client not available" };
-    }
+    const publicClient = createEvmPublicClient(destinationChainId, { walletClient });
 
     const messageTransmitter = getMessageTransmitterAddress(destinationChainId);
     if (!messageTransmitter) {
@@ -129,6 +199,9 @@ export function useMint() {
         error: `No MessageTransmitter for chain ${destinationChainId}`,
       };
     }
+
+    // Track nonce for error handling (re-attestation needs it)
+    let evmAttestationNonce: string | undefined;
 
     try {
       // 1. Fetch attestation from Iris
@@ -144,11 +217,45 @@ export function useMint() {
         };
       }
 
-      if (attestationData.status !== "complete") {
+      if (!isCompleteAttestationData(attestationData)) {
+        if (attestationData.status !== "complete") {
+          return {
+            success: false,
+            error: "Attestation not ready yet. Please wait a few more minutes.",
+          };
+        }
+
         return {
           success: false,
-          error: "Attestation not ready yet. Please wait a few more minutes.",
+          error: "Attestation payload is incomplete. Please try again.",
         };
+      }
+
+      // Store nonce for error handler (needed for re-attestation)
+      evmAttestationNonce = attestationData.nonce;
+
+      // 1b. Validate destination domain matches target chain
+      try {
+        const messageDomain = extractDestinationDomainFromMessage(attestationData.message);
+        const expectedDomain = getCctpDomainSafe(destinationChainId);
+
+        if (expectedDomain !== null && messageDomain !== expectedDomain) {
+          console.error(
+            `[useMint] Domain mismatch detected!\n` +
+            `  Message destination domain: ${messageDomain}\n` +
+            `  Target chain ${destinationChainId} domain: ${expectedDomain}\n` +
+            `  The CCTP message can only be received on the chain with domain ${messageDomain}.\n` +
+            `  This indicates the UI is targeting the wrong destination chain.`
+          );
+          return {
+            success: false,
+            error: `Wrong destination chain: this transfer was burned for CCTP domain ${messageDomain}, ` +
+              `but you are trying to claim on chain ${destinationChainId} (domain ${expectedDomain}). ` +
+              `Please switch to the correct chain.`,
+          };
+        }
+      } catch (domainError) {
+        console.warn("[useMint] Could not validate destination domain:", domainError);
       }
 
       // 2. Simulate to verify it will succeed
@@ -169,8 +276,8 @@ export function useMint() {
         });
 
         toast({
-          title: "Already Claimed",
-          description: "This transfer was already minted. Check your wallet for the USDC.",
+          title: ALREADY_CLAIMED_TOAST_TITLE,
+          description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
         });
 
         return { success: true, alreadyMinted: true };
@@ -271,7 +378,7 @@ export function useMint() {
 
       return { success: true, mintTxHash: hash };
     } catch (error: unknown) {
-      return handleMintError(error, burnTxHash, existingSteps, updateTransaction, toast);
+      return handleMintError(error, burnTxHash, existingSteps, updateTransaction, toast, evmAttestationNonce);
     }
   }
 
@@ -304,6 +411,9 @@ export function useMint() {
       };
     }
 
+    // Track nonce for error handling (re-attestation needs it)
+    let attestationNonce: string | undefined;
+
     try {
       // 1. Fetch attestation
       toast({
@@ -323,12 +433,22 @@ export function useMint() {
         };
       }
 
-      if (attestationData.status !== "complete") {
+      if (!isCompleteAttestationData(attestationData)) {
+        if (attestationData.status !== "complete") {
+          return {
+            success: false,
+            error: "Attestation not ready yet. Please wait a few more minutes.",
+          };
+        }
+
         return {
           success: false,
-          error: "Attestation not ready yet. Please wait a few more minutes.",
+          error: "Attestation payload is incomplete. Please try again.",
         };
       }
+
+      // Store nonce for error handler (needed for re-attestation)
+      attestationNonce = attestationData.nonce;
 
       // 2. Check if already minted using nonce check
       const nonceResult = await checkNonceUsed(
@@ -346,14 +466,38 @@ export function useMint() {
         });
 
         toast({
-          title: "Already Claimed",
-          description: "This transfer was already minted. Check your wallet for the USDC.",
+          title: ALREADY_CLAIMED_TOAST_TITLE,
+          description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
         });
 
         return { success: true, alreadyMinted: true };
       }
 
-      // 3. Build the receiveMessage transaction
+      // 3. Check if message has expired before building transaction
+      try {
+        const expirationCheck = await checkMessageExpiration(
+          connection,
+          attestationData.message
+        );
+
+        if (expirationCheck.isExpired) {
+          console.warn(
+            `[useMint] CCTP message expired: expirationBlock=${expirationCheck.expirationBlock}, ` +
+            `currentSlot=${expirationCheck.currentSlot}. Needs re-attestation.`
+          );
+          return {
+            success: false,
+            messageExpired: true,
+            nonce: attestationData.nonce,
+            error: `Message expired (slot ${expirationCheck.expirationBlock} < current ${expirationCheck.currentSlot}). Please request re-attestation.`,
+          };
+        }
+      } catch (expirationError) {
+        // Don't block on expiration check failure - let the transaction try
+        console.warn("[useMint] Expiration check failed, proceeding:", expirationError);
+      }
+
+      // 4. Build the receiveMessage transaction
       toast({
         title: "Preparing mint transaction",
         description: "Building transaction...",
@@ -371,7 +515,7 @@ export function useMint() {
         isTestnet,
       });
 
-      // 4. Check gas balance before prompting user to sign
+      // 5. Check gas balance before prompting user to sign
       if (solanaWallet.publicKey) {
         try {
           // Fetch current SOL balance
@@ -401,7 +545,7 @@ export function useMint() {
         }
       }
 
-      // 5. Sign transaction with wallet
+      // 6. Sign transaction with wallet
       // Note: signTransaction handles both legacy and versioned transactions
       toast({
         title: "Sign transaction",
@@ -410,22 +554,46 @@ export function useMint() {
 
       const signedTransaction = await solanaWallet.signTransaction(transaction);
 
-      // 6. Send transaction without waiting for confirmation
+      // 7. Send transaction and wait for network confirmation before marking claimed
       toast({
         title: "Sending transaction",
         description: "Submitting transaction to the network...",
       });
 
       const txSignature = await sendTransactionNoConfirm(connection, signedTransaction);
-
-      // 7. Update transaction store
-      const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
+      const pendingSteps = markMintStepPending(existingSteps, txSignature);
       const explorerUrl = getExplorerTxUrlUniversal(
         destinationChainId,
         txSignature,
         BRIDGEKIT_ENV
       );
 
+      updateTransaction(burnTxHash, {
+        claimHash: txSignature,
+        status: "pending",
+        bridgeState: "pending",
+        steps: pendingSteps,
+      });
+
+      toast({
+        title: "Transaction sent",
+        description: explorerUrl
+          ? "Submitted to Solana. Confirming on-chain status..."
+          : `Mint tx: ${txSignature.slice(0, 20)}...`,
+      });
+
+      const isConfirmed = await waitForSolanaMintConfirmation(connection, txSignature);
+      if (!isConfirmed) {
+        return {
+          success: false,
+          mintTxHash: txSignature,
+          error:
+            "Mint transaction was submitted but is not yet confirmed on Solana. Please wait and retry claim status shortly.",
+        };
+      }
+
+      // 8. Finalize transaction store after confirmation
+      const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
       updateTransaction(burnTxHash, {
         claimHash: txSignature,
         status: "claimed",
@@ -435,15 +603,15 @@ export function useMint() {
       });
 
       toast({
-        title: "Transaction sent!",
+        title: "USDC Claimed!",
         description: explorerUrl
-          ? "Your mint transaction has been submitted."
-          : `Mint tx: ${txSignature.slice(0, 20)}...`,
+          ? "Your USDC mint transaction is confirmed."
+          : `Mint tx confirmed: ${txSignature.slice(0, 20)}...`,
       });
 
       return { success: true, mintTxHash: txSignature };
     } catch (error: unknown) {
-      return handleSolanaMintError(error, burnTxHash, existingSteps, updateTransaction, toast);
+      return handleSolanaMintError(error, burnTxHash, existingSteps, updateTransaction, toast, attestationNonce);
     }
   }
 
@@ -467,48 +635,82 @@ type ToastFn = (opts: { title: string; description: string }) => void;
 
 /**
  * Handle EVM mint errors with consistent behavior.
+ *
+ * Uses the CCTP EVM error map to provide user-friendly messages for known
+ * revert reasons and always logs the full error for debugging.
  */
 function handleMintError(
   error: unknown,
   burnTxHash: UniversalTxHash,
   existingSteps: MintParams["existingSteps"],
   updateTransaction: UpdateTransactionFn,
-  toast: ToastFn
+  toast: ToastFn,
+  attestationNonce?: string
 ): MintResult {
-  const errorMessage = extractErrorMessage(error);
+  const errorMessage = extractErrorMessage(error, 500);
 
-  // Check for user rejection
+  // ── 0. User rejection ─────────────────────────────────────────────
   if (isUserRejection(error)) {
     return { success: false, error: "Transaction cancelled by user" };
   }
 
-  // Check for nonce already used (race condition)
-  if (/nonce already used/i.test(errorMessage)) {
-    const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
-    updateTransaction(burnTxHash, {
-      status: "claimed",
-      bridgeState: "success",
-      completedAt: new Date(),
-      steps: updatedSteps,
-    });
-
-    toast({
-      title: "Already Claimed",
-      description: "This transfer was already minted. Check your wallet.",
-    });
-
-    return { success: true, alreadyMinted: true };
-  }
-
+  // ── 1. Always log full debug info for non-user errors ─────────────
   console.error("EVM mint failed:", {
     ecosystem: "evm",
-    error: errorMessage,
-    context: {
-      burnTxHash,
-      timestamp: new Date().toISOString(),
-    },
+    burnTxHash,
+    timestamp: new Date().toISOString(),
+    errorMessage,
+    shortMessage: (error as { shortMessage?: string })?.shortMessage,
     rawError: error,
   });
+
+  // ── 2. Try to match a known CCTP revert reason ────────────────────
+  const { info } = parseEvmCctpError(error);
+
+  if (info) {
+    console.warn(
+      `[useMint] EVM CCTP error: ${info.title}\n` +
+      `  Message: ${info.userMessage}`
+    );
+
+    // Already claimed
+    if (info.isAlreadyClaimed) {
+      const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+      updateTransaction(burnTxHash, {
+        status: "claimed",
+        bridgeState: "success",
+        completedAt: new Date(),
+        steps: updatedSteps,
+      });
+
+      toast({
+        title: ALREADY_CLAIMED_TOAST_TITLE,
+        description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
+      });
+
+      return { success: true, alreadyMinted: true };
+    }
+
+    // Only explicit re-attestation errors should trigger auto retry.
+    if (info.needsReattestation) {
+      return {
+        success: false,
+        messageExpired: true,
+        nonce: attestationNonce,
+        errorTitle: info.title,
+        error: info.userMessage,
+      };
+    }
+
+    // Known error with specific title + message
+    return {
+      success: false,
+      errorTitle: info.title,
+      error: info.userMessage,
+    };
+  }
+
+  // ── 3. Unknown error ──────────────────────────────────────────────
   return {
     success: false,
     error: errorMessage,
@@ -517,29 +719,48 @@ function handleMintError(
 
 /**
  * Handle Solana mint errors with consistent behavior.
+ *
+ * Uses the CCTP error map to provide user-friendly messages for known
+ * program errors and always logs full simulation logs for debugging.
  */
 function handleSolanaMintError(
   error: unknown,
   burnTxHash: UniversalTxHash,
   existingSteps: MintParams["existingSteps"],
   updateTransaction: UpdateTransactionFn,
-  toast: ToastFn
+  toast: ToastFn,
+  attestationNonce?: string
 ): MintResult {
-  const errorMessage = extractErrorMessage(error);
-  const errorLogs = (error as { logs?: string[] })?.logs ?? [];
-  const logsText = errorLogs.join("\n");
-
-  // Handle user rejection
+  // ── 0. User rejection (before any other checks) ───────────────────────
   if (isUserRejection(error)) {
     return { success: false, error: "Transaction cancelled by user" };
   }
 
-  // Check if nonce already used (transaction already claimed)
+  // ── 1. Gather all available error context ──────────────────────────────
+  const errorMessage = extractErrorMessage(error, 500);
+  const simLogs = (error as { simulationLogs?: string[] })?.simulationLogs ?? [];
+  const txLogs = (error as { transactionLogs?: string[] })?.transactionLogs ?? [];
+  const legacyLogs = (error as { logs?: string[] })?.logs ?? [];
+  const allLogs = [...simLogs, ...txLogs, ...legacyLogs];
+  const txMessage = (error as { transactionMessage?: string })?.transactionMessage ?? "";
+
+  // ── 2. Always log full debug info for non-user errors ──────────────────
+  console.error("Solana mint failed:", {
+    ecosystem: "solana",
+    burnTxHash,
+    timestamp: new Date().toISOString(),
+    errorMessage,
+    transactionMessage: txMessage,
+    logs: allLogs.length > 0 ? allLogs : "(no logs captured)",
+    rawError: error,
+  });
+
+  // ── 3. Nonce already used (account-already-in-use from init) ──────────
+  const allText = `${errorMessage} ${txMessage} ${allLogs.join("\n")}`;
   if (
-    /already in use/i.test(errorMessage) ||
-    /already in use/i.test(logsText) ||
-    /"Custom":\s*0\b/.test(errorMessage) ||
-    /account.*already.*allocated/i.test(errorMessage)
+    /already in use/i.test(allText) ||
+    /account.*already.*allocated/i.test(allText) ||
+    /"Custom":\s*0\b/.test(allText)
   ) {
     const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
     updateTransaction(burnTxHash, {
@@ -550,25 +771,66 @@ function handleSolanaMintError(
     });
 
     toast({
-      title: "Already Claimed",
-      description: "This transfer was already minted. Check your wallet for the USDC.",
+      title: ALREADY_CLAIMED_TOAST_TITLE,
+      description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
     });
 
     return { success: true, alreadyMinted: true };
   }
 
-  console.error("Solana mint failed:", {
-    ecosystem: "solana",
-    error: errorMessage,
-    context: {
-      burnTxHash,
-      timestamp: new Date().toISOString(),
-    },
-    logs: errorLogs.length > 0 ? errorLogs : undefined,
-    rawError: error,
-  });
+  // ── 4. Try to match a known CCTP error code ───────────────────────────
+  const { code, info } = parseSolanaCctpError(error);
+
+  if (info) {
+    console.warn(
+      `[useMint] CCTP error 0x${code}: ${info.name}\n` +
+      `  Title: ${info.title}\n` +
+      `  Message: ${info.userMessage}\n` +
+      `  Detail: ${info.detail}`
+    );
+
+    // Message expired / fee issues → trigger auto re-attestation
+    if (info.isExpired) {
+      return {
+        success: false,
+        messageExpired: true,
+        nonce: attestationNonce,
+        errorTitle: info.title,
+        error: info.userMessage,
+      };
+    }
+
+    // Already claimed via error code
+    if (info.isAlreadyClaimed) {
+      const updatedSteps = updateStepsWithMint(existingSteps, undefined, true);
+      updateTransaction(burnTxHash, {
+        status: "claimed",
+        bridgeState: "success",
+        completedAt: new Date(),
+        steps: updatedSteps,
+      });
+
+      toast({
+        title: ALREADY_CLAIMED_TOAST_TITLE,
+        description: ALREADY_CLAIMED_TOAST_DESCRIPTION,
+      });
+
+      return { success: true, alreadyMinted: true };
+    }
+
+    // Known error with specific title + message
+    return {
+      success: false,
+      errorTitle: info.title,
+      error: info.userMessage,
+    };
+  }
+
+  // ── 5. Unknown error – return raw message with error code if found ────
+  const unknownCode = extractCctpErrorCode(allText);
   return {
     success: false,
+    errorTitle: unknownCode ? `Error 0x${unknownCode}` : undefined,
     error: errorMessage,
   };
 }

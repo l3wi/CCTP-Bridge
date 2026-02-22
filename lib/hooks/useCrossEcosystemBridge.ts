@@ -4,12 +4,13 @@
  */
 
 import { useCallback, useRef, useState } from "react";
-import { useAccount, useWalletClient } from "wagmi";
+import { useWalletClient } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { formatUnits } from "viem";
-import { type BridgeResult, type ChainDefinition } from "@circle-fin/bridge-kit";
+import { type BridgeResult } from "@circle-fin/bridge-kit";
 import { useToast } from "@/components/ui/use-toast";
 import { getProviderFromWalletClient, resolveBridgeChainUniversal } from "@/lib/bridgeKit";
+import { toChainDefinition } from "@/lib/chainDefinition";
 import { useBurn, type BurnProgressCallbacks } from "@/lib/cctp/hooks/useBurn";
 import {
   createInitialSteps,
@@ -24,6 +25,17 @@ import {
 } from "@/lib/types";
 import { getErrorMessage } from "@/lib/cctp/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
+import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
+
+const CANCELLATION_MESSAGES = new Set([
+  "Transaction cancelled by user",
+  "Approval cancelled by user",
+  "Transaction was cancelled by user",
+  "Transaction cancelled",
+]);
+
+const isCancellationMessage = (message: string): boolean =>
+  CANCELLATION_MESSAGES.has(message);
 
 export const useCrossEcosystemBridge = () => {
   // EVM wallet state
@@ -57,6 +69,8 @@ export const useCrossEcosystemBridge = () => {
       }
     ): Promise<BridgeResult> => {
       const sourceChainType = getChainType(params.sourceChainId);
+      const destinationChainType = getChainType(params.targetChainId);
+      const isCrossEcosystem = sourceChainType !== destinationChainType;
 
       // Validate wallet connection based on source chain type
       if (sourceChainType === "solana") {
@@ -84,8 +98,16 @@ export const useCrossEcosystemBridge = () => {
       // Determine sender address based on source chain type
       const senderAddress = sourceChainType === "solana" ? solanaAddress : evmAddress;
 
-      // Use custom target address if provided, otherwise fall back to sender
+      // Cross-ecosystem transfers must always have an explicit locked destination address.
+      if (isCrossEcosystem && !params.targetAddress) {
+        throw new Error("Destination address is required for cross-ecosystem transfers");
+      }
+
+      // Use locked target address if provided, otherwise fall back to sender.
       const recipientAddress = params.targetAddress ?? senderAddress;
+      if (!recipientAddress) {
+        throw new Error("Destination address is required");
+      }
 
       const buildResult = (
         steps: BridgeResult["steps"],
@@ -97,11 +119,11 @@ export const useCrossEcosystemBridge = () => {
         provider: "CCTPV2BridgingProvider",
         source: {
           address: senderAddress ?? "",
-          chain: sourceChainDef as unknown as ChainDefinition,
+          chain: toChainDefinition(sourceChainDef),
         },
         destination: {
           address: recipientAddress ?? "",
-          chain: destinationChainDef as unknown as ChainDefinition,
+          chain: toChainDefinition(destinationChainDef),
         },
         steps,
       });
@@ -147,16 +169,6 @@ export const useCrossEcosystemBridge = () => {
 
         if (!burnResult.success) {
           const errorMsg = burnResult.error || "Burn transaction failed";
-          setError(errorMsg);
-          toast({
-            title:
-              errorMsg === "Transaction cancelled by user" ||
-              errorMsg === "Approval cancelled by user"
-                ? "Transaction cancelled"
-                : "Bridge failed",
-            description: errorMsg,
-            variant: "destructive",
-          });
           throw new Error(errorMsg);
         }
 
@@ -164,18 +176,6 @@ export const useCrossEcosystemBridge = () => {
         const burnHash = burnResult.burnTxHash! as UniversalTxHash;
         currentHashRef.current = burnHash;
         opts?.onPendingHash?.(burnHash);
-
-        // Server-side analytics
-        const roundedAmount = Math.round(Number(formattedAmount));
-        const txType = transferType === "fast" ? 1 : 0;
-        fetch("/api/meta", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: roundedAmount,
-            meta: `${roundedAmount},${params.sourceChainId},${params.targetChainId},${txType}`,
-          }),
-        }).catch(() => {});
 
         // Build initial steps using unified helper
         const initialSteps = createInitialSteps({
@@ -194,6 +194,10 @@ export const useCrossEcosystemBridge = () => {
           status: "pending",
           version: "v3",
           transferType,
+          estimatedTime: resolveEstimatedTimeLabel({
+            transferType,
+            sourceChainId: params.sourceChainId,
+          }),
           bridgeState: "pending",
           steps: initialSteps,
           bridgeResult: initialResult,
@@ -228,7 +232,7 @@ export const useCrossEcosystemBridge = () => {
 
         toast({
           title:
-            errorMessage === "Transaction was cancelled by user"
+            isCancellationMessage(errorMessage)
               ? "Transaction cancelled"
               : "Bridge failed",
           description: errorMessage,

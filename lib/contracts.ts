@@ -3,9 +3,14 @@
  * Used for direct contract interactions bypassing Bridge Kit's bridge flow.
  */
 
-import { createPublicClient, http, encodePacked, keccak256 } from "viem";
-import { getBridgeKit, getSupportedEvmChains, getAllSupportedChains, type BridgeEnvironment } from "./bridgeKit";
+import { encodePacked, keccak256 } from "viem";
+import {
+  getSupportedEvmChains,
+  getAllSupportedChains,
+  type BridgeEnvironment,
+} from "./bridgeKit";
 import type { ChainId, SolanaChainId } from "./types";
+import { createEvmPublicClient } from "@/lib/rpc/clients";
 
 // ABI for MessageTransmitter - only functions we need for direct mint
 export const MESSAGE_TRANSMITTER_ABI = [
@@ -138,8 +143,9 @@ export function getChainIdFromDomainUniversal(
 export function getChainInfoFromDomainAllChains(
   domain: number
 ): { name: string; type: string; isTestnet: boolean; chainId?: number } | null {
-  const kit = getBridgeKit();
-  const allChains = kit.getSupportedChains();
+  const allChains = getAllSupportedChains("mainnet").concat(
+    getAllSupportedChains("testnet")
+  );
 
   const chain = allChains.find((c) => c.cctp?.domain === domain);
   if (!chain) return null;
@@ -256,22 +262,8 @@ export async function isNonceUsed(
     return null;
   }
 
-  // Get RPC URL for destination chain
-  const rpcUrl = chain.rpcEndpoints?.[0];
-
   try {
-    const client = createPublicClient({
-      chain: {
-        id: chain.chainId,
-        name: chain.name,
-        nativeCurrency: chain.nativeCurrency,
-        rpcUrls: {
-          default: { http: rpcUrl ? [rpcUrl] : [] },
-          public: { http: rpcUrl ? [rpcUrl] : [] },
-        },
-      },
-      transport: rpcUrl ? http(rpcUrl) : http(),
-    });
+    const client = createEvmPublicClient(destinationChainId, { env });
 
     const sourceAndNonce = hashSourceAndNonce(sourceDomain, nonce);
 
