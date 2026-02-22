@@ -22,8 +22,7 @@ import { ClaimSection } from "./claim-section";
 import { BridgeInfo } from "./bridge-info";
 import { ProgressSpinner } from "./progress-spinner";
 import type { BridgingStateProps, BridgeResultWithMeta, ChainDisplay } from "./types";
-
-const CLAIMED_MESSAGE = "success - check wallet";
+import { mergeUpdatedSteps, normalizeBridgeResult } from "./state-utils";
 
 const getBridgeResultSyncKey = (
   result: BridgeResultWithMeta | BridgeResult | undefined
@@ -98,36 +97,10 @@ export function BridgingState({
   const baseResult = localBridgeResult ?? bridgeResult;
 
   // Normalize nonce-already-used errors to success state
-  const displayResult = useMemo(() => {
-    if (!baseResult) return undefined;
-    const hasNonceUsed = baseResult.steps.some(
-      (step) =>
-        /nonce already used/i.test(step.errorMessage || "") ||
-        /nonce already used/i.test(String(step.error || ""))
-    );
-    if (!hasNonceUsed) return baseResult;
-
-    const normalizedSteps = baseResult.steps.map((step) => {
-      const nonceUsed =
-        /nonce already used/i.test(step.errorMessage || "") ||
-        /nonce already used/i.test(String(step.error || ""));
-
-      if (nonceUsed && /mint/i.test(step.name)) {
-        return {
-          ...step,
-          state: "success" as const,
-          errorMessage: CLAIMED_MESSAGE,
-        };
-      }
-      return step;
-    });
-
-    return {
-      ...baseResult,
-      state: "success" as const,
-      steps: normalizedSteps,
-    };
-  }, [baseResult]);
+  const displayResult = useMemo(
+    () => normalizeBridgeResult(baseResult),
+    [baseResult]
+  );
 
   // Extract chain IDs
   const destinationChainId: ChainId | undefined = useMemo(() => {
@@ -182,9 +155,7 @@ export function BridgingState({
 
   // Callback to update steps from polling
   const handleStepsUpdate = useCallback((updatedSteps: BridgeResult["steps"]) => {
-    setLocalBridgeResult((prev) =>
-      prev ? { ...prev, steps: updatedSteps, state: "success" } : prev
-    );
+    setLocalBridgeResult((prev) => mergeUpdatedSteps(prev, updatedSteps));
   }, []);
 
   // Handle burn failure detected by polling
