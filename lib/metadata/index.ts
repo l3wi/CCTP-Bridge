@@ -23,6 +23,20 @@ export const BRIDGEKIT_ENV: BridgeEnvironment = DEFAULT_ENV;
 
 const metadata = generatedCctp as GeneratedCctpMetadata;
 const warnedCrossEnvFallbacks = new Set<string>();
+const warnedDeprecatedEnvVars = new Set<string>();
+const deprecatedEnvVars = [
+  "NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES",
+  "NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED",
+] as const;
+
+for (const envVar of deprecatedEnvVars) {
+  if (process.env[envVar] && !warnedDeprecatedEnvVars.has(envVar)) {
+    warnedDeprecatedEnvVars.add(envVar);
+    console.warn(
+      `[metadata] ${envVar} is deprecated and no longer used by this app. Remove it from your deployment configuration.`
+    );
+  }
+}
 
 const warnCrossEnvFallback = (
   chainType: "evm" | "solana",

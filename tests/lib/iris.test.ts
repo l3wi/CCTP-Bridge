@@ -28,6 +28,7 @@ vi.mock("../../lib/utils/rateLimiter", () => ({
 import {
   fetchAttestationByNonceUniversal,
   fetchAttestationUniversal,
+  requestReattestation,
 } from "@/lib/iris";
 import type { ChainId } from "@/lib/types";
 
@@ -181,4 +182,41 @@ describe("iris attestation fetching", () => {
     await fetchAttestationUniversal(1, firstHash);
     expect(fetchMock).toHaveBeenCalledTimes(202);
   }, 20_000);
+
+  it("returns null for malformed complete payloads", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+
+    fetchMock.mockResolvedValue(
+      toIrisResponse([
+        {
+          ...buildCompleteMessage({ eventNonce: "44" }),
+          message: "" as unknown as string,
+        },
+      ])
+    );
+
+    const result = await fetchAttestationUniversal(1, makeHash(44));
+    expect(result).toBeNull();
+  });
+
+  it("does not send JSON content-type for bodyless re-attestation POST", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: "ok", nonce: "99" }),
+    } as Response);
+
+    await requestReattestation(1, "99");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining("/v2/reattest/99"),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.not.objectContaining({
+          "Content-Type": "application/json",
+        }),
+      })
+    );
+  });
 });

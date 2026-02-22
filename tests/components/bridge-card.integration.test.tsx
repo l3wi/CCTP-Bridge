@@ -14,6 +14,9 @@ const mockState = vi.hoisted(() => ({
 const bridgeMock = vi.hoisted(() => vi.fn());
 const toastMock = vi.hoisted(() => vi.fn());
 const switchChainMock = vi.hoisted(() => vi.fn());
+const lastBridgingStateProps = vi.hoisted(() => ({
+  value: null as Record<string, unknown> | null,
+}));
 
 const ARB_CHAIN = { id: 42161, name: "Arbitrum" };
 const ARB_DEF = {
@@ -135,7 +138,10 @@ vi.mock("@/components/guards/SolanaConnectGuard", () => ({
 }));
 
 vi.mock("@/components/bridging-state", () => ({
-  BridgingState: () => <div data-testid="bridging-state" />,
+  BridgingState: (props: Record<string, unknown>) => {
+    lastBridgingStateProps.value = props;
+    return <div data-testid="bridging-state" />;
+  },
 }));
 
 vi.mock("@/components/chain-icon", () => ({
@@ -173,6 +179,7 @@ describe("BridgeCard recipient lock integration", () => {
     bridgeMock.mockReset();
     toastMock.mockReset();
     switchChainMock.mockReset();
+    lastBridgingStateProps.value = null;
 
     bridgeMock.mockImplementation(async (params: { targetAddress?: string }) => ({
       amount: "1",
@@ -235,5 +242,41 @@ describe("BridgeCard recipient lock integration", () => {
 
     expect(bridgeParams.targetAddress).toBe(mockState.solanaRecipient);
     expect(bridgeParams.targetAddress).not.toBe(staleManualAddress);
+  });
+
+  it("does not copy destination recipient into source.address for loaded fallback bridge result", async () => {
+    const loadedTargetAddress = "0x2222222222222222222222222222222222222222";
+
+    render(
+      <BridgeCard
+        loadedTransaction={{
+          hash: `0x${"d".repeat(64)}`,
+          originChain: 42161,
+          targetChain: "Solana",
+          targetAddress: loadedTargetAddress,
+          amount: "5.00",
+          status: "pending",
+          version: "v3",
+          date: new Date("2026-02-22T00:00:00.000Z"),
+          steps: [
+            { name: "Burn", state: "success", txHash: `0x${"d".repeat(64)}` },
+            { name: "Fetch Attestation", state: "pending" },
+            { name: "Mint", state: "pending" },
+          ],
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bridging-state")).toBeTruthy();
+      expect(lastBridgingStateProps.value).toBeTruthy();
+    });
+
+    const bridgeResult = lastBridgingStateProps.value?.bridgeResult as
+      | { source?: { address?: string }; destination?: { address?: string } }
+      | undefined;
+
+    expect(bridgeResult?.source?.address).toBe("");
+    expect(bridgeResult?.destination?.address).toBe(loadedTargetAddress);
   });
 });

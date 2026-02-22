@@ -99,7 +99,7 @@ describe("transactionRecovery", () => {
     );
   });
 
-  it("continues recovery when nonce-status check throws and formats large amounts safely", async () => {
+  it("continues recovery when nonce-status check throws and preserves 6-decimal USDC precision", async () => {
     const burnHash = `0x${"a".repeat(64)}`;
     fetchAttestationUniversalMock.mockResolvedValue(baseAttestation);
     checkNonceUsedMock.mockRejectedValue(new Error("rpc down"));
@@ -108,7 +108,7 @@ describe("transactionRecovery", () => {
 
     expect(result.transaction.hash).toBe(burnHash);
     expect(result.transaction.status).toBe("pending");
-    expect(result.transaction.amount).toBe("123456789012345678901234.56");
+    expect(result.transaction.amount).toBe("123456789012345678901234.567890");
     expect(result.transaction.bridgeResult?.source.address).toBe("");
     expect(result.transaction.bridgeResult?.destination.address).toBe(
       "0x1111111111111111111111111111111111111111"

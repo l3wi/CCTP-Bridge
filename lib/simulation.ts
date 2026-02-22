@@ -3,13 +3,14 @@
  * Simulates the receiveMessage call to check if a mint can be executed.
  */
 
-import { keccak256, encodePacked } from "viem";
 import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
 } from "./contracts";
 import { getCctpDomainSafe } from "./cctp/shared";
 import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
+import { checkEvmNonceUsedDirect } from "@/lib/cctp/nonce";
+import { fetchAttestationUniversal, isCompleteAttestationData } from "@/lib/iris";
 import type { SolanaChainId } from "./types";
 
 // CCTP message format constants
@@ -37,36 +38,6 @@ export interface SimulationResult {
  */
 function getPublicClient(chainId: number) {
   return createEvmPublicClient(chainId);
-}
-
-/**
- * Check if a nonce has already been used (mint already executed)
- */
-export async function checkNonceUsed(
-  destinationChainId: number,
-  sourceDomain: number,
-  nonce: `0x${string}`
-): Promise<boolean> {
-  const messageTransmitter = getMessageTransmitterAddress(destinationChainId);
-  if (!messageTransmitter) {
-    throw new Error(`No MessageTransmitter for chain ${destinationChainId}`);
-  }
-
-  const client = getPublicClient(destinationChainId);
-
-  // Compute the source nonce hash: keccak256(abi.encodePacked(uint32(sourceDomain), bytes32(nonce)))
-  const sourceNonceHash = keccak256(
-    encodePacked(["uint32", "bytes32"], [sourceDomain, nonce])
-  );
-
-  const usedNonce = await client.readContract({
-    address: messageTransmitter,
-    abi: MESSAGE_TRANSMITTER_ABI,
-    functionName: "usedNonces",
-    args: [sourceNonceHash],
-  });
-
-  return usedNonce > BigInt(0);
 }
 
 /**
@@ -236,14 +207,21 @@ export async function simulateMint(
   const sourceDomain = extractSourceDomainFromMessage(message);
 
   try {
-    const isUsed = await checkNonceUsed(destinationChainId, sourceDomain, nonce);
-    if (isUsed) {
+    const nonceResult = await checkEvmNonceUsedDirect(
+      destinationChainId,
+      sourceDomain,
+      nonce
+    );
+    if (nonceResult.isUsed) {
       return {
         success: true,
         canMint: false,
         alreadyMinted: true,
         error: "Nonce already used - mint was already executed",
       };
+    }
+    if (nonceResult.error) {
+      console.warn("Nonce check failed, continuing to simulation:", nonceResult.error);
     }
   } catch (error) {
     // Continue to simulation if nonce check fails
@@ -325,10 +303,6 @@ export async function checkMintReadiness(
   burnTxHash: string,
   skipSimulation: boolean = false
 ): Promise<SimulationResult & { attestationReady: boolean; delayReason?: string; nonce?: string }> {
-  // Import dynamically to avoid circular deps
-  const { fetchAttestationUniversal } = await import("./iris");
-
-  // fetchAttestationUniversal accepts ChainId (number | string)
   const attestationData = await fetchAttestationUniversal(
     sourceChainId as import("./types").ChainId,
     burnTxHash
@@ -344,19 +318,19 @@ export async function checkMintReadiness(
     };
   }
 
-  if (attestationData.status !== "complete") {
-    return {
-      success: false,
-      canMint: false,
-      alreadyMinted: false,
-      attestationReady: false,
-      error: "Attestation pending",
-      delayReason: attestationData.delayReason,
-      nonce: attestationData.nonce,
-    };
-  }
+  if (!isCompleteAttestationData(attestationData)) {
+    if (attestationData.status !== "complete") {
+      return {
+        success: false,
+        canMint: false,
+        alreadyMinted: false,
+        attestationReady: false,
+        error: "Attestation pending",
+        delayReason: attestationData.delayReason,
+        nonce: attestationData.nonce,
+      };
+    }
 
-  if (!attestationData.message || !attestationData.attestation) {
     return {
       success: false,
       canMint: false,
@@ -400,13 +374,11 @@ export async function checkMintReadiness(
  * Uses transaction simulation to detect "account already in use" error,
  * which indicates the nonce account was already allocated (mint happened).
  *
- * @param sourceChainId - The source EVM chain ID
  * @param destinationChainId - The destination Solana chain ID
  * @param attestationData - The attestation data from Iris
  * @returns Simulation result with alreadyMinted status
  */
 export async function checkSolanaMintStatus(
-  sourceChainId: number,
   destinationChainId: SolanaChainId,
   attestationData: {
     nonce: string;
@@ -416,8 +388,6 @@ export async function checkSolanaMintStatus(
   }
 ): Promise<SimulationResult> {
   try {
-    void sourceChainId;
-
     // This helper is now metadata/RPC only and no longer relies on BridgeKit adapters.
     // Do lightweight freshness checks here so polling does not mark an expired
     // message as ready-to-claim.

@@ -115,9 +115,48 @@ export interface AttestationData {
   delayReason?: string;
 }
 
+export interface CompleteAttestationData extends AttestationData {
+  status: "complete";
+  message: `0x${string}`;
+  attestation: `0x${string}`;
+  sourceDomain: number;
+  destinationDomain: number;
+}
+
 export interface AttestationLookupByNonceResult {
   attestation: AttestationData;
   burnTxHash?: string;
+}
+
+const toPrefixedHex = (value: unknown): `0x${string}` | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const prefixed = trimmed.startsWith("0x") ? trimmed : `0x${trimmed}`;
+  return prefixed as `0x${string}`;
+};
+
+const parseDomainValue = (value: unknown): number | null => {
+  if (typeof value !== "string") return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+export function isCompleteAttestationData(
+  data: AttestationData | null | undefined
+): data is CompleteAttestationData {
+  return Boolean(
+    data &&
+      data.status === "complete" &&
+      typeof data.message === "string" &&
+      data.message.startsWith("0x") &&
+      typeof data.attestation === "string" &&
+      data.attestation.startsWith("0x") &&
+      typeof data.sourceDomain === "number" &&
+      Number.isFinite(data.sourceDomain) &&
+      typeof data.destinationDomain === "number" &&
+      Number.isFinite(data.destinationDomain)
+  );
 }
 
 /**
@@ -223,20 +262,22 @@ export async function fetchAttestation(
       };
     }
 
-    // Ensure message and attestation have 0x prefix
-    const message = (
-      msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-    ) as `0x${string}`;
-    const attestation = (
-      msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-    ) as `0x${string}`;
+    const message = toPrefixedHex(msg.message);
+    const attestation = toPrefixedHex(msg.attestation);
+    const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+    const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+
+    if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+      console.error("Iris returned complete status with malformed attestation payload");
+      return null;
+    }
 
     return {
       message,
       attestation,
       status: msg.status,
-      sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-      destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+      sourceDomain,
+      destinationDomain,
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
@@ -373,19 +414,27 @@ export async function fetchAttestationUniversal(
         return pendingResult;
       }
 
-      const message = (
-        msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-      ) as `0x${string}`;
-      const attestation = (
-        msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-      ) as `0x${string}`;
+      const message = toPrefixedHex(msg.message);
+      const attestation = toPrefixedHex(msg.attestation);
+      const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+      const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+      if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+        console.error("Iris returned complete status with malformed attestation payload");
+        setBoundedCacheEntry(
+          cachedUniversalAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
 
       const attestationResult: AttestationData = {
         message,
         attestation,
         status: msg.status,
-        sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-        destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+        sourceDomain,
+        destinationDomain,
         nonce: msg.eventNonce,
         amount: msg.decodedMessage.decodedMessageBody?.amount,
         mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
@@ -530,19 +579,27 @@ export async function fetchAttestationByNonceUniversal(
         return pendingResult;
       }
 
-      const message = (
-        msg.message.startsWith("0x") ? msg.message : `0x${msg.message}`
-      ) as `0x${string}`;
-      const attestation = (
-        msg.attestation.startsWith("0x") ? msg.attestation : `0x${msg.attestation}`
-      ) as `0x${string}`;
+      const message = toPrefixedHex(msg.message);
+      const attestation = toPrefixedHex(msg.attestation);
+      const sourceDomain = parseDomainValue(msg.decodedMessage.sourceDomain);
+      const destinationDomain = parseDomainValue(msg.decodedMessage.destinationDomain);
+      if (!message || !attestation || sourceDomain === null || destinationDomain === null) {
+        console.error("Iris returned complete status with malformed nonce lookup payload");
+        setBoundedCacheEntry(
+          cachedUniversalNonceAttestationResponses,
+          requestKey,
+          null,
+          IRIS_NOT_FOUND_CACHE_TTL_MS
+        );
+        return null;
+      }
 
       const attestationResult: AttestationData = {
         message,
         attestation,
         status: msg.status,
-        sourceDomain: parseInt(msg.decodedMessage.sourceDomain, 10),
-        destinationDomain: parseInt(msg.decodedMessage.destinationDomain, 10),
+        sourceDomain,
+        destinationDomain,
         nonce: msg.eventNonce,
         amount: msg.decodedMessage.decodedMessageBody?.amount,
         mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
@@ -586,22 +643,6 @@ export async function fetchAttestationByNonceUniversal(
   return requestPromise;
 }
 
-/**
- * Check if attestation is ready for a given burn transaction.
- * This is a lighter-weight check that just verifies status.
- *
- * @param sourceChainId - The chain ID where the burn occurred
- * @param burnTxHash - The burn transaction hash
- * @returns true if attestation is complete and ready for mint
- */
-export async function isAttestationReady(
-  sourceChainId: number,
-  burnTxHash: string
-): Promise<boolean> {
-  const data = await fetchAttestation(sourceChainId, burnTxHash);
-  return data?.status === "complete";
-}
-
 export interface ReattestResult {
   success: boolean;
   message?: string;
@@ -641,7 +682,6 @@ export async function requestReattestation(
         method: "POST",
         headers: {
           Accept: "application/json",
-          "Content-Type": "application/json",
         },
       })
     );

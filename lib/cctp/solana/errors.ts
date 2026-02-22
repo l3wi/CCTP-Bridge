@@ -218,7 +218,7 @@ export function extractCctpErrorCode(errorText: string): string | null {
   // Pattern 2: "Custom": NNNN  (decimal, from JSON-encoded Solana errors)
   const decMatch = errorText.match(/"Custom":\s*(\d+)/);
   if (decMatch) {
-    return parseInt(decMatch[1], 10).toString(16).toLowerCase();
+    return parseInt(decMatch[1], 10).toString(16).toLowerCase().padStart(4, "0");
   }
 
   return null;

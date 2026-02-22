@@ -27,6 +27,16 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock("@/components/ui/button", () => ({
+  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button {...props}>{children}</button>
+  ),
+}));
+
+vi.mock("@/components/chain-icon", () => ({
+  ChainIcon: () => <span data-testid="chain-icon" />,
+}));
+
 vi.mock("@/lib/store/transactionStore", () => ({
   useTransactionStore: () => ({
     transactions: transactionsState.transactions,

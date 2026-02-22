@@ -4,6 +4,7 @@ const getMessageTransmitterAddressMock = vi.hoisted(() => vi.fn());
 const getCctpDomainSafeMock = vi.hoisted(() => vi.fn());
 const createEvmPublicClientMock = vi.hoisted(() => vi.fn());
 const createSolanaConnectionMock = vi.hoisted(() => vi.fn());
+const checkEvmNonceUsedDirectMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/contracts", () => ({
   getMessageTransmitterAddress: getMessageTransmitterAddressMock,
@@ -17,6 +18,15 @@ vi.mock("@/lib/cctp/shared", () => ({
 vi.mock("@/lib/rpc/clients", () => ({
   createEvmPublicClient: createEvmPublicClientMock,
   createSolanaConnection: createSolanaConnectionMock,
+}));
+
+vi.mock("@/lib/cctp/nonce", () => ({
+  checkEvmNonceUsedDirect: checkEvmNonceUsedDirectMock,
+}));
+
+vi.mock("@/lib/iris", () => ({
+  fetchAttestationUniversal: vi.fn(),
+  isCompleteAttestationData: vi.fn(),
 }));
 
 import {
@@ -66,6 +76,7 @@ beforeEach(() => {
     readContract: vi.fn(),
     simulateContract: vi.fn(),
   });
+  checkEvmNonceUsedDirectMock.mockResolvedValue({ isUsed: false });
 });
 
 describe("simulation helpers", () => {
@@ -93,7 +104,7 @@ describe("simulation helpers", () => {
       getSlot: vi.fn().mockResolvedValue(450),
     });
 
-    const result = await checkSolanaMintStatus(1, "Solana", {
+    const result = await checkSolanaMintStatus("Solana", {
       nonce: "1",
       attestation: "0x1234",
       message,
@@ -105,5 +116,22 @@ describe("simulation helpers", () => {
     expect(result.canMint).toBe(false);
     expect(result.messageExpired).toBe(true);
     expect(result.error).toContain("Message expired");
+  });
+
+  it("delegates EVM nonce checks to the shared nonce module", async () => {
+    const message = buildMessage({ destinationDomain: 3 });
+
+    createEvmPublicClientMock.mockReturnValue({
+      simulateContract: vi.fn().mockResolvedValue({}),
+    });
+
+    await simulateMint(1, message, "0x1234");
+
+    expect(checkEvmNonceUsedDirectMock).toHaveBeenCalledTimes(1);
+    expect(checkEvmNonceUsedDirectMock).toHaveBeenCalledWith(
+      1,
+      0,
+      expect.stringMatching(/^0x[0-9a-f]+$/)
+    );
   });
 });

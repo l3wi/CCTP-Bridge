@@ -1410,7 +1410,7 @@ export function BridgeCard({
               state: loadedTransaction.bridgeState ?? "pending",
               provider: "CCTPV2BridgingProvider",
               source: {
-                address: loadedTransaction.targetAddress || "",
+                address: "",
                 chain: toChainDefinition(sourceChainDef),
               },
               destination: {
@@ -1472,6 +1472,10 @@ export function BridgeCard({
       const sourceChainIdForResult = sourceId ?? undefined;
       // Use targetId directly - it's already the correct ChainId type (number for EVM, string for Solana)
       const targetChainIdForResult = targetId ?? undefined;
+      const sourceAddressValue =
+        sourceChainIdForResult && getChainType(sourceChainIdForResult) === "solana"
+          ? (solanaWallet.publicKey?.toBase58() ?? "")
+          : (address ?? "");
 
       const sourceChainDef = sourceChainIdForResult
         ? getBridgeChainByIdUniversal(sourceChainIdForResult)
@@ -1515,7 +1519,7 @@ export function BridgeCard({
                 token: "USDC" as const,
                 state: "pending" as const,
                 provider: "CCTPV2BridgingProvider",
-                source: { address: recipientAddressValue || "", chain: sourceChainDef },
+                source: { address: sourceAddressValue, chain: sourceChainDef },
                 destination: { address: recipientAddressValue || "", chain: destChain },
                 steps: [],
               } as BridgeResult;

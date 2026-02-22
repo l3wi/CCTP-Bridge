@@ -347,7 +347,8 @@ export function AddPendingTransactionCard({
         amount: formattedAmount || "0",
         token: "USDC",
         source: {
-          address: destinationAddress as `0x${string}`,
+          // Iris payloads do not include the original sender wallet for recovered transfers.
+          address: "",
           chain: toChainDefinition(sourceChain),
         },
         destination: {

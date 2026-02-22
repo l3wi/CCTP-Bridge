@@ -22,7 +22,13 @@ const REPORT_PATH = resolve(
   ".generated/reports/rpc-validation-report.json"
 );
 const CHAINLIST_URL = "https://chainlist.org/rpcs.json";
-const CORS_ORIGIN = "https://cctp.io";
+const CORS_ORIGIN = (() => {
+  const configured = process.env.CORS_ORIGIN?.trim();
+  if (configured && /^https?:\/\//.test(configured)) {
+    return configured;
+  }
+  return "https://cctp.io";
+})();
 const REQUEST_TIMEOUT_MS = 1_500;
 const MAX_LATENCY_MS = 500;
 const MAX_CANDIDATES_PER_CHAIN = 8;

@@ -2,6 +2,7 @@ import generatedRpc from "../../.generated/metadata/rpc.generated.json";
 import type { GeneratedRpcMetadata } from "@/lib/metadata/types";
 import type { SolanaChainId } from "@/lib/types";
 const rpcMetadata = generatedRpc as GeneratedRpcMetadata;
+const warnedSolanaFallback = new Set<SolanaChainId>();
 
 function isValidHttpUrl(url: string): boolean {
   try {
@@ -22,6 +23,14 @@ const dedupe = (urls: string[]) =>
     new Set(urls.map((url) => url.trim()).filter((url) => isValidHttpUrl(url)))
   );
 
+const warnSolanaFallback = (chainId: SolanaChainId) => {
+  if (warnedSolanaFallback.has(chainId)) return;
+  warnedSolanaFallback.add(chainId);
+  console.warn(
+    `[rpc/config] Missing generated Solana RPC URLs for ${chainId}; using bundled fallback endpoints.`
+  );
+};
+
 export const getConfiguredEvmRpcUrls = (
   chainId: number
 ): string[] => {
@@ -32,12 +41,18 @@ export const getConfiguredEvmRpcUrls = (
 export const getConfiguredSolanaRpcUrls = (
   chainId: SolanaChainId
 ): string[] => {
-  const fromGenerated =
-    rpcMetadata.solana.find((entry) => entry.chain === chainId)?.urls ??
-    fallbackSolana[chainId] ??
-    [];
+  const generatedEntry = rpcMetadata.solana.find((entry) => entry.chain === chainId);
+  const fromGenerated = generatedEntry?.urls ?? [];
+  const shouldUseFallback = fromGenerated.length === 0 && Boolean(fallbackSolana[chainId]);
+  if (shouldUseFallback) {
+    warnSolanaFallback(chainId);
+  }
 
-  return dedupe(fromGenerated);
+  const resolved = shouldUseFallback
+    ? fallbackSolana[chainId] ?? []
+    : fromGenerated;
+
+  return dedupe(resolved);
 };
 
 export const getMissingRpcChainIds = (): number[] => rpcMetadata.missingChainIds ?? [];

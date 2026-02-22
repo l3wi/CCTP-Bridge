@@ -186,4 +186,32 @@ describe("trackVerifiedBridgeView", () => {
     expect(parseBridgeRouteSource).not.toHaveBeenCalled();
     expect(track).not.toHaveBeenCalled();
   });
+
+  it("skips tracking when recovered payload has invalid amount or chain identifiers", async () => {
+    vi.mocked(parseBridgeRouteSource).mockReturnValue({
+      sourceChainId: 1,
+      sourceDomain: 0,
+      canonicalSegment: "0",
+      isLegacy: false,
+    });
+    vi.mocked(classifyBridgeRouteId).mockReturnValue({
+      kind: "txHash",
+      normalizedId: "0xabc",
+    });
+    vi.mocked(recoverTransactionFromBurnHash).mockResolvedValue({
+      transaction: {
+        originChain: 0,
+        targetChain: -1,
+        amount: "not-a-number",
+        transferType: "standard",
+      },
+    } as never);
+
+    await trackVerifiedBridgeView({
+      sourceChainSegment: "0",
+      routeIdSegment: "0xabc",
+    });
+
+    expect(track).not.toHaveBeenCalled();
+  });
 });

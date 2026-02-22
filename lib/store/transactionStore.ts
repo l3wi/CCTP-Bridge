@@ -38,6 +38,55 @@ interface TransactionState {
   migrateFromLegacy: () => void;
 }
 
+// Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
+const extractChainId = (chain: unknown): ChainId | undefined => {
+  if (!chain || typeof chain !== "object") return undefined;
+
+  // EVM chains have numeric chainId
+  if ("chainId" in chain) {
+    const value = (chain as { chainId?: unknown }).chainId;
+    if (typeof value === "number") return value;
+  }
+
+  // Solana chains have string 'chain' identifier (e.g., "Solana_Devnet")
+  if ("chain" in chain && "type" in chain) {
+    const chainObj = chain as { chain?: unknown; type?: unknown };
+    if (chainObj.type === "solana" && typeof chainObj.chain === "string") {
+      return chainObj.chain as ChainId;
+    }
+  }
+
+  return undefined;
+};
+
+const normalizeHashCandidate = (hash: string): string => {
+  const trimmed = hash.trim();
+  if (/^(0x)?[0-9a-fA-F]{64}$/.test(trimmed)) {
+    const lower = trimmed.toLowerCase();
+    return lower.startsWith("0x") ? lower : `0x${lower}`;
+  }
+  return trimmed;
+};
+
+const normalizeHashForChain = (hash: string, chainId: ChainId): UniversalTxHash => {
+  if (getChainType(chainId) === "solana") {
+    return hash.trim();
+  }
+
+  const cleaned = hash.toLowerCase().trim();
+  return cleaned.startsWith("0x") ? cleaned : `0x${cleaned}`;
+};
+
+const findTransactionIndexByHash = (
+  transactions: LocalTransaction[],
+  hash: string
+): number => {
+  const candidate = normalizeHashCandidate(hash);
+  if (!candidate) return -1;
+
+  return transactions.findIndex((tx) => normalizeHashCandidate(tx.hash) === candidate);
+};
+
 /**
  * Normalize a transaction to v3 format.
  * Handles both new transactions and migrations from v2.
@@ -46,47 +95,18 @@ const normalizeTransaction = (
   tx: Partial<LocalTransaction> | Partial<LegacyV2Transaction> | Partial<LegacyLocalTransaction>
 ): LocalTransaction => {
   const bridgeResult = (tx as Partial<LocalTransaction>).bridgeResult;
-
-  // Extract chain ID from Bridge Kit chain definition (supports both EVM and Solana)
-  const extractChainId = (chain: unknown): ChainId | undefined => {
-    if (!chain || typeof chain !== "object") return undefined;
-
-    // EVM chains have numeric chainId
-    if ("chainId" in chain) {
-      const value = (chain as { chainId?: unknown }).chainId;
-      if (typeof value === "number") return value;
-    }
-
-    // Solana chains have string 'chain' identifier (e.g., "Solana_Devnet")
-    if ("chain" in chain && "type" in chain) {
-      const chainObj = chain as { chain?: unknown; type?: unknown };
-      if (chainObj.type === "solana" && typeof chainObj.chain === "string") {
-        return chainObj.chain as ChainId;
-      }
-    }
-
-    return undefined;
-  };
-
-  const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain) ?? 1;
+  const originChain = tx.originChain ?? extractChainId(bridgeResult?.source?.chain);
+  if (originChain === undefined) {
+    throw new Error("Cannot normalize transaction without originChain");
+  }
   const targetChain = tx.targetChain ?? extractChainId(bridgeResult?.destination?.chain);
 
-  // Normalize hash based on chain type
-  const normalizeHash = (hash: string, chainId: ChainId): UniversalTxHash => {
-    if (getChainType(chainId) === "solana") {
-      return hash.trim();
-    }
-    // EVM: ensure lowercase with 0x prefix
-    const cleaned = hash.toLowerCase().trim();
-    return cleaned.startsWith("0x") ? cleaned : `0x${cleaned}`;
-  };
-
   const hash = tx.hash
-    ? normalizeHash(tx.hash as string, originChain)
+    ? normalizeHashForChain(tx.hash as string, originChain)
     : ("" as UniversalTxHash);
 
   const claimHash = tx.claimHash && targetChain
-    ? normalizeHash(tx.claimHash as string, targetChain)
+    ? normalizeHashForChain(tx.claimHash as string, targetChain)
     : undefined;
   const transferType = (tx as Partial<LocalTransaction>).transferType ?? "standard";
 
@@ -265,56 +285,79 @@ export const useTransactionStore = create<TransactionState>()(
       error: null,
 
       addTransaction: (transaction) => {
-        const incoming = {
-          ...transaction,
-          date: new Date(),
-        } as LocalTransaction;
-        const newTransaction = sanitizeForStorage(normalizeTransaction(incoming));
+        try {
+          const incoming = {
+            ...transaction,
+            date: new Date(),
+          } as LocalTransaction;
+          const newTransaction = sanitizeForStorage(normalizeTransaction(incoming));
 
-        set((state) => ({
-          transactions: state.transactions.some(
-            (tx) => tx.hash === newTransaction.hash
-          )
-            ? state.transactions
-            : [newTransaction, ...state.transactions],
-          error: null,
-        }));
+          set((state) => ({
+            transactions: state.transactions.some(
+              (tx) => tx.hash === newTransaction.hash
+            )
+              ? state.transactions
+              : [newTransaction, ...state.transactions],
+            error: null,
+          }));
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error("Failed to add transaction:", error);
+          set({ error: errorMessage });
+        }
       },
 
       upsertTransaction: (transaction) => {
-        const incoming = {
-          ...transaction,
-          date: new Date(),
-        } as LocalTransaction;
-        const nextTransaction = sanitizeForStorage(normalizeTransaction(incoming));
-
         set((state) => {
-          const existingIndex = state.transactions.findIndex(
-            (tx) => tx.hash === nextTransaction.hash
-          );
+          const incoming = {
+            ...transaction,
+            date: new Date(),
+          } as Partial<LocalTransaction>;
 
-          if (existingIndex < 0) {
+          const existingIndex = incoming.hash
+            ? findTransactionIndexByHash(state.transactions, String(incoming.hash))
+            : -1;
+          const existing = existingIndex >= 0 ? state.transactions[existingIndex] : null;
+
+          try {
+            // Merge existing state with the raw patch before normalization so sparse
+            // recovery updates do not clobber richer local fields with defaults.
+            const normalizedInput = existing
+              ? ({
+                  ...existing,
+                  ...incoming,
+                  date: existing.date,
+                  version: "v3",
+                } as Partial<LocalTransaction>)
+              : incoming;
+
+            const nextTransaction = sanitizeForStorage(
+              normalizeTransaction(normalizedInput)
+            );
+
+            if (!existing) {
+              return {
+                transactions: [nextTransaction, ...state.transactions],
+                error: null,
+              };
+            }
+
+            const updatedTransactions = [...state.transactions];
+            updatedTransactions[existingIndex] = nextTransaction;
+
             return {
-              transactions: [nextTransaction, ...state.transactions],
+              transactions: updatedTransactions,
               error: null,
             };
+          } catch (error) {
+            const errorMessage =
+              error instanceof Error ? error.message : "Failed to upsert transaction";
+            console.error("Failed to upsert transaction:", error);
+            return {
+              transactions: state.transactions,
+              error: errorMessage,
+            };
           }
-
-          const existing = state.transactions[existingIndex];
-          const merged = sanitizeForStorage({
-            ...existing,
-            ...nextTransaction,
-            date: existing.date,
-            version: "v3",
-          } as LocalTransaction);
-
-          const updatedTransactions = [...state.transactions];
-          updatedTransactions[existingIndex] = merged;
-
-          return {
-            transactions: updatedTransactions,
-            error: null,
-          };
         });
       },
 

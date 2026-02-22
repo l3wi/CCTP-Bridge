@@ -34,8 +34,8 @@ const formatAmount = (rawAmount?: string): string | undefined => {
 
     const scale = 1_000_000n;
     const whole = amountBigInt / scale;
-    const fractional = (amountBigInt % scale) / 10_000n;
-    return `${whole.toString()}.${fractional.toString().padStart(2, "0")}`;
+    const fractional = (amountBigInt % scale).toString().padStart(6, "0");
+    return `${whole.toString()}.${fractional}`;
   } catch {
     return undefined;
   }

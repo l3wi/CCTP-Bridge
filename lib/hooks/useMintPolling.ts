@@ -86,6 +86,7 @@ export function useMintPolling({
   const reattestPollingRef = useRef<NodeJS.Timeout | null>(null);
   const reattestStartedAtRef = useRef<number | null>(null);
   const isMountedRef = useRef(true);
+  const delayReasonProcessedRef = useRef(false);
 
   // Track re-attestation state
   const [isReattesting, setIsReattesting] = useState(false);
@@ -109,6 +110,10 @@ export function useMintPolling({
       isMountedRef.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    delayReasonProcessedRef.current = false;
+  }, [burnTxHash]);
 
   // Keep refs in sync with latest values
   useEffect(() => {
@@ -201,7 +206,8 @@ export function useMintPolling({
       !mintSimulation.messageExpired ||
       !mintSimulation.nonce ||
       !sourceChainId ||
-      reattestTriggeredRef.current
+      reattestTriggeredRef.current ||
+      mintSimulation.reattestTimedOut
     ) {
       return;
     }
@@ -261,7 +267,13 @@ export function useMintPolling({
     };
 
     doReattest();
-  }, [mintSimulation.messageExpired, mintSimulation.nonce, sourceChainId, toast]);
+  }, [
+    mintSimulation.messageExpired,
+    mintSimulation.nonce,
+    mintSimulation.reattestTimedOut,
+    sourceChainId,
+    toast,
+  ]);
 
   // =========================================================================
   // Poll for new attestation after re-attestation request
@@ -314,7 +326,7 @@ export function useMintPolling({
 
         if (!isMountedRef.current) return;
 
-        if (result?.status === "complete") {
+        if (result?.status === "complete" && result.message && result.attestation) {
           // Fresh attestation is ready — reset expired state and re-enable claim
           setIsAwaitingReattestation(false);
           reattestTriggeredRef.current = false;
@@ -352,6 +364,11 @@ export function useMintPolling({
             clearInterval(reattestPollingRef.current);
             reattestPollingRef.current = null;
           }
+        } else if (result?.status === "complete") {
+          setMintSimulation((prev) => ({
+            ...prev,
+            error: "Circle returned an incomplete attestation payload. Please retry shortly.",
+          }));
         }
       } catch (error) {
         console.error("Re-attestation poll failed:", error);
@@ -408,7 +425,8 @@ export function useMintPolling({
         if (!isMountedRef.current) return;
 
         // Handle delay reason (e.g., insufficient_fee) - update to standard speed
-        if (result.delayReason && !mintSimulation.delayReason) {
+        if (result.delayReason && !delayReasonProcessedRef.current) {
+          delayReasonProcessedRef.current = true;
           // Update transaction to reflect standard speed fallback
           updateTransaction(burnTxHash, {
             transferType: "standard",
@@ -531,7 +549,8 @@ export function useMintPolling({
         if (!isMountedRef.current) return;
 
         // Handle delay reason (e.g., insufficient_fee) - update to standard speed
-        if (result?.delayReason && !mintSimulation.delayReason) {
+        if (result?.delayReason && !delayReasonProcessedRef.current) {
+          delayReasonProcessedRef.current = true;
           setMintSimulation((prev) => ({
             ...prev,
             delayReason: result.delayReason,
@@ -547,7 +566,7 @@ export function useMintPolling({
           });
         }
 
-        if (result?.status === "complete") {
+        if (result?.status === "complete" && result.message && result.attestation) {
           // Read latest steps from ref to avoid stale closure
           const currentSteps = displayStepsRef.current ?? [];
 
@@ -586,6 +605,11 @@ export function useMintPolling({
             clearInterval(solanaPollingRef.current);
             solanaPollingRef.current = null;
           }
+        } else if (result?.status === "complete") {
+          setMintSimulation((prev) => ({
+            ...prev,
+            error: "Circle attestation payload is incomplete. Please retry shortly.",
+          }));
         }
       } catch (error) {
         console.error("Solana attestation check failed:", error);

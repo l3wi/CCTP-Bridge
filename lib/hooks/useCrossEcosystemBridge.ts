@@ -27,6 +27,16 @@ import { getErrorMessage } from "@/lib/cctp/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 
+const CANCELLATION_MESSAGES = new Set([
+  "Transaction cancelled by user",
+  "Approval cancelled by user",
+  "Transaction was cancelled by user",
+  "Transaction cancelled",
+]);
+
+const isCancellationMessage = (message: string): boolean =>
+  CANCELLATION_MESSAGES.has(message);
+
 export const useCrossEcosystemBridge = () => {
   // EVM wallet state
   const { data: walletClient } = useWalletClient();
@@ -159,16 +169,6 @@ export const useCrossEcosystemBridge = () => {
 
         if (!burnResult.success) {
           const errorMsg = burnResult.error || "Burn transaction failed";
-          setError(errorMsg);
-          toast({
-            title:
-              errorMsg === "Transaction cancelled by user" ||
-              errorMsg === "Approval cancelled by user"
-                ? "Transaction cancelled"
-                : "Bridge failed",
-            description: errorMsg,
-            variant: "destructive",
-          });
           throw new Error(errorMsg);
         }
 
@@ -232,7 +232,7 @@ export const useCrossEcosystemBridge = () => {
 
         toast({
           title:
-            errorMessage === "Transaction was cancelled by user"
+            isCancellationMessage(errorMessage)
               ? "Transaction cancelled"
               : "Bridge failed",
           description: errorMessage,

@@ -45,6 +45,8 @@ function getNextStartIndex(key: string, size: number): number {
 }
 
 function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
+  const isRetryableStatus = (status: number): boolean => status === 429 || status >= 500;
+
   return async (input, init) => {
     if (!urls.length) {
       return fetch(input, init);
@@ -68,8 +70,12 @@ function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
           body,
         });
 
-        // Do not retry 4xx: malformed/invalid JSON-RPC requests won't succeed on another node.
-        if (response.ok || (response.status >= 400 && response.status < 500)) {
+        if (response.ok) {
+          return response;
+        }
+
+        // Retry rate limits and transient server-side failures.
+        if (!isRetryableStatus(response.status)) {
           return response;
         }
 
@@ -108,6 +114,11 @@ export const getRotatingEvmTransport = (
   env: BridgeEnvironment = DEFAULT_ENV
 ): Transport => {
   const urls = getConfiguredEvmRpcUrls(chainId);
+  if (!urls.length) {
+    throw new Error(
+      `No EVM RPC endpoints configured for chain ${chainId}. Run metadata generation or configure RPC sources.`
+    );
+  }
   const fallbackUrl = urls[0];
   const key = `evm:${env}:${chainId}`;
 

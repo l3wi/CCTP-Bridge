@@ -7,7 +7,7 @@ import {
   recoverTransactionFromBurnHash,
   recoverTransactionFromNonce,
 } from "@/lib/transactionRecovery";
-import type { ChainId, LocalTransaction } from "@/lib/types";
+import { isSolanaChain, type ChainId, type LocalTransaction } from "@/lib/types";
 
 interface TrackVerifiedBridgeViewParams {
   sourceChainSegment: string;
@@ -22,12 +22,23 @@ const decodeRouteSegment = (value: string): string => {
   }
 };
 
+const isTrackableAmount = (amount: unknown): amount is string =>
+  typeof amount === "string" && /^\d+(\.\d{1,6})?$/.test(amount);
+
+const isTrackableChainId = (value: unknown): value is ChainId =>
+  (typeof value === "number" && Number.isInteger(value) && value > 0) ||
+  (typeof value === "string" && isSolanaChain(value as ChainId));
+
 const hasTrackableFields = (
-  transaction: Pick<LocalTransaction, "amount" | "targetChain">
-): transaction is Pick<LocalTransaction, "amount" | "targetChain"> & {
+  transaction: Pick<LocalTransaction, "amount" | "originChain" | "targetChain">
+): transaction is Pick<LocalTransaction, "amount" | "originChain" | "targetChain"> & {
   amount: string;
+  originChain: ChainId;
   targetChain: ChainId;
-} => Boolean(transaction.amount && transaction.targetChain);
+} =>
+  isTrackableAmount(transaction.amount) &&
+  isTrackableChainId(transaction.originChain) &&
+  isTrackableChainId(transaction.targetChain);
 
 export async function trackVerifiedBridgeView({
   sourceChainSegment,

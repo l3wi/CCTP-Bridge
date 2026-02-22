@@ -7,10 +7,11 @@
 import { useCallback, useState } from "react";
 import { useWalletClient, useBalance } from "wagmi";
 import { useWallet, useConnection } from "@solana/wallet-adapter-react";
+import type { Connection } from "@solana/web3.js";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
 import { createEvmPublicClient } from "@/lib/rpc/clients";
-import { fetchAttestationUniversal } from "@/lib/iris";
+import { fetchAttestationUniversal, isCompleteAttestationData } from "@/lib/iris";
 import { simulateMint } from "@/lib/simulation";
 import {
   getMessageTransmitterAddress,
@@ -52,6 +53,70 @@ import { extractDestinationDomainFromMessage } from "@/lib/simulation";
 
 const ALREADY_CLAIMED_TOAST_TITLE = "USDC Successfully Claimed";
 const ALREADY_CLAIMED_TOAST_DESCRIPTION = "Check your wallet for the USDC.";
+const SOLANA_MINT_CONFIRMATION_TIMEOUT_MS = 45_000;
+const SOLANA_MINT_CONFIRMATION_POLL_MS = 2_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+const markMintStepPending = (
+  existingSteps: MintParams["existingSteps"],
+  mintTxHash: UniversalTxHash
+): MintParams["existingSteps"] => {
+  const steps = existingSteps ? [...existingSteps] : [];
+  const mintIndex = steps.findIndex((step) => /mint|claim|receive/i.test(step.name));
+
+  const pendingMintStep = {
+    name: "Mint",
+    state: "pending" as const,
+    txHash: mintTxHash,
+  };
+
+  if (mintIndex >= 0) {
+    steps[mintIndex] = {
+      ...steps[mintIndex],
+      ...pendingMintStep,
+    };
+  } else {
+    steps.push(pendingMintStep);
+  }
+
+  return steps;
+};
+
+async function waitForSolanaMintConfirmation(
+  connection: Connection,
+  signature: string
+): Promise<boolean> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < SOLANA_MINT_CONFIRMATION_TIMEOUT_MS) {
+    try {
+      const statusResponse = await connection.getSignatureStatuses(
+        [signature],
+        { searchTransactionHistory: true }
+      );
+      const status = statusResponse.value[0];
+
+      if (status?.err) {
+        return false;
+      }
+
+      if (
+        status?.confirmationStatus === "confirmed" ||
+        status?.confirmationStatus === "finalized"
+      ) {
+        return true;
+      }
+    } catch (error) {
+      console.warn("[useMint] Failed to read Solana signature status:", error);
+    }
+
+    await sleep(SOLANA_MINT_CONFIRMATION_POLL_MS);
+  }
+
+  return false;
+}
 
 export function useMint() {
   // EVM wallet state
@@ -152,13 +217,14 @@ export function useMint() {
         };
       }
 
-      if (attestationData.status !== "complete") {
-        return {
-          success: false,
-          error: "Attestation not ready yet. Please wait a few more minutes.",
-        };
-      }
-      if (!attestationData.message || !attestationData.attestation) {
+      if (!isCompleteAttestationData(attestationData)) {
+        if (attestationData.status !== "complete") {
+          return {
+            success: false,
+            error: "Attestation not ready yet. Please wait a few more minutes.",
+          };
+        }
+
         return {
           success: false,
           error: "Attestation payload is incomplete. Please try again.",
@@ -367,13 +433,14 @@ export function useMint() {
         };
       }
 
-      if (attestationData.status !== "complete") {
-        return {
-          success: false,
-          error: "Attestation not ready yet. Please wait a few more minutes.",
-        };
-      }
-      if (!attestationData.message || !attestationData.attestation) {
+      if (!isCompleteAttestationData(attestationData)) {
+        if (attestationData.status !== "complete") {
+          return {
+            success: false,
+            error: "Attestation not ready yet. Please wait a few more minutes.",
+          };
+        }
+
         return {
           success: false,
           error: "Attestation payload is incomplete. Please try again.",
@@ -487,22 +554,46 @@ export function useMint() {
 
       const signedTransaction = await solanaWallet.signTransaction(transaction);
 
-      // 7. Send transaction without waiting for confirmation
+      // 7. Send transaction and wait for network confirmation before marking claimed
       toast({
         title: "Sending transaction",
         description: "Submitting transaction to the network...",
       });
 
       const txSignature = await sendTransactionNoConfirm(connection, signedTransaction);
-
-      // 8. Update transaction store
-      const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
+      const pendingSteps = markMintStepPending(existingSteps, txSignature);
       const explorerUrl = getExplorerTxUrlUniversal(
         destinationChainId,
         txSignature,
         BRIDGEKIT_ENV
       );
 
+      updateTransaction(burnTxHash, {
+        claimHash: txSignature,
+        status: "pending",
+        bridgeState: "pending",
+        steps: pendingSteps,
+      });
+
+      toast({
+        title: "Transaction sent",
+        description: explorerUrl
+          ? "Submitted to Solana. Confirming on-chain status..."
+          : `Mint tx: ${txSignature.slice(0, 20)}...`,
+      });
+
+      const isConfirmed = await waitForSolanaMintConfirmation(connection, txSignature);
+      if (!isConfirmed) {
+        return {
+          success: false,
+          mintTxHash: txSignature,
+          error:
+            "Mint transaction was submitted but is not yet confirmed on Solana. Please wait and retry claim status shortly.",
+        };
+      }
+
+      // 8. Finalize transaction store after confirmation
+      const updatedSteps = updateStepsWithMint(existingSteps, txSignature, false);
       updateTransaction(burnTxHash, {
         claimHash: txSignature,
         status: "claimed",
@@ -512,10 +603,10 @@ export function useMint() {
       });
 
       toast({
-        title: "Transaction sent!",
+        title: "USDC Claimed!",
         description: explorerUrl
-          ? "Your mint transaction has been submitted."
-          : `Mint tx: ${txSignature.slice(0, 20)}...`,
+          ? "Your USDC mint transaction is confirmed."
+          : `Mint tx confirmed: ${txSignature.slice(0, 20)}...`,
       });
 
       return { success: true, mintTxHash: txSignature };
