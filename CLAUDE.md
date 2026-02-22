@@ -18,6 +18,7 @@ NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: t
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable /api/meta analytics
+CORS_ORIGIN=https://your-app-domain.example      # Required in CI for RPC candidate validation
 ```
 
 ## Architecture Overview

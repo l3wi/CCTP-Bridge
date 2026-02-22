@@ -29,7 +29,7 @@ NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: t
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
 NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable verified bridge analytics emission
-CORS_ORIGIN=https://your-app-domain.example      # Optional RPC generation override (default: https://cctp.io)
+CORS_ORIGIN=https://your-app-domain.example      # Required in CI for RPC validation; local fallback defaults to https://cctp.io
 ```
 
 Bridge analytics events are emitted server-side from `/bridge/<source>/<id>` only after Iris-based transaction recovery succeeds.
@@ -52,7 +52,7 @@ Deprecated variables `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` and `NEXT_PUBLIC_BRID
 ## Metadata & RPC Generation
 
 - `scripts/generate-cctp-metadata.ts` builds `.generated/metadata/cctp.generated.json` from BridgeKit.
-- `scripts/generate-rpc-candidates.ts` fetches Chainlist RPCs, runs CORS validation with `Origin: $CORS_ORIGIN` (default `https://cctp.io`), and writes:
+- `scripts/generate-rpc-candidates.ts` fetches Chainlist RPCs, runs CORS validation with `Origin: $CORS_ORIGIN`, and writes:
   - `.generated/metadata/rpc.generated.json`
   - `.generated/reports/rpc-validation-report.json`
 - `bun run build` runs `metadata:refresh` automatically via `prebuild`.

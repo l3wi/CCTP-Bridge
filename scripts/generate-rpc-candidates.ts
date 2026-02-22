@@ -22,12 +22,28 @@ const REPORT_PATH = resolve(
   ".generated/reports/rpc-validation-report.json"
 );
 const CHAINLIST_URL = "https://chainlist.org/rpcs.json";
+const DEFAULT_CORS_ORIGIN = "https://cctp.io";
 const CORS_ORIGIN = (() => {
   const configured = process.env.CORS_ORIGIN?.trim();
-  if (configured && /^https?:\/\//.test(configured)) {
-    return configured;
+  if (configured) {
+    if (!/^https?:\/\//.test(configured)) {
+      throw new Error(
+        "[generate-rpc-candidates] CORS_ORIGIN must be an absolute http(s) URL"
+      );
+    }
+    return configured.replace(/\/$/, "");
   }
-  return "https://cctp.io";
+
+  if (process.env.CI === "true") {
+    throw new Error(
+      `[generate-rpc-candidates] CORS_ORIGIN is required in CI. Set it to your deployed app origin (for example: ${DEFAULT_CORS_ORIGIN}).`
+    );
+  }
+
+  console.warn(
+    `[generate-rpc-candidates] CORS_ORIGIN not set; defaulting to ${DEFAULT_CORS_ORIGIN}. Set CORS_ORIGIN to your app origin for accurate CORS validation.`
+  );
+  return DEFAULT_CORS_ORIGIN;
 })();
 const REQUEST_TIMEOUT_MS = 1_500;
 const MAX_LATENCY_MS = 500;
@@ -211,7 +227,11 @@ async function main() {
     );
   }
 
-  const chainlistData = (await chainlistResponse.json()) as ChainlistEntry[];
+  const chainlistRaw = await chainlistResponse.text();
+  const chainlistData = JSON.parse(chainlistRaw) as ChainlistEntry[];
+  if (!Array.isArray(chainlistData)) {
+    throw new Error("[generate-rpc-candidates] Unexpected chainlist payload shape");
+  }
   const chainlistById = toMapByChainId(chainlistData);
 
   const missingChainIds: number[] = [];
