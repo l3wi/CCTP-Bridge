@@ -28,10 +28,10 @@ bun run metadata:refresh # Regenerate CCTP metadata + validated RPC candidates
 NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: testnet)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE=<amount>        # Optional integrator fee (USDC)
 NEXT_PUBLIC_BRIDGEKIT_CUSTOM_FEE_RECIPIENT=<addr> # Fee recipient address
-NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable bridge analytics event emission
+NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable verified bridge analytics emission
 ```
 
-`/api/meta` analytics events include aggregate transfer metadata only (no raw wallet/recipient addresses).
+Bridge analytics events are emitted server-side from `/bridge/<source>/<id>` only after Iris-based transaction recovery succeeds.
 
 ## Architecture
 

@@ -990,26 +990,6 @@ export function BridgeCard({
         setIsLoading(false);
         setIsBridging(true);
 
-        // Server-side analytics
-        const roundedAmount = Math.round(Number(amount.str));
-        const txType = transferType === "fast" ? 1 : 0;
-        const analyticsDisabled =
-          process.env.NEXT_PUBLIC_DISABLE_META_ANALYTICS === "1";
-
-        if (!analyticsDisabled) {
-          fetch("/api/meta", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              amount: roundedAmount,
-              meta: `${roundedAmount},${selectedSourceId},${targetChainId},${txType}`,
-              recipientResolution,
-              sourceChainId: String(selectedSourceId),
-              targetChainId: String(targetChainId),
-            }),
-          }).catch(() => {});
-        }
-
         if (onBurn) {
           onBurn(true);
         }
