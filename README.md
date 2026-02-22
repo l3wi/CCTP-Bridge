@@ -44,7 +44,8 @@ Bridge analytics events are emitted server-side from `/bridge/<source>/<id>` onl
 ## Routes
 
 - **`/`** — bridge setup form and pre-burn pending (query-driven)
-- **`/bridge/<source_chain_id>/<tx_hash_or_nonce>`** — shareable tracking/recovery route
+- **`/bridge`** — add pending transaction form (history button destination, query-prefill via `id`, `hash`, `error`)
+- **`/bridge/<source_chain_id>/<tx_hash_or_nonce>`** — shareable tracking route; invalid or unrecoverable IDs redirect to `/bridge` with prefilled query params
 
 ## Metadata & RPC Generation
 

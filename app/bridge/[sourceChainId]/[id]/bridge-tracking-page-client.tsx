@@ -5,24 +5,21 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { BridgePageShell } from "@/components/bridge-page-shell";
 import { BridgeTrackingCard } from "@/components/bridge-tracking-card";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import type { ChainId } from "@/lib/types";
 import {
   buildBridgeRoute,
   classifyBridgeRouteId,
-  normalizeTxHashForChain,
   parseBridgeRouteSource,
   type BridgeRouteIdKind,
 } from "@/lib/bridgeRoute";
 import {
   recoverTransactionFromBurnHash,
   recoverTransactionFromNonce,
-  TransactionRecoveryError,
 } from "@/lib/transactionRecovery";
 import { getErrorMessage } from "@/lib/cctp/errors";
+import { buildPendingTransactionRedirect } from "@/lib/pendingTransactionRoute";
 
 const normalizeNonceValue = (value: string): string => {
   try {
@@ -30,12 +27,6 @@ const normalizeNonceValue = (value: string): string => {
   } catch {
     return value.trim();
   }
-};
-
-const truncateHashForDisplay = (value: string): string => {
-  const trimmed = value.trim();
-  if (trimmed.length <= 24) return trimmed;
-  return `${trimmed.slice(0, 10)}...${trimmed.slice(-10)}`;
 };
 
 interface BridgeTrackingPageClientProps {
@@ -49,6 +40,7 @@ export default function BridgeTrackingPageClient({
 }: BridgeTrackingPageClientProps) {
   const router = useRouter();
   const { transactions, upsertTransaction } = useTransactionStore();
+
   const decodedId = useMemo(() => {
     try {
       return decodeURIComponent(idParam ?? "").trim();
@@ -71,19 +63,12 @@ export default function BridgeTrackingPageClient({
     [sourceChainId, decodedId]
   );
 
-  const [recoveryError, setRecoveryError] = useState<string | null>(null);
-  const [isRecovering, setIsRecovering] = useState(false);
-  const [manualBurnHash, setManualBurnHash] = useState("");
   const [isStoreHydrated, setIsStoreHydrated] = useState(() =>
     useTransactionStore.persist.hasHydrated()
   );
   const [isInitialLookupPending, setIsInitialLookupPending] = useState(true);
-  const [recoveryRetryNonce, setRecoveryRetryNonce] = useState(0);
 
   const recoveryAttemptRef = useRef<string | null>(null);
-  const lastAutoFilledHashRef = useRef<string | null>(null);
-  const manualBurnHashDirtyRef = useRef(false);
-  const manualBurnHashRef = useRef("");
 
   useEffect(() => {
     const persistApi = useTransactionStore.persist;
@@ -107,12 +92,16 @@ export default function BridgeTrackingPageClient({
   }, []);
 
   const matchedTransaction = useMemo(() => {
-    if (!sourceChainId) return null;
+    if (!sourceChainId) {
+      return null;
+    }
 
     if (routeId.kind === "txHash") {
       return (
         transactions.find(
-          (tx) => tx.originChain === sourceChainId && tx.hash === routeId.normalizedId
+          (transaction) =>
+            transaction.originChain === sourceChainId &&
+            transaction.hash === routeId.normalizedId
         ) ?? null
       );
     }
@@ -121,10 +110,10 @@ export default function BridgeTrackingPageClient({
       const routeNonce = normalizeNonceValue(routeId.normalizedId);
       return (
         transactions.find(
-          (tx) =>
-            tx.originChain === sourceChainId &&
-            tx.nonce &&
-            normalizeNonceValue(tx.nonce) === routeNonce
+          (transaction) =>
+            transaction.originChain === sourceChainId &&
+            transaction.nonce &&
+            normalizeNonceValue(transaction.nonce) === routeNonce
         ) ?? null
       );
     }
@@ -132,15 +121,31 @@ export default function BridgeTrackingPageClient({
     return null;
   }, [transactions, sourceChainId, routeId.kind, routeId.normalizedId]);
 
+  const redirectToPendingForm = useCallback(
+    (error: string) => {
+      const idForPrefill =
+        routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
+
+      const nextPath = buildPendingTransactionRedirect({
+        sourceParam,
+        sourceChainId,
+        idParam: idForPrefill,
+        error,
+      });
+
+      router.replace(nextPath);
+    },
+    [router, sourceParam, sourceChainId, routeId.kind, routeId.normalizedId, decodedId]
+  );
+
   const handleMessageExpiredNonce = useCallback(
     ({ sourceChainId: nextSourceChainId, nonce }: { sourceChainId: ChainId; nonce: string }) => {
-      if (!nonce.trim()) return;
+      if (!nonce.trim()) {
+        return;
+      }
 
       const nextPath = buildBridgeRoute(nextSourceChainId, nonce);
-      const currentPath = buildBridgeRoute(
-        sourceChainId ?? nextSourceChainId,
-        decodedId
-      );
+      const currentPath = buildBridgeRoute(sourceChainId ?? nextSourceChainId, decodedId);
 
       if (nextPath !== currentPath) {
         router.replace(nextPath);
@@ -149,72 +154,27 @@ export default function BridgeTrackingPageClient({
     [router, sourceChainId, decodedId]
   );
 
-  const runRecovery = useCallback(
-    async (burnHash: string) => {
-      if (!sourceChainId) return;
-
-      setRecoveryError(null);
-      setIsRecovering(true);
-
-      try {
-        const { transaction } = await recoverTransactionFromBurnHash(sourceChainId, burnHash);
-        upsertTransaction(transaction);
-
-        const nextId = routeId.kind === "nonce" && transaction.nonce
-          ? transaction.nonce
-          : transaction.hash;
-
-        router.replace(buildBridgeRoute(sourceChainId, nextId));
-      } catch (error) {
-        setRecoveryError(getErrorMessage(error));
-      } finally {
-        setIsRecovering(false);
-      }
-    },
-    [router, routeId.kind, sourceChainId, upsertTransaction]
-  );
-
-  useEffect(() => {
-    if (routeId.kind === "txHash") {
-      setManualBurnHash(routeId.normalizedId);
-      manualBurnHashRef.current = routeId.normalizedId;
-      manualBurnHashDirtyRef.current = false;
-      lastAutoFilledHashRef.current = routeId.normalizedId;
-    } else {
-      if (
-        !manualBurnHashDirtyRef.current &&
-        manualBurnHashRef.current === lastAutoFilledHashRef.current
-      ) {
-        setManualBurnHash("");
-        manualBurnHashRef.current = "";
-      }
-    }
-  }, [routeId.kind, routeId.normalizedId]);
-
   useEffect(() => {
     if (!isStoreHydrated) {
       return;
     }
 
     if (!sourceChainId) {
-      setRecoveryError("Invalid source chain in URL.");
-      setIsInitialLookupPending(false);
+      redirectToPendingForm("Invalid source chain in URL.");
       return;
     }
 
     if (routeId.kind === "invalid") {
-      setRecoveryError("Invalid bridge identifier. Use a burn tx hash or nonce.");
-      setIsInitialLookupPending(false);
+      redirectToPendingForm("Invalid bridge identifier. Use a burn tx hash or nonce.");
       return;
     }
 
     if (matchedTransaction) {
-      setRecoveryError(null);
       setIsInitialLookupPending(false);
       return;
     }
 
-    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}:${recoveryRetryNonce}`;
+    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}`;
     if (recoveryAttemptRef.current === attemptKey) {
       setIsInitialLookupPending(false);
       return;
@@ -226,40 +186,29 @@ export default function BridgeTrackingPageClient({
     let cancelled = false;
 
     void (async () => {
-      if (cancelled) return;
+      if (cancelled) {
+        return;
+      }
 
       try {
-        setRecoveryError(null);
-        setIsRecovering(true);
         const { transaction } =
           routeId.kind === "txHash"
-            ? await recoverTransactionFromBurnHash(
-                sourceChainId,
-                routeId.normalizedId
-              )
-            : await recoverTransactionFromNonce(
-                sourceChainId,
-                routeId.normalizedId
-              );
+            ? await recoverTransactionFromBurnHash(sourceChainId, routeId.normalizedId)
+            : await recoverTransactionFromNonce(sourceChainId, routeId.normalizedId);
 
-        if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
+
         upsertTransaction(transaction);
       } catch (error) {
-        if (cancelled) return;
-
-        if (error instanceof TransactionRecoveryError) {
-          const baseMessage = error.message;
-          const nonceHint =
-            routeId.kind === "nonce"
-              ? " If needed, paste the burn transaction hash below to rehydrate manually."
-              : "";
-          setRecoveryError(`${baseMessage}${nonceHint}`);
-        } else {
-          setRecoveryError(getErrorMessage(error));
+        if (cancelled) {
+          return;
         }
+
+        redirectToPendingForm(getErrorMessage(error));
       } finally {
         if (!cancelled) {
-          setIsRecovering(false);
           setIsInitialLookupPending(false);
         }
       }
@@ -271,22 +220,17 @@ export default function BridgeTrackingPageClient({
   }, [
     isStoreHydrated,
     matchedTransaction,
-    recoveryRetryNonce,
     routeId.kind,
     routeId.normalizedId,
     sourceChainId,
     upsertTransaction,
+    redirectToPendingForm,
   ]);
 
-  const handleRetryRecovery = useCallback(() => {
-    recoveryAttemptRef.current = null;
-    setRecoveryError(null);
-    setIsInitialLookupPending(true);
-    setRecoveryRetryNonce((prev) => prev + 1);
-  }, []);
-
   useEffect(() => {
-    if (!sourceChainId) return;
+    if (!sourceChainId || routeId.kind === "invalid") {
+      return;
+    }
 
     const shouldCanonicalizeSource = parsedSource?.isLegacy ?? false;
     const shouldCanonicalizeId =
@@ -296,9 +240,7 @@ export default function BridgeTrackingPageClient({
       return;
     }
 
-    const canonicalId =
-      routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
-
+    const canonicalId = routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
     const canonicalPath = buildBridgeRoute(sourceChainId, canonicalId);
     router.replace(canonicalPath);
   }, [
@@ -340,99 +282,28 @@ export default function BridgeTrackingPageClient({
     );
   }
 
-  return (
-    <BridgePageShell>
-      {matchedTransaction ? (
-        <BridgeTrackingCard
-          transaction={matchedTransaction}
-          onBack={() => router.replace("/")}
-          onMessageExpiredNonce={handleMessageExpiredNonce}
-        />
-      ) : (
+  if (!matchedTransaction) {
+    return (
+      <BridgePageShell>
         <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 space-y-4">
-            <div className="space-y-1">
-              <h2 className="text-lg font-semibold">Recover Bridge Session</h2>
-              <p className="text-sm text-slate-400">
-                Source Domain: {parsedSource?.sourceDomain ?? "unknown"} | Source Chain: {sourceChainId ? String(sourceChainId) : "unknown"} | ID: {routeId.kind === "txHash" ? truncateHashForDisplay(decodedId || "n/a") : decodedId || "n/a"}
-              </p>
-            </div>
-
-            {isRecovering && (
-              <div className="flex items-center gap-2 text-sm text-slate-300">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Looking up transaction state...
-              </div>
-            )}
-
-            {recoveryError && (
-              <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300">
-                {recoveryError}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <label className="text-sm text-slate-300">Burn Transaction Hash</label>
-              <Input
-                value={manualBurnHash}
-                onChange={(event) => {
-                  manualBurnHashDirtyRef.current = true;
-                  manualBurnHashRef.current = event.target.value;
-                  setManualBurnHash(event.target.value);
-                }}
-                placeholder="0x... or Solana signature"
-                className="bg-slate-700/50 border-slate-600 text-white"
-                disabled={isRecovering}
-              />
-              <p className="text-xs text-slate-500">
-                Use the source-chain burn transaction hash to rehydrate this link for debugging or claiming.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={!manualBurnHash.trim() || isRecovering || !sourceChainId}
-                onClick={() => {
-                  if (!sourceChainId) return;
-                  const normalizedHash = normalizeTxHashForChain(
-                    sourceChainId,
-                    manualBurnHash
-                  );
-                  if (!normalizedHash) {
-                    setRecoveryError(
-                      typeof sourceChainId === "string"
-                        ? "Invalid Solana signature for the selected source chain."
-                        : "Invalid EVM transaction hash for the selected source chain."
-                    );
-                    return;
-                  }
-
-                  void runRecovery(normalizedHash);
-                }}
-              >
-                {isRecovering ? "Recovering..." : "Add Transaction"}
-              </Button>
-              <Button
-                variant="outline"
-                className="border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
-                onClick={() => router.replace("/")}
-              >
-                Back to Bridge
-              </Button>
-              {!!recoveryError && !isRecovering && (
-                <Button
-                  variant="outline"
-                  className="border-slate-600 bg-slate-800 text-slate-200 hover:bg-slate-700"
-                  onClick={handleRetryRecovery}
-                >
-                  Retry Lookup
-                </Button>
-              )}
+          <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+            <div className="flex items-center gap-2 text-sm text-slate-300">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Redirecting to pending transaction form...
             </div>
           </CardContent>
         </Card>
-      )}
+      </BridgePageShell>
+    );
+  }
+
+  return (
+    <BridgePageShell>
+      <BridgeTrackingCard
+        transaction={matchedTransaction}
+        onBack={() => router.replace("/bridge")}
+        onMessageExpiredNonce={handleMessageExpiredNonce}
+      />
     </BridgePageShell>
   );
 }
