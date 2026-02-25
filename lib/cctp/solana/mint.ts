@@ -187,8 +187,65 @@ const feeRecipientCache = new Map<string, PublicKey>();
 const pendingFeeRecipientLoads = new Map<string, Promise<PublicKey>>();
 
 /**
+ * TokenMessenger account discriminator for "tokenMessenger".
+ * Computed as sha256("account:tokenMessenger").slice(0, 8).
+ */
+const TOKEN_MESSENGER_ACCOUNT_DISCRIMINATOR = Buffer.from("a204f23493f3dd60", "hex");
+
+/**
+ * TokenMessenger account layout (bytes):
+ *  - 8   discriminator
+ *  - 32  denylister
+ *  - 32  owner
+ *  - 32  pendingOwner
+ *  - 4   messageBodyVersion (u32)
+ *  - 1   authorityBump (u8)
+ *  - 32  feeRecipient
+ *  - 32  minFeeController
+ *  - 4   minFee (u32)
+ */
+const TOKEN_MESSENGER_ACCOUNT_SIZE = 177;
+const TOKEN_MESSENGER_FEE_RECIPIENT_OFFSET = 109;
+const TOKEN_MESSENGER_FEE_RECIPIENT_END = TOKEN_MESSENGER_FEE_RECIPIENT_OFFSET + 32;
+
+function decodeFeeRecipientFromTokenMessengerAccount(
+  accountData: Buffer
+): PublicKey {
+  if (accountData.length < TOKEN_MESSENGER_ACCOUNT_SIZE) {
+    throw new Error(
+      `Invalid TokenMessenger account size: expected at least ${TOKEN_MESSENGER_ACCOUNT_SIZE} bytes, got ${accountData.length}`
+    );
+  }
+
+  const discriminator = accountData.subarray(0, 8);
+  if (!discriminator.equals(TOKEN_MESSENGER_ACCOUNT_DISCRIMINATOR)) {
+    throw new Error(
+      "TokenMessenger account discriminator mismatch. " +
+      "The program layout may have changed and requires an update."
+    );
+  }
+
+  const feeRecipientBytes = accountData.subarray(
+    TOKEN_MESSENGER_FEE_RECIPIENT_OFFSET,
+    TOKEN_MESSENGER_FEE_RECIPIENT_END
+  );
+
+  if (feeRecipientBytes.length !== 32) {
+    throw new Error(
+      `Invalid feeRecipient field size in TokenMessenger account: expected 32 bytes, got ${feeRecipientBytes.length}`
+    );
+  }
+
+  return new PublicKey(feeRecipientBytes);
+}
+
+/**
  * Fetch the feeRecipient from the on-chain TokenMessenger state.
- * Uses Anchor for account deserialization (only account reading, not instruction building).
+ *
+ * We decode raw account bytes directly instead of using Anchor Program.at(),
+ * because Program.at() must fetch the on-chain IDL account first. Some public
+ * RPC providers block that IDL account lookup with 403 "Access forbidden",
+ * which breaks minting even when TokenMessenger state itself is readable.
  *
  * @throws Error with descriptive message on network errors or invalid account data
  */
@@ -208,66 +265,34 @@ async function fetchFeeRecipient(
   }
 
   const loadPromise = (async () => {
-  try {
-    // Dynamic import to avoid Anchor in the main instruction path
-    const { Program, AnchorProvider } = await import("@coral-xyz/anchor");
+    try {
+      const accountInfo = await connection.getAccountInfo(tokenMessengerPda, "confirmed");
 
-    // Create minimal wallet wrapper (only used for provider, no signing)
-    const wallet = {
-      publicKey: PublicKey.default,
-      signTransaction: async <T>(tx: T): Promise<T> => tx,
-      signAllTransactions: async <T>(txs: T[]): Promise<T[]> => txs,
-    };
+      if (!accountInfo) {
+        throw new Error(
+          `TokenMessenger account not found at ${tokenMessengerPda.toBase58()}`
+        );
+      }
 
-    const provider = new AnchorProvider(connection, wallet, {
-      commitment: "confirmed",
-    });
+      if (!accountInfo.owner.equals(TOKEN_MESSENGER_PROGRAM_ID)) {
+        throw new Error(
+          `Invalid TokenMessenger account owner: expected ${TOKEN_MESSENGER_PROGRAM_ID.toBase58()}, got ${accountInfo.owner.toBase58()}`
+        );
+      }
 
-    // Load TokenMessenger program to read account state
-    const tokenMessengerProgram = await Program.at(
-      TOKEN_MESSENGER_PROGRAM_ID,
-      provider
-    );
+      return decodeFeeRecipientFromTokenMessengerAccount(Buffer.from(accountInfo.data));
+    } catch (error) {
+      // Re-throw our validation errors as-is
+      if (error instanceof Error && error.message.includes("TokenMessenger")) {
+        throw error;
+      }
 
-    // Fetch TokenMessenger state from chain
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const accounts = tokenMessengerProgram.account as any;
-    if (!accounts?.tokenMessenger?.fetch) {
+      // Wrap network/RPC errors with context
+      const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        "TokenMessenger account type not found in program IDL. " +
-        "The program may have been upgraded or the IDL is outdated."
+        `Failed to fetch feeRecipient from TokenMessenger: ${message}`
       );
     }
-
-    const tokenMessengerState = await accounts.tokenMessenger.fetch(tokenMessengerPda);
-
-    // Validate the returned state has feeRecipient
-    if (!tokenMessengerState || typeof tokenMessengerState !== "object") {
-      throw new Error(
-        "Invalid TokenMessenger state: received null or non-object response"
-      );
-    }
-
-    const feeRecipient = tokenMessengerState.feeRecipient;
-    if (!feeRecipient || !(feeRecipient instanceof PublicKey)) {
-      throw new Error(
-        "Invalid feeRecipient in TokenMessenger state: expected PublicKey"
-      );
-    }
-
-    return feeRecipient;
-  } catch (error) {
-    // Re-throw our validation errors as-is
-    if (error instanceof Error && error.message.includes("TokenMessenger")) {
-      throw error;
-    }
-
-    // Wrap network/RPC errors with context
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Failed to fetch feeRecipient from TokenMessenger: ${message}`
-    );
-  }
   })();
 
   pendingFeeRecipientLoads.set(cacheKey, loadPromise);
