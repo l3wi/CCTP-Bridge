@@ -1518,10 +1518,16 @@ export function BridgeCard({
                 token: "USDC" as const,
                 state: "pending" as const,
                 provider: "CCTPV2BridgingProvider",
-                source: { address: sourceAddressValue, chain: sourceChainDef },
-                destination: { address: recipientAddressValue || "", chain: destChain },
+                source: {
+                  address: sourceAddressValue,
+                  chain: toChainDefinition(sourceChainDef),
+                },
+                destination: {
+                  address: recipientAddressValue || "",
+                  chain: toChainDefinition(destChain),
+                },
                 steps: [],
-              } as BridgeResult;
+              };
             }
             return undefined;
           })()}

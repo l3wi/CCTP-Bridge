@@ -25,6 +25,10 @@ export interface CctpContracts {
 export interface CctpMetadata {
   domain?: number;
   contracts?: CctpContracts;
+  forwarderSupported?: {
+    source: boolean;
+    destination: boolean;
+  };
 }
 
 interface BaseChainMetadata {
@@ -33,6 +37,7 @@ interface BaseChainMetadata {
   explorerUrl?: string;
   usdcAddress?: string;
   eurcAddress?: string;
+  usdtAddress?: string;
   nativeCurrency: NativeCurrency;
   cctp?: CctpMetadata;
 }

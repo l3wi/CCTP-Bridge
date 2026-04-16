@@ -78,7 +78,14 @@ function normalizeChain(chain: ChainWithOptionalRpcUrls): UniversalChainMetadata
     return null;
   }
 
-  const cctp = (chain.cctp as { domain?: number; contracts?: unknown } | undefined) ?? {};
+  const cctp = (chain.cctp as {
+    domain?: number;
+    contracts?: unknown;
+    forwarderSupported?: {
+      source?: boolean;
+      destination?: boolean;
+    };
+  } | undefined) ?? {};
 
   const base = {
     name: chain.name,
@@ -86,10 +93,17 @@ function normalizeChain(chain: ChainWithOptionalRpcUrls): UniversalChainMetadata
     explorerUrl: chain.explorerUrl ?? undefined,
     usdcAddress: chain.usdcAddress ?? undefined,
     eurcAddress: chain.eurcAddress ?? undefined,
+    usdtAddress: chain.usdtAddress ?? undefined,
     nativeCurrency: chain.nativeCurrency,
     cctp: {
       domain: cctp.domain,
       contracts: normalizeContracts(cctp.contracts),
+      forwarderSupported: cctp.forwarderSupported
+        ? {
+            source: cctp.forwarderSupported.source === true,
+            destination: cctp.forwarderSupported.destination === true,
+          }
+        : undefined,
     },
     rpcEndpoints: getRpcEndpoints(chain),
   };

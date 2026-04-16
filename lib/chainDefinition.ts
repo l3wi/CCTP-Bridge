@@ -67,6 +67,10 @@ const toCctpConfig = (
   return {
     domain: chain.cctp.domain,
     contracts,
+    forwarderSupported: {
+      source: chain.cctp.forwarderSupported?.source === true,
+      destination: chain.cctp.forwarderSupported?.destination === true,
+    },
   };
 };
 
@@ -82,6 +86,7 @@ export const toChainDefinition = (
     rpcEndpoints: chain.rpcEndpoints ?? [],
     eurcAddress: chain.eurcAddress ?? null,
     usdcAddress: chain.usdcAddress ?? null,
+    usdtAddress: chain.usdtAddress ?? null,
     cctp: toCctpConfig(chain),
   };
 
