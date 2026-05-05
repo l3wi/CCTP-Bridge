@@ -15,11 +15,14 @@ import {
   type BridgeRouteIdKind,
 } from "@/lib/bridgeRoute";
 import {
+  isTransactionRecoveryPendingError,
   recoverTransactionFromBurnHash,
   recoverTransactionFromNonce,
 } from "@/lib/transactionRecovery";
 import { getErrorMessage } from "@/lib/cctp/errors";
 import { buildPendingTransactionRedirect } from "@/lib/pendingTransactionRoute";
+
+const PENDING_RECOVERY_RETRY_INTERVAL_MS = 10_000;
 
 const normalizeNonceValue = (value: string): string => {
   try {
@@ -67,8 +70,12 @@ export default function BridgeTrackingPageClient({
     useTransactionStore.persist.hasHydrated()
   );
   const [isInitialLookupPending, setIsInitialLookupPending] = useState(true);
+  const [pendingRecoveryRetryCount, setPendingRecoveryRetryCount] = useState(0);
 
   const recoveryAttemptRef = useRef<string | null>(null);
+  const pendingRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null
+  );
 
   useEffect(() => {
     const persistApi = useTransactionStore.persist;
@@ -124,7 +131,7 @@ export default function BridgeTrackingPageClient({
   const redirectToPendingForm = useCallback(
     (error: string) => {
       const idForPrefill =
-        routeId.kind === "txHash" ? routeId.normalizedId : decodedId;
+        routeId.kind === "txHash" ? routeId.normalizedId : "";
 
       const nextPath = buildPendingTransactionRedirect({
         sourceParam,
@@ -137,6 +144,36 @@ export default function BridgeTrackingPageClient({
     },
     [router, sourceParam, sourceChainId, routeId.kind, routeId.normalizedId, decodedId]
   );
+
+  const clearPendingRecoveryRetry = useCallback(() => {
+    if (pendingRecoveryTimeoutRef.current) {
+      clearTimeout(pendingRecoveryTimeoutRef.current);
+      pendingRecoveryTimeoutRef.current = null;
+    }
+  }, []);
+
+  const schedulePendingRecoveryRetry = useCallback(() => {
+    if (pendingRecoveryTimeoutRef.current) {
+      return;
+    }
+
+    pendingRecoveryTimeoutRef.current = setTimeout(() => {
+      pendingRecoveryTimeoutRef.current = null;
+      setPendingRecoveryRetryCount((count) => count + 1);
+    }, PENDING_RECOVERY_RETRY_INTERVAL_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearPendingRecoveryRetry();
+      recoveryAttemptRef.current = null;
+    };
+  }, [
+    clearPendingRecoveryRetry,
+    sourceChainId,
+    routeId.kind,
+    routeId.normalizedId,
+  ]);
 
   const handleMessageExpiredNonce = useCallback(
     ({ sourceChainId: nextSourceChainId, nonce }: { sourceChainId: ChainId; nonce: string }) => {
@@ -160,23 +197,25 @@ export default function BridgeTrackingPageClient({
     }
 
     if (!sourceChainId) {
+      clearPendingRecoveryRetry();
       redirectToPendingForm("Invalid source chain in URL.");
       return;
     }
 
     if (routeId.kind === "invalid") {
+      clearPendingRecoveryRetry();
       redirectToPendingForm("Invalid bridge identifier. Use a burn tx hash or nonce.");
       return;
     }
 
     if (matchedTransaction) {
+      clearPendingRecoveryRetry();
       setIsInitialLookupPending(false);
       return;
     }
 
-    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}`;
+    const attemptKey = `${sourceChainId}:${routeId.kind}:${routeId.normalizedId}:${pendingRecoveryRetryCount}`;
     if (recoveryAttemptRef.current === attemptKey) {
-      setIsInitialLookupPending(false);
       return;
     }
 
@@ -190,6 +229,8 @@ export default function BridgeTrackingPageClient({
         return;
       }
 
+      let shouldKeepLookupPending = false;
+
       try {
         const { transaction } =
           routeId.kind === "txHash"
@@ -200,28 +241,46 @@ export default function BridgeTrackingPageClient({
           return;
         }
 
+        clearPendingRecoveryRetry();
         upsertTransaction(transaction);
       } catch (error) {
         if (cancelled) {
           return;
         }
 
+        if (isTransactionRecoveryPendingError(error)) {
+          shouldKeepLookupPending = true;
+          schedulePendingRecoveryRetry();
+          return;
+        }
+
+        clearPendingRecoveryRetry();
         redirectToPendingForm(getErrorMessage(error));
       } finally {
+        if (recoveryAttemptRef.current === attemptKey) {
+          recoveryAttemptRef.current = null;
+        }
+
         if (!cancelled) {
-          setIsInitialLookupPending(false);
+          setIsInitialLookupPending(shouldKeepLookupPending);
         }
       }
     })();
 
     return () => {
       cancelled = true;
+      if (recoveryAttemptRef.current === attemptKey) {
+        recoveryAttemptRef.current = null;
+      }
     };
   }, [
+    clearPendingRecoveryRetry,
     isStoreHydrated,
     matchedTransaction,
+    pendingRecoveryRetryCount,
     routeId.kind,
     routeId.normalizedId,
+    schedulePendingRecoveryRetry,
     sourceChainId,
     upsertTransaction,
     redirectToPendingForm,

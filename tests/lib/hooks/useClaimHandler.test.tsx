@@ -7,6 +7,13 @@ import { useClaimHandler } from "@/lib/hooks/useClaimHandler";
 const switchChainMock = vi.hoisted(() => vi.fn());
 const executeMintMock = vi.hoisted(() => vi.fn());
 const toastMock = vi.hoisted(() => vi.fn());
+const solanaWalletState = vi.hoisted(() => ({
+  connected: false,
+  publicKey: null as { toBase58: () => string } | null,
+}));
+const SOLANA_WALLET_ADDRESS = vi.hoisted(
+  () => "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF"
+);
 
 vi.mock("wagmi", () => ({
   useSwitchChain: () => ({
@@ -15,9 +22,7 @@ vi.mock("wagmi", () => ({
 }));
 
 vi.mock("@solana/wallet-adapter-react", () => ({
-  useWallet: () => ({
-    connected: false,
-  }),
+  useWallet: () => solanaWalletState,
 }));
 
 vi.mock("@/components/ui/use-toast", () => ({
@@ -50,6 +55,8 @@ describe("useClaimHandler", () => {
     executeMintMock.mockReset();
     toastMock.mockReset();
     baseParams.onSuccess.mockReset();
+    solanaWalletState.connected = false;
+    solanaWalletState.publicKey = null;
   });
 
   it("switches chain and returns without auto-claiming when user is on the wrong EVM chain", async () => {
@@ -97,6 +104,78 @@ describe("useClaimHandler", () => {
         burnTxHash: baseParams.burnTxHash,
         sourceChainId: 42161,
         destinationChainId: 1,
+      })
+    );
+    expect(baseParams.onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows a connected helper wallet to claim for a different locked Solana recipient", async () => {
+    solanaWalletState.connected = true;
+    solanaWalletState.publicKey = {
+      toBase58: () => "6PUfdZ3YZpHoxnzMhEEg6KfFKByUQmVeN8CzWnpXqj7x",
+    };
+    executeMintMock.mockResolvedValue({
+      success: true,
+      mintTxHash: "solanaMintSignature",
+    });
+
+    const { result } = renderHook(() =>
+      useClaimHandler({
+        ...baseParams,
+        destinationChainId: "Solana",
+        onDestinationChain: true,
+        displayResult: {
+          destination: { address: SOLANA_WALLET_ADDRESS },
+          steps: [{ name: "Fetch Attestation", state: "success" }],
+        } as never,
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleClaim();
+    });
+
+    expect(executeMintMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        burnTxHash: baseParams.burnTxHash,
+        sourceChainId: 42161,
+        destinationChainId: "Solana",
+        targetAddress: SOLANA_WALLET_ADDRESS,
+      })
+    );
+    expect(baseParams.onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the locked Solana recipient address into executeMint", async () => {
+    solanaWalletState.connected = true;
+    solanaWalletState.publicKey = { toBase58: () => SOLANA_WALLET_ADDRESS };
+    executeMintMock.mockResolvedValue({
+      success: true,
+      mintTxHash: "solanaMintSignature",
+    });
+
+    const { result } = renderHook(() =>
+      useClaimHandler({
+        ...baseParams,
+        destinationChainId: "Solana",
+        onDestinationChain: true,
+        displayResult: {
+          destination: { address: SOLANA_WALLET_ADDRESS },
+          steps: [{ name: "Fetch Attestation", state: "success" }],
+        } as never,
+      })
+    );
+
+    await act(async () => {
+      await result.current.handleClaim();
+    });
+
+    expect(executeMintMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        burnTxHash: baseParams.burnTxHash,
+        sourceChainId: 42161,
+        destinationChainId: "Solana",
+        targetAddress: SOLANA_WALLET_ADDRESS,
       })
     );
     expect(baseParams.onSuccess).toHaveBeenCalledTimes(1);

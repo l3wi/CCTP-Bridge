@@ -1,0 +1,187 @@
+{
+  "schemaVersion": 1,
+  "generatedFrom": {
+    "from": "2026-01-21",
+    "to": "2026-05-06",
+    "source": "git-history"
+  },
+  "entries": [
+    {
+      "id": "2026-05-solana-claim-safety",
+      "date": "2026-05-06",
+      "category": "reliability",
+      "title": "Solana claim fixes",
+      "summary": "Solana claims are more reliable when a recipient needs account setup or a helper pays fees.",
+      "highlights": [
+        "Helper wallets can pay Solana fees without changing the recipient.",
+        "Missing recipient USDC accounts are handled before claim.",
+        "Claim signing uses fresh Solana transaction data after setup."
+      ],
+      "audience": ["solana-users", "returning-users"],
+      "importance": "major",
+      "references": {
+        "commits": []
+      }
+    },
+    {
+      "id": "2026-04-bridge-flow-hardening",
+      "date": "2026-04-21",
+      "category": "reliability",
+      "title": "Bridge flow hardening",
+      "summary": "Bridge tracking, recovery, and claim execution now handle pending confirmations, Solana recipients, and expired attestations more safely.",
+      "highlights": [
+        "Waits for the source burn transaction to confirm before marking the burn step complete.",
+        "Keeps fresh bridge links in recovery while Circle Iris is still indexing or confirming the burn.",
+        "Enforces the intended Solana recipient wallet during claim and validates CCTP source and destination domains before signing.",
+        "Waits for refreshed attestations to become usable before enabling claim retries.",
+        "Prevents execute-intent retries from looping after validation, wallet, or user-rejection failures."
+      ],
+      "audience": ["all-users", "solana-users", "returning-users"],
+      "importance": "major",
+      "references": {
+        "commits": []
+      }
+    },
+    {
+      "id": "2026-04-ui-refresh-history-recovery",
+      "date": "2026-04-19",
+      "category": "ui",
+      "title": "New look, history page, and recovery page",
+      "summary": "The bridge has a refreshed dark interface with clearer places to review transfer history and recover transactions.",
+      "highlights": [
+        "Updated the bridge, tracking, wallet, and form layouts with a cleaner design.",
+        "Made transfer history easier to review when returning to the app.",
+        "Added a dedicated recovery path for finding or restoring pending transactions."
+      ],
+      "audience": ["all-users", "returning-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["fb5e779"]
+      }
+    },
+    {
+      "id": "2026-04-chain-icons",
+      "date": "2026-04-16",
+      "category": "ui",
+      "title": "More consistent network icons",
+      "summary": "Supported networks now render with more reliable icon fallbacks, even when upstream icon metadata is incomplete.",
+      "highlights": [
+        "Improved network icon handling across bridge forms and transaction views.",
+        "Added fallback display support for newer supported networks.",
+        "Updated chain metadata so routes stay recognizable when icons are missing."
+      ],
+      "audience": ["all-users"],
+      "importance": "minor",
+      "references": {
+        "commits": ["6f67205"]
+      }
+    },
+    {
+      "id": "2026-02-solana-claim-reliability",
+      "date": "2026-02-25",
+      "category": "reliability",
+      "title": "More reliable Solana claims",
+      "summary": "Solana claim handling is more resilient, with clearer completion state and fewer failed claim attempts.",
+      "highlights": [
+        "Improved Solana claim confirmation before marking a transfer complete.",
+        "Reduced errors caused by missing or incomplete Solana account metadata.",
+        "Made pending claim status less likely to appear stale after a mint completes."
+      ],
+      "audience": ["solana-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["746129e", "90743b6", "6b77e12"]
+      }
+    },
+    {
+      "id": "2026-02-recovery-flow",
+      "date": "2026-02-22",
+      "category": "recovery",
+      "title": "Improved transaction recovery",
+      "summary": "Pending transfers are easier to add back into the app and recover when a claim needs another attempt.",
+      "highlights": [
+        "Added a clearer flow for adding pending bridge transactions.",
+        "Improved recovery state for transfers that need a refreshed attestation.",
+        "Tightened address checks so recovered transactions are matched to the intended destination."
+      ],
+      "audience": ["returning-users", "all-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["b8d644b", "eb62f38", "8ededb8", "aaf310c", "bcd95cd"]
+      }
+    },
+    {
+      "id": "2026-02-bridge-tracking",
+      "date": "2026-02-22",
+      "category": "bridge",
+      "title": "Better bridge tracking",
+      "summary": "Transfer tracking now has clearer status updates across burn, attestation, and mint steps.",
+      "highlights": [
+        "Added richer bridge tracking pages for pending transactions.",
+        "Improved transfer polling so status changes appear more consistently.",
+        "Made claim readiness and completion states easier to follow."
+      ],
+      "audience": ["all-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["4024cf9", "0dcc925", "9e10e46", "7d46130", "12dafe5"]
+      }
+    },
+    {
+      "id": "2026-02-network-coverage",
+      "date": "2026-02-19",
+      "category": "chains",
+      "title": "Expanded network coverage metadata",
+      "summary": "The app now uses generated Circle and BridgeKit metadata with app-managed routing to support and display a broader set of CCTP routes more reliably.",
+      "highlights": [
+        "Improved route discovery and chain display for supported CCTP networks.",
+        "Added app-managed network metadata for mainnet and matching testnet routes.",
+        "Improved fallback behavior when a public RPC endpoint is unavailable."
+      ],
+      "networks": [
+        "Ethereum",
+        "Optimism",
+        "XDC",
+        "Unichain",
+        "Polygon",
+        "Monad",
+        "Sonic",
+        "World Chain",
+        "HyperEVM",
+        "Sei",
+        "Morph",
+        "Edge",
+        "Base",
+        "Arbitrum",
+        "Avalanche",
+        "Ink",
+        "Linea",
+        "Codex",
+        "Plume",
+        "Solana"
+      ],
+      "audience": ["all-users", "evm-users", "solana-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["4024cf9"]
+      }
+    },
+    {
+      "id": "2026-01-attestation-recovery",
+      "date": "2026-01-28",
+      "category": "reliability",
+      "title": "Automatic re-attestation support",
+      "summary": "Expired attestations can be refreshed, reducing stuck or failed claim attempts.",
+      "highlights": [
+        "Added recovery support when an attestation expires before claim.",
+        "Improved retry handling for claims that need a fresh attestation.",
+        "Reduced manual recovery work for long-running transfers."
+      ],
+      "audience": ["all-users"],
+      "importance": "major",
+      "references": {
+        "commits": ["1a8bee9", "7b04597"]
+      }
+    }
+  ]
+}

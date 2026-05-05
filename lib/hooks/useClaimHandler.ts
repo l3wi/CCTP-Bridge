@@ -25,6 +25,11 @@ interface UseClaimHandlerResult {
   isClaiming: boolean;
 }
 
+const normalizeAddress = (address: string | undefined): string | undefined => {
+  const trimmed = address?.trim();
+  return trimmed ? trimmed : undefined;
+};
+
 /**
  * Handles claim execution for both EVM and Solana destinations.
  * Uses the unified useMint hook internally.
@@ -46,6 +51,7 @@ export function useClaimHandler({
   const solanaWallet = useWallet();
   const { toast } = useToast();
   const { executeMint, isMinting } = useMint();
+  const connectedSolanaAddress = solanaWallet.publicKey?.toBase58();
 
   const handleClaim = useCallback(async () => {
     if (!destinationChainId || !sourceChainId || !burnTxHash) {
@@ -123,10 +129,21 @@ export function useClaimHandler({
 
     if (isDestSolana) {
       // SOLANA DESTINATION
-      if (!solanaWallet.connected) {
+      if (!solanaWallet.connected || !connectedSolanaAddress) {
         toast({
           title: "Connect Solana wallet",
-          description: "Please connect your Solana wallet to claim",
+          description: "Connect a Solana wallet to pay claim fees and submit the claim.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const targetAddress = normalizeAddress(displayResult?.destination?.address);
+      if (!targetAddress) {
+        toast({
+          title: "Cannot claim",
+          description:
+            "Missing Solana recipient wallet for this transfer. Recover it with Add Pending Transaction before claiming.",
           variant: "destructive",
         });
         return;
@@ -136,6 +153,7 @@ export function useClaimHandler({
         burnTxHash,
         sourceChainId,
         destinationChainId,
+        targetAddress,
         existingSteps: currentSteps,
       });
 
@@ -173,8 +191,10 @@ export function useClaimHandler({
     sourceChainId,
     burnTxHash,
     displayResult?.steps,
+    displayResult?.destination?.address,
     onDestinationChain,
     solanaWallet.connected,
+    connectedSolanaAddress,
     switchChain,
     executeMint,
     onSuccess,

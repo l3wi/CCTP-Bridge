@@ -134,9 +134,8 @@ export function getCctpDomainSafe(
 // =============================================================================
 
 /**
- * CCTP v2 finality thresholds by ecosystem.
- * - EVM uses block-based thresholds (1000/2000 represent the protocol constants)
- * - Solana uses slot-based thresholds (3/32 slots)
+ * CCTP v2 finality thresholds.
+ * These are protocol constants, not chain-native block/slot counts.
  */
 export const FINALITY_THRESHOLDS = {
   evm: {
@@ -144,8 +143,8 @@ export const FINALITY_THRESHOLDS = {
     standard: 2000,
   },
   solana: {
-    fast: 3,
-    standard: 32,
+    fast: 1000,
+    standard: 2000,
   },
 } as const;
 

@@ -152,6 +152,7 @@ export interface IrisAttestationResponse {
         mintRecipient: string;
         amount: string;
         messageSender: string;
+        expirationBlock?: string;
       };
     };
   }>;
@@ -166,6 +167,8 @@ export interface AttestationData {
   nonce: string;
   amount?: string;
   mintRecipient?: string;
+  /** Decoded CCTP v2 expiration block. "0" means the attestation does not expire. */
+  expirationBlock?: string;
   /** Reason for delayed attestation (e.g., "insufficient_fee") - indicates standard speed fallback */
   delayReason?: string;
 }
@@ -195,6 +198,16 @@ const parseDomainValue = (value: unknown): number | null => {
   if (typeof value !== "string") return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : null;
+};
+
+const parseExpirationBlockValue = (value: unknown): string | undefined => {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
 };
 
 export function isCompleteAttestationData(
@@ -336,6 +349,9 @@ export async function fetchAttestation(
       nonce: msg.eventNonce,
       amount: msg.decodedMessage.decodedMessageBody?.amount,
       mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+      expirationBlock: parseExpirationBlockValue(
+        msg.decodedMessage.decodedMessageBody?.expirationBlock
+      ),
       delayReason: msg.delayReason,
     };
   } catch (error) {
@@ -512,6 +528,9 @@ export async function fetchAttestationUniversal(
         nonce: msg.eventNonce,
         amount: msg.decodedMessage.decodedMessageBody?.amount,
         mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+        expirationBlock: parseExpirationBlockValue(
+          msg.decodedMessage.decodedMessageBody?.expirationBlock
+        ),
         delayReason: msg.delayReason,
       };
       const ttl =
@@ -677,6 +696,9 @@ export async function fetchAttestationByNonceUniversal(
         nonce: msg.eventNonce,
         amount: msg.decodedMessage.decodedMessageBody?.amount,
         mintRecipient: msg.decodedMessage.decodedMessageBody?.mintRecipient,
+        expirationBlock: parseExpirationBlockValue(
+          msg.decodedMessage.decodedMessageBody?.expirationBlock
+        ),
         delayReason: msg.delayReason,
       };
 

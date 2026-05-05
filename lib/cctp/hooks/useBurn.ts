@@ -40,6 +40,17 @@ import {
   sendTransactionNoConfirm,
 } from "../solana/burn";
 
+function assertWalletOnSourceChain(
+  walletChainId: number | undefined,
+  sourceChainId: number
+) {
+  if (walletChainId !== sourceChainId) {
+    throw new Error(
+      `Wrong source chain: wallet is connected to chain ${walletChainId ?? "unknown"}, expected ${sourceChainId}.`
+    );
+  }
+}
+
 /**
  * Unified hook for burning USDC on any supported source chain.
  * Automatically routes to EVM or Solana implementation based on source chain.
@@ -96,6 +107,7 @@ export function useBurn() {
         );
 
         try {
+          assertWalletOnSourceChain(walletClient.chain?.id, sourceChainId);
           approvalTxHash = await walletClient.sendTransaction({
             to: approvalData.to,
             data: approvalData.data,
@@ -208,6 +220,7 @@ export function useBurn() {
           maxFee: burnConfig.maxFee,
         });
 
+        assertWalletOnSourceChain(walletClient.chain?.id, sourceChainId);
         const burnTxHash = await walletClient.sendTransaction({
           to: burnData.to,
           data: burnData.data,
@@ -278,10 +291,17 @@ export function useBurn() {
 
             // Safety check: fee must be less than amount
             if (maxFee >= params.amount) {
-              maxFee = params.amount - 1n;
+              return {
+                success: false,
+                error: "Transfer amount too small for fast transfer fee. Choose standard transfer or increase the amount.",
+              };
             }
           } catch (feeError) {
-            console.warn("Failed to calculate fee, using standard:", feeError);
+            console.warn("Failed to calculate Solana fast fee:", feeError);
+            return {
+              success: false,
+              error: "Unable to fetch the current fast transfer fee. Choose standard transfer or try again.",
+            };
           }
         }
 

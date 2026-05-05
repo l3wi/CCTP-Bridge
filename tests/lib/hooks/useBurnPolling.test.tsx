@@ -76,4 +76,25 @@ describe("useBurnPolling", () => {
     expect(result.current.error).toContain("reverted");
     expect(onBurnFailed).toHaveBeenCalledTimes(1);
   });
+
+  it("marks burn as confirmed when chain reports success", async () => {
+    const onBurnConfirmed = vi.fn();
+    getTransactionReceiptMock.mockResolvedValue({ status: "success" });
+
+    const { result } = renderHook(() =>
+      useBurnPolling({
+        burnTxHash: `0x${"3".repeat(64)}`,
+        sourceChainId: 1,
+        onBurnConfirmed,
+      })
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.confirmed).toBe(true);
+    expect(result.current.failed).toBe(false);
+    expect(onBurnConfirmed).toHaveBeenCalledTimes(1);
+  });
 });

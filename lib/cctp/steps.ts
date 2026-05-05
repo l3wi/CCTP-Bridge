@@ -38,7 +38,7 @@ export function createInitialSteps(params: CreateInitialStepsParams): Steps {
   }
 
   steps.push(
-    { name: "Burn", state: "success", txHash: burnTxHash },
+    { name: "Burn", state: "pending", txHash: burnTxHash },
     { name: "Fetch Attestation", state: "pending" },
     { name: "Mint", state: "pending" }
   );
@@ -95,6 +95,29 @@ export function updateStepsBurnComplete(
       ...steps[burnIndex],
       state: "success",
       txHash: burnTxHash,
+    };
+  }
+
+  return steps;
+}
+
+/**
+ * Update steps to mark burn as failed.
+ */
+export function updateStepsBurnFailed(
+  existingSteps: Steps,
+  errorMessage: string,
+  burnTxHash?: UniversalTxHash
+): Steps {
+  const steps = [...existingSteps];
+  const burnIndex = steps.findIndex((s) => s.name === "Burn");
+
+  if (burnIndex >= 0) {
+    steps[burnIndex] = {
+      ...steps[burnIndex],
+      state: "error",
+      txHash: burnTxHash ?? steps[burnIndex].txHash,
+      errorMessage,
     };
   }
 

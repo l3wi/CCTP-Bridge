@@ -12,12 +12,19 @@ const isCompleteAttestationDataMock = vi.hoisted(() => vi.fn());
 const checkNonceUsedMock = vi.hoisted(() => vi.fn());
 const checkMessageExpirationMock = vi.hoisted(() => vi.fn());
 const buildReceiveMessageTransactionMock = vi.hoisted(() => vi.fn());
+const refreshMintTransactionMock = vi.hoisted(() => vi.fn());
 const sendTransactionNoConfirmMock = vi.hoisted(() => vi.fn());
 const estimateSolanaMintGasMock = vi.hoisted(() => vi.fn());
+const extractSourceDomainFromMessageMock = vi.hoisted(() => vi.fn());
+const extractDestinationDomainFromMessageMock = vi.hoisted(() => vi.fn());
 
 const getBalanceMock = vi.hoisted(() => vi.fn());
+const getAccountInfoMock = vi.hoisted(() => vi.fn());
 const getSignatureStatusesMock = vi.hoisted(() => vi.fn());
 const signTransactionMock = vi.hoisted(() => vi.fn());
+const SOLANA_WALLET_ADDRESS = vi.hoisted(
+  () => "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF"
+);
 
 vi.mock("wagmi", () => ({
   useWalletClient: () => ({
@@ -34,13 +41,14 @@ vi.mock("wagmi", () => ({
 vi.mock("@solana/wallet-adapter-react", () => ({
   useWallet: () => ({
     connected: true,
-    publicKey: { toBase58: () => "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF" },
+    publicKey: { toBase58: () => SOLANA_WALLET_ADDRESS },
     signTransaction: signTransactionMock,
     wallet: { adapter: {} },
   }),
   useConnection: () => ({
     connection: {
       getBalance: getBalanceMock,
+      getAccountInfo: getAccountInfoMock,
       getSignatureStatuses: getSignatureStatusesMock,
     },
   }),
@@ -65,7 +73,8 @@ vi.mock("@/lib/iris", () => ({
 
 vi.mock("@/lib/simulation", () => ({
   simulateMint: vi.fn(),
-  extractDestinationDomainFromMessage: vi.fn(() => 3),
+  extractSourceDomainFromMessage: extractSourceDomainFromMessageMock,
+  extractDestinationDomainFromMessage: extractDestinationDomainFromMessageMock,
 }));
 
 vi.mock("@/lib/cctp/nonce", () => ({
@@ -101,7 +110,15 @@ describe("useMint (Solana confirmation flow)", () => {
     isCompleteAttestationDataMock.mockReturnValue(true);
     checkNonceUsedMock.mockResolvedValue({ isUsed: false });
     checkMessageExpirationMock.mockResolvedValue({ isExpired: false });
-    buildReceiveMessageTransactionMock.mockResolvedValue({});
+    refreshMintTransactionMock.mockReset();
+    buildReceiveMessageTransactionMock.mockResolvedValue({
+      mintTransaction: { kind: "mint" },
+      recipientOwner: { toBase58: () => SOLANA_WALLET_ADDRESS },
+      recipientAta: { toBase58: () => "recipientAta" },
+      needsAtaCreation: false,
+    });
+    extractSourceDomainFromMessageMock.mockReturnValue(0);
+    extractDestinationDomainFromMessageMock.mockReturnValue(5);
     signTransactionMock.mockResolvedValue({});
     sendTransactionNoConfirmMock.mockResolvedValue("solanaMintSignature");
     getBalanceMock.mockResolvedValue(2_000_000_000);
@@ -114,6 +131,7 @@ describe("useMint (Solana confirmation flow)", () => {
     getSignatureStatusesMock.mockResolvedValue({
       value: [{ confirmationStatus: "confirmed" }],
     });
+    getAccountInfoMock.mockResolvedValue({ data: Buffer.alloc(0) });
   });
 
   it("keeps transaction pending until Solana signature is confirmed", async () => {
@@ -122,7 +140,8 @@ describe("useMint (Solana confirmation flow)", () => {
     const params: MintParams = {
       burnTxHash: `0x${"a".repeat(64)}`,
       sourceChainId: 11155111,
-      destinationChainId: "Solana",
+      destinationChainId: "Solana_Devnet",
+      targetAddress: SOLANA_WALLET_ADDRESS,
       existingSteps: [
         { name: "Burn", state: "success" },
         { name: "Fetch Attestation", state: "success" },
@@ -161,5 +180,187 @@ describe("useMint (Solana confirmation flow)", () => {
         bridgeState: "success",
       })
     );
+    expect(buildReceiveMessageTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        destinationAddress: SOLANA_WALLET_ADDRESS,
+      })
+    );
+  });
+
+  it("rejects a Solana claim with no locked target address before fetching attestation", async () => {
+    const { result } = renderHook(() => useMint());
+
+    const params: MintParams = {
+      burnTxHash: `0x${"a".repeat(64)}`,
+      sourceChainId: 11155111,
+      destinationChainId: "Solana_Devnet",
+    };
+
+    let mintResult: unknown;
+    await act(async () => {
+      mintResult = await result.current.executeMint(params);
+    });
+
+    expect(mintResult).toEqual(
+      expect.objectContaining({
+        success: false,
+        errorTitle: "Missing recipient wallet",
+      })
+    );
+    expect(fetchAttestationUniversalMock).not.toHaveBeenCalled();
+    expect(signTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("allows a helper Solana wallet to claim for a different locked recipient", async () => {
+    const { result } = renderHook(() => useMint());
+    const recipientAddress = "6PUfdZ3YZpHoxnzMhEEg6KfFKByUQmVeN8CzWnpXqj7x";
+
+    const params: MintParams = {
+      burnTxHash: `0x${"a".repeat(64)}`,
+      sourceChainId: 11155111,
+      destinationChainId: "Solana_Devnet",
+      targetAddress: recipientAddress,
+    };
+
+    let mintResult: unknown;
+    await act(async () => {
+      mintResult = await result.current.executeMint(params);
+    });
+
+    expect(mintResult).toEqual(
+      expect.objectContaining({
+        success: true,
+        mintTxHash: "solanaMintSignature",
+      })
+    );
+    expect(buildReceiveMessageTransactionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.objectContaining({ toBase58: expect.any(Function) }),
+        destinationAddress: recipientAddress,
+      })
+    );
+    expect(signTransactionMock).toHaveBeenCalledWith({ kind: "mint" });
+  });
+
+  it("sends split ATA setup before the claim transaction and stores only the claim signature", async () => {
+    refreshMintTransactionMock.mockResolvedValue({ kind: "fresh-mint" });
+    buildReceiveMessageTransactionMock.mockResolvedValue({
+      setupTransaction: { kind: "setup" },
+      mintTransaction: { kind: "mint" },
+      refreshMintTransaction: refreshMintTransactionMock,
+      recipientOwner: { toBase58: () => "recipient" },
+      recipientAta: { toBase58: () => "recipientAta" },
+      needsAtaCreation: true,
+    });
+    signTransactionMock
+      .mockResolvedValueOnce({ kind: "signed-setup" })
+      .mockResolvedValueOnce({ kind: "signed-mint" });
+    sendTransactionNoConfirmMock
+      .mockResolvedValueOnce("setupSignature")
+      .mockResolvedValueOnce("solanaMintSignature");
+
+    const { result } = renderHook(() => useMint());
+
+    const params: MintParams = {
+      burnTxHash: `0x${"a".repeat(64)}`,
+      sourceChainId: 11155111,
+      destinationChainId: "Solana_Devnet",
+      targetAddress: SOLANA_WALLET_ADDRESS,
+    };
+
+    let mintResult: unknown;
+    await act(async () => {
+      mintResult = await result.current.executeMint(params);
+    });
+
+    expect(mintResult).toEqual(
+      expect.objectContaining({
+        success: true,
+        mintTxHash: "solanaMintSignature",
+      })
+    );
+    expect(signTransactionMock).toHaveBeenNthCalledWith(1, { kind: "setup" });
+    expect(refreshMintTransactionMock).toHaveBeenCalledTimes(1);
+    expect(signTransactionMock).toHaveBeenNthCalledWith(2, { kind: "fresh-mint" });
+    expect(sendTransactionNoConfirmMock).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      { kind: "signed-setup" }
+    );
+    expect(sendTransactionNoConfirmMock).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      { kind: "signed-mint" }
+    );
+
+    const statusUpdates = updateTransactionMock.mock.calls.filter(
+      ([, updates]) => updates?.status
+    );
+    expect(statusUpdates[0][1]).toEqual(
+      expect.objectContaining({
+        claimHash: "solanaMintSignature",
+        status: "pending",
+      })
+    );
+    expect(statusUpdates[1][1]).toEqual(
+      expect.objectContaining({
+        claimHash: "solanaMintSignature",
+        status: "claimed",
+      })
+    );
+  });
+
+  it("rejects Solana source domain mismatch before nonce and transaction build", async () => {
+    extractSourceDomainFromMessageMock.mockReturnValue(9);
+
+    const { result } = renderHook(() => useMint());
+
+    const params: MintParams = {
+      burnTxHash: `0x${"a".repeat(64)}`,
+      sourceChainId: 11155111,
+      destinationChainId: "Solana_Devnet",
+      targetAddress: SOLANA_WALLET_ADDRESS,
+    };
+
+    let mintResult: unknown;
+    await act(async () => {
+      mintResult = await result.current.executeMint(params);
+    });
+
+    expect(mintResult).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: expect.stringContaining("Wrong source chain"),
+      })
+    );
+    expect(checkNonceUsedMock).not.toHaveBeenCalled();
+    expect(buildReceiveMessageTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects Solana destination domain mismatch before nonce and transaction build", async () => {
+    extractDestinationDomainFromMessageMock.mockReturnValue(9);
+
+    const { result } = renderHook(() => useMint());
+
+    const params: MintParams = {
+      burnTxHash: `0x${"a".repeat(64)}`,
+      sourceChainId: 11155111,
+      destinationChainId: "Solana_Devnet",
+      targetAddress: SOLANA_WALLET_ADDRESS,
+    };
+
+    let mintResult: unknown;
+    await act(async () => {
+      mintResult = await result.current.executeMint(params);
+    });
+
+    expect(mintResult).toEqual(
+      expect.objectContaining({
+        success: false,
+        error: expect.stringContaining("Wrong destination chain"),
+      })
+    );
+    expect(checkNonceUsedMock).not.toHaveBeenCalled();
+    expect(buildReceiveMessageTransactionMock).not.toHaveBeenCalled();
   });
 });

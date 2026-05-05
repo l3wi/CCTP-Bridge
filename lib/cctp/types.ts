@@ -134,6 +134,11 @@ export interface MintParams {
   burnTxHash: UniversalTxHash;
   sourceChainId: ChainId;
   destinationChainId: ChainId;
+  /**
+   * Locked destination wallet captured when the bridge was submitted.
+   * Required for Solana claims so the signer can be verified before minting.
+   */
+  targetAddress?: UniversalAddress;
   /** Optional - existing steps from transaction store */
   existingSteps?: BridgeResult["steps"];
 }

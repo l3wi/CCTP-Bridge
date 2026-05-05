@@ -85,4 +85,21 @@ describe("pendingTransactionRoute", () => {
     expect(params.get("hash")).toBe("12345");
     expect(params.get("error")).toBe("Invalid route");
   });
+
+  it("omits hash prefill when redirect has no transaction hash", () => {
+    const chainId = getFirstSupportedChainId();
+
+    const path = buildPendingTransactionRedirect({
+      sourceChainId: chainId,
+      idParam: "",
+      error: "Paste the source burn transaction hash.",
+    });
+
+    const [, query] = path.split("?");
+    const params = new URLSearchParams(query);
+
+    expect(params.get("id")).toBe(getBridgeRouteSegment(chainId));
+    expect(params.get("hash")).toBeNull();
+    expect(params.get("error")).toBe("Paste the source burn transaction hash.");
+  });
 });

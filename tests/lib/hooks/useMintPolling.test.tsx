@@ -7,6 +7,7 @@ import { useMintPolling } from "@/lib/hooks/useMintPolling";
 const updateTransactionMock = vi.hoisted(() => vi.fn());
 const toastMock = vi.hoisted(() => vi.fn());
 const checkMintReadinessMock = vi.hoisted(() => vi.fn());
+const checkSolanaMintStatusMock = vi.hoisted(() => vi.fn());
 const fetchAttestationUniversalMock = vi.hoisted(() => vi.fn());
 const requestReattestationMock = vi.hoisted(() => vi.fn());
 
@@ -24,6 +25,7 @@ vi.mock("@/components/ui/use-toast", () => ({
 
 vi.mock("@/lib/simulation", () => ({
   checkMintReadiness: checkMintReadinessMock,
+  checkSolanaMintStatus: checkSolanaMintStatusMock,
 }));
 
 vi.mock("@/lib/iris", () => ({
@@ -39,6 +41,7 @@ describe("useMintPolling", () => {
     updateTransactionMock.mockReset();
     toastMock.mockReset();
     checkMintReadinessMock.mockReset();
+    checkSolanaMintStatusMock.mockReset();
     fetchAttestationUniversalMock.mockReset();
     requestReattestationMock.mockReset();
 
@@ -47,6 +50,13 @@ describe("useMintPolling", () => {
       canMint: false,
       alreadyMinted: false,
       attestationReady: false,
+      error: "not ready",
+    });
+
+    checkSolanaMintStatusMock.mockResolvedValue({
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
       error: "not ready",
     });
 
@@ -152,6 +162,169 @@ describe("useMintPolling", () => {
 
     expect(result.current.reattestTimedOut).toBe(true);
     expect(requestReattestationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not accept stale complete attestation payloads after re-attestation", async () => {
+    fetchAttestationUniversalMock.mockResolvedValue({
+      status: "complete",
+      nonce: "42",
+      message: "0x1234",
+      attestation: "0xabcd",
+      expirationBlock: "123",
+    });
+    checkMintReadinessMock.mockResolvedValue({
+      success: false,
+      canMint: false,
+      alreadyMinted: false,
+      attestationReady: true,
+      messageExpired: true,
+      error: "Message expired",
+      nonce: "42",
+    });
+
+    const { result } = renderHook(() =>
+      useMintPolling({
+        burnTxHash: `0x${"5".repeat(64)}`,
+        sourceChainId: 1,
+        destinationChainId: 8453,
+        burnCompletedAt: new Date("2026-02-21T00:00:00.000Z"),
+        startedAt: new Date("2026-02-21T00:00:00.000Z"),
+        isSuccess: false,
+        hasBurnCompleted: true,
+        hasFetchAttestation: true,
+        displaySteps: [
+          { name: "Burn", state: "success", txHash: `0x${"5".repeat(64)}` },
+          { name: "Fetch Attestation", state: "pending" },
+          { name: "Mint", state: "pending" },
+        ],
+        onStepsUpdate: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      result.current.setMessageExpired("42");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(requestReattestationMock).toHaveBeenCalledWith(1, "42");
+    expect(fetchAttestationUniversalMock).toHaveBeenCalledWith(
+      1,
+      `0x${"5".repeat(64)}`,
+      { forceRefresh: true }
+    );
+    expect(checkMintReadinessMock).toHaveBeenCalledWith(
+      1,
+      8453,
+      `0x${"5".repeat(64)}`,
+      false
+    );
+    expect(result.current.canMint).toBe(false);
+    expect(result.current.attestationReady).toBe(false);
+    expect(result.current.isAwaitingReattestation).toBe(true);
+    expect(result.current.expirationBlock).toBe("123");
+    expect(result.current.error).toContain("expired");
+  });
+
+  it("accepts re-attested payloads with expirationBlock 0 without extra readiness checks", async () => {
+    fetchAttestationUniversalMock.mockResolvedValue({
+      status: "complete",
+      nonce: "42",
+      message: "0x1234",
+      attestation: "0xabcd",
+      expirationBlock: "0",
+    });
+
+    const { result } = renderHook(() =>
+      useMintPolling({
+        burnTxHash: `0x${"6".repeat(64)}`,
+        sourceChainId: 1,
+        destinationChainId: 8453,
+        burnCompletedAt: new Date("2026-02-21T00:00:00.000Z"),
+        startedAt: new Date("2026-02-21T00:00:00.000Z"),
+        isSuccess: false,
+        hasBurnCompleted: true,
+        hasFetchAttestation: true,
+        displaySteps: [
+          { name: "Burn", state: "success", txHash: `0x${"6".repeat(64)}` },
+          { name: "Fetch Attestation", state: "pending" },
+          { name: "Mint", state: "pending" },
+        ],
+        onStepsUpdate: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      result.current.setMessageExpired("42");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(checkMintReadinessMock).not.toHaveBeenCalled();
+    expect(result.current.canMint).toBe(true);
+    expect(result.current.attestationReady).toBe(true);
+    expect(result.current.messageExpired).toBe(false);
+    expect(result.current.expirationBlock).toBe("0");
+  });
+
+  it("accepts re-attested expiring payloads when destination readiness can mint", async () => {
+    fetchAttestationUniversalMock.mockResolvedValue({
+      status: "complete",
+      nonce: "42",
+      message: "0x1234",
+      attestation: "0xabcd",
+      expirationBlock: "999999",
+    });
+    checkMintReadinessMock.mockResolvedValue({
+      success: true,
+      canMint: true,
+      alreadyMinted: false,
+      attestationReady: true,
+      messageExpired: false,
+      nonce: "42",
+    });
+
+    const { result } = renderHook(() =>
+      useMintPolling({
+        burnTxHash: `0x${"7".repeat(64)}`,
+        sourceChainId: 1,
+        destinationChainId: 8453,
+        burnCompletedAt: new Date("2026-02-21T00:00:00.000Z"),
+        startedAt: new Date("2026-02-21T00:00:00.000Z"),
+        isSuccess: false,
+        hasBurnCompleted: true,
+        hasFetchAttestation: true,
+        displaySteps: [
+          { name: "Burn", state: "success", txHash: `0x${"7".repeat(64)}` },
+          { name: "Fetch Attestation", state: "pending" },
+          { name: "Mint", state: "pending" },
+        ],
+        onStepsUpdate: vi.fn(),
+      })
+    );
+
+    await act(async () => {
+      result.current.setMessageExpired("42");
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(checkMintReadinessMock).toHaveBeenCalledWith(
+      1,
+      8453,
+      `0x${"7".repeat(64)}`,
+      false
+    );
+    expect(result.current.canMint).toBe(true);
+    expect(result.current.attestationReady).toBe(true);
+    expect(result.current.messageExpired).toBe(false);
+    expect(result.current.expirationBlock).toBe("999999");
   });
 
   it("does not mark attestation ready when Iris returns complete without payload", async () => {

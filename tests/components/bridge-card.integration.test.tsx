@@ -1,13 +1,15 @@
 /** @vitest-environment jsdom */
 
 import { ReactNode } from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BridgeCard } from "@/components/bridge-card";
+import type { BridgeIntent } from "@/lib/bridgeIntent";
 
 const mockState = vi.hoisted(() => ({
   evmAddress: "0x8fc8ac124be6cbf4b54aa1b24d27e04156979b7d",
+  evmConnected: true,
   solanaRecipient: "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF" as string | undefined,
 }));
 
@@ -34,8 +36,8 @@ const SOL_DEF = {
 
 vi.mock("wagmi", () => ({
   useAccount: () => ({
-    address: mockState.evmAddress,
-    chain: ARB_CHAIN,
+    address: mockState.evmConnected ? mockState.evmAddress : undefined,
+    chain: mockState.evmConnected ? ARB_CHAIN : undefined,
   }),
   useChains: () => [ARB_CHAIN],
   useSwitchChain: () => ({
@@ -175,6 +177,7 @@ vi.mock("@/lib/hooks/useDebouncedAddressValidation", () => ({
 describe("BridgeCard recipient lock integration", () => {
   beforeEach(() => {
     mockState.evmAddress = "0x8fc8ac124be6cbf4b54aa1b24d27e04156979b7d";
+    mockState.evmConnected = true;
     mockState.solanaRecipient = "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF";
     bridgeMock.mockReset();
     toastMock.mockReset();
@@ -278,5 +281,99 @@ describe("BridgeCard recipient lock integration", () => {
 
     expect(bridgeResult?.source?.address).toBe("");
     expect(bridgeResult?.destination?.address).toBe(loadedTargetAddress);
+  });
+});
+
+describe("BridgeCard execute intent integration", () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  const baseIntent: BridgeIntent = {
+    sourceChainId: 42161,
+    targetChainId: "Solana",
+    amount: "1",
+    targetAddress: "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF",
+    transferType: "fast" as const,
+  };
+
+  beforeEach(() => {
+    mockState.evmAddress = "0x8fc8ac124be6cbf4b54aa1b24d27e04156979b7d";
+    mockState.evmConnected = true;
+    mockState.solanaRecipient = "4Nd1m4h4U6fMeDvfMqk7y6jJxGfSPMaqkN8R7nJxQfQF";
+    bridgeMock.mockReset();
+    toastMock.mockReset();
+    switchChainMock.mockReset();
+    lastBridgingStateProps.value = null;
+    consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("does not retry the same execute intent when bridge submission fails to start", async () => {
+    const user = userEvent.setup();
+    bridgeMock.mockRejectedValue(new Error("User rejected"));
+
+    render(<BridgeCard mode="executeIntent" initialIntent={baseIntent} />);
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Bridge Transaction Not Started" })
+      ).toBeTruthy();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
+    const backButton = screen.getByRole("button", { name: "Back" });
+    expect(backButton).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+
+    await user.click(backButton);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(bridgeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry the same execute intent when source wallet prerequisites are missing", async () => {
+    mockState.evmConnected = false;
+
+    render(<BridgeCard mode="executeIntent" initialIntent={baseIntent} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Bridge Transaction Not Started" })
+      ).toBeTruthy();
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(bridgeMock).not.toHaveBeenCalled();
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Back" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+  });
+
+  it("attempts again when the execute intent changes", async () => {
+    bridgeMock.mockRejectedValue(new Error("User rejected"));
+
+    const { rerender } = render(
+      <BridgeCard mode="executeIntent" initialIntent={baseIntent} />
+    );
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <BridgeCard
+        mode="executeIntent"
+        initialIntent={{
+          ...baseIntent,
+          amount: "2",
+        }}
+      />
+    );
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(2));
   });
 });

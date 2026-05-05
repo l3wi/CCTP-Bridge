@@ -89,35 +89,37 @@ export async function estimateSolanaMintGas(params: {
   connection: Connection;
   userPubkey: PublicKey;
   transaction: VersionedTransaction | Transaction;
+  setupTransaction?: VersionedTransaction | Transaction;
   destinationChainId: SolanaChainId;
   userBalance: bigint;
+  recipientOwnerPubkey?: PublicKey;
+  needsAtaCreation?: boolean;
 }): Promise<GasEstimate> {
-  const { connection, userPubkey, transaction, destinationChainId, userBalance } = params;
-
-  // Get transaction fee from network
-  let txFee: bigint;
-  try {
-    // Check if versioned transaction
-    if ("version" in transaction) {
-      const feeResult = await connection.getFeeForMessage(transaction.message);
-      txFee = BigInt(feeResult.value || 5000);
-    } else {
-      // Legacy transaction - use compileMessage
-      const message = transaction.compileMessage();
-      const feeResult = await connection.getFeeForMessage(message);
-      txFee = BigInt(feeResult.value || 5000);
-    }
-  } catch {
-    // Fallback to conservative estimate
-    txFee = SOLANA_FALLBACK_FEE_LAMPORTS;
-  }
-
-  // Check if ATA needs creation
-  const needsAtaCreation = await checkAtaNeedsCreation(
+  const {
     connection,
     userPubkey,
-    destinationChainId
-  );
+    transaction,
+    setupTransaction,
+    destinationChainId,
+    userBalance,
+    recipientOwnerPubkey,
+    needsAtaCreation: knownNeedsAtaCreation,
+  } = params;
+
+  const mintTxFee = await estimateSolanaTransactionFee(connection, transaction);
+  const setupTxFee = setupTransaction
+    ? await estimateSolanaTransactionFee(connection, setupTransaction)
+    : 0n;
+  const txFee = mintTxFee + setupTxFee;
+
+  // Check if ATA needs creation
+  const needsAtaCreation =
+    knownNeedsAtaCreation ??
+    await checkAtaNeedsCreation(
+      connection,
+      recipientOwnerPubkey ?? userPubkey,
+      destinationChainId
+    );
 
   // Calculate total cost
   const ataCreation = needsAtaCreation ? ATA_RENT_LAMPORTS : BigInt(0);
@@ -135,18 +137,36 @@ export async function estimateSolanaMintGas(params: {
   };
 }
 
+async function estimateSolanaTransactionFee(
+  connection: Connection,
+  transaction: VersionedTransaction | Transaction
+): Promise<bigint> {
+  try {
+    if ("version" in transaction) {
+      const feeResult = await connection.getFeeForMessage(transaction.message);
+      return BigInt(feeResult.value || 5000);
+    }
+
+    const message = transaction.compileMessage();
+    const feeResult = await connection.getFeeForMessage(message);
+    return BigInt(feeResult.value || 5000);
+  } catch {
+    return SOLANA_FALLBACK_FEE_LAMPORTS;
+  }
+}
+
 /**
  * Check if user's USDC ATA needs to be created.
  * Returns true if ATA doesn't exist.
  */
 async function checkAtaNeedsCreation(
   connection: Connection,
-  userPubkey: PublicKey,
+  recipientOwnerPubkey: PublicKey,
   destinationChainId: SolanaChainId
 ): Promise<boolean> {
   try {
     const usdcMint = getSolanaUsdcMint(destinationChainId);
-    const ataAddress = await getAssociatedTokenAddress(usdcMint, userPubkey);
+    const ataAddress = await getAssociatedTokenAddress(usdcMint, recipientOwnerPubkey);
     const ataInfo = await connection.getAccountInfo(ataAddress);
     return ataInfo === null;
   } catch {

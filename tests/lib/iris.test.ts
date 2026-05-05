@@ -54,6 +54,7 @@ type IrisMessage = {
       mintRecipient: string;
       amount: string;
       messageSender: string;
+      expirationBlock?: string;
     };
   };
 };
@@ -84,6 +85,7 @@ const buildCompleteMessage = (overrides: Partial<IrisMessage> = {}): IrisMessage
       mintRecipient: "0x1111111111111111111111111111111111111111",
       amount: "1000000",
       messageSender: "0x0",
+      expirationBlock: "0",
     },
   },
   ...overrides,
@@ -197,6 +199,51 @@ describe("iris attestation fetching", () => {
 
     const result = await fetchAttestationUniversal(1, makeHash(44));
     expect(result).toBeNull();
+  });
+
+  it("returns decoded expirationBlock from universal attestation lookups", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+
+    fetchMock.mockResolvedValue(
+      toIrisResponse([
+        buildCompleteMessage({
+          eventNonce: "66",
+          decodedMessage: {
+            ...buildCompleteMessage().decodedMessage!,
+            decodedMessageBody: {
+              ...buildCompleteMessage().decodedMessage!.decodedMessageBody!,
+              expirationBlock: "123456",
+            },
+          },
+        }),
+      ])
+    );
+
+    const result = await fetchAttestationUniversal(1, makeHash(66));
+    expect(result?.expirationBlock).toBe("123456");
+  });
+
+  it("returns decoded expirationBlock from nonce lookups", async () => {
+    const fetchMock = global.fetch as unknown as ReturnType<typeof vi.fn>;
+
+    fetchMock.mockResolvedValue(
+      toIrisResponse([
+        buildCompleteMessage({
+          eventNonce: "67",
+          sourceTxHash: makeHash(67),
+          decodedMessage: {
+            ...buildCompleteMessage().decodedMessage!,
+            decodedMessageBody: {
+              ...buildCompleteMessage().decodedMessage!.decodedMessageBody!,
+              expirationBlock: "7890",
+            },
+          },
+        }),
+      ])
+    );
+
+    const result = await fetchAttestationByNonceUniversal(1, "67");
+    expect(result?.attestation.expirationBlock).toBe("7890");
   });
 
   it("bypasses universal attestation cache when forceRefresh is enabled", async () => {

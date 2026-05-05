@@ -65,6 +65,18 @@ import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
+import { BridgeComparison } from "@/components/bridge-card/BridgeComparison";
+import { IntentStatusCard } from "@/components/bridge-card/IntentStatusCard";
+import {
+  buildChainOptionMap,
+  buildChainOptions,
+  buildDestinationOptionsBySource,
+  getEstimateLabels as buildEstimateLabels,
+  hasCompleteBridgeForm,
+  parseAmountToState,
+  sortChainOptionsByConnection,
+  type ChainOption,
+} from "@/components/bridge-card/utils";
 
 interface BridgeCardProps {
   onBurn?: (value: boolean) => void;
@@ -146,12 +158,17 @@ export function BridgeCard({
   const [bridgeResult, setBridgeResult] = useState<BridgeResult | null>(null);
   const [intentHydrated, setIntentHydrated] = useState(false);
   const [intentStarted, setIntentStarted] = useState(false);
+  const [intentExecutionState, setIntentExecutionState] = useState<
+    "idle" | "attempting" | "started" | "not-started" | "failed"
+  >("idle");
   // StrictMode can mount/unmount effects twice; keep dedupe scoped to this instance only.
   const executedIntentKeysRef = useRef(new Set<string>());
   const executeIntentKey = useMemo(
     () => (initialIntent ? JSON.stringify(initialIntent) : null),
     [initialIntent]
   );
+  const previousExecuteIntentKeyRef = useRef<string | null>(null);
+  const intentBackRequestedRef = useRef(false);
 
   // Determine target chain type early for validation
   const targetChainType = useMemo(
@@ -165,31 +182,6 @@ export function BridgeCard({
     diffWallet ? targetAddress : undefined,
     targetChainType
   );
-
-  const parseAmountToState = useCallback((input: string): AmountState | null => {
-    const cleanStr = input.replace(/[^0-9.]/g, "").trim();
-    if (!cleanStr) return null;
-
-    const [integerPart, decimalPart = ""] = cleanStr.split(".");
-    const paddedDecimal = decimalPart.padEnd(6, "0").slice(0, 6);
-
-    try {
-      return {
-        str: cleanStr,
-        bigInt: BigInt(`${integerPart}${paddedDecimal}`),
-      };
-    } catch {
-      return null;
-    }
-  }, []);
-
-  type ChainOption = {
-    value: string;
-    label: string;
-    id: ChainId;
-    chain?: Chain; // Optional - not present for Solana chains
-    chainType: "evm" | "solana";
-  };
 
   // Memoized values - get all supported chains (EVM + Solana) from Bridge Kit
   const allBridgeKitChains = useMemo(() => getAllSupportedChains(), []);
@@ -215,41 +207,17 @@ export function BridgeCard({
   }, [chains, evmChainIds]);
 
   // Build chain options from all supported chains (EVM + Solana)
-  const chainOptions = useMemo<ChainOption[]>(() => {
-    const evmOptions: ChainOption[] = supportedEvmChains.map((c) => ({
-      value: c.id.toString(),
-      label: c.name,
-      id: c.id,
-      chain: c,
-      chainType: "evm" as const,
-    }));
-
-    const solanaChains = allBridgeKitChains.filter(c => c.type === "solana");
-    const solanaOptions: ChainOption[] = solanaChains.map((c) => ({
-      value: c.chain as string,
-      label: c.name || (c.chain as string),
-      id: c.chain as ChainId,
-      chainType: "solana" as const,
-    }));
-
-    return [...evmOptions, ...solanaOptions];
-  }, [supportedEvmChains, allBridgeKitChains]);
+  const chainOptions = useMemo<ChainOption[]>(
+    () => buildChainOptions({ supportedEvmChains, allBridgeKitChains }),
+    [supportedEvmChains, allBridgeKitChains]
+  );
 
   const chainOptionById = useMemo(() => {
-    const map = new Map<ChainId, ChainOption>();
-    chainOptions.forEach((option) => map.set(option.id, option));
-    return map;
+    return buildChainOptionMap(chainOptions);
   }, [chainOptions]);
 
   const destinationOptionsBySource = useMemo(() => {
-    const map = new Map<ChainId, ChainOption[]>();
-    chainOptions.forEach((source) => {
-      map.set(
-        source.id,
-        chainOptions.filter((option) => option.id !== source.id)
-      );
-    });
-    return map;
+    return buildDestinationOptionsBySource(chainOptions);
   }, [chainOptions]);
 
   // Helper to check if a chain option is connected
@@ -266,14 +234,7 @@ export function BridgeCard({
       ? destinationOptionsBySource.get(sourceChainId) ?? []
       : chainOptions;
 
-    // Sort: connected chains first, then rest alphabetically
-    return [...baseOptions].sort((a, b) => {
-      const aConnected = isChainConnected(a);
-      const bConnected = isChainConnected(b);
-      if (aConnected && !bConnected) return -1;
-      if (!aConnected && bConnected) return 1;
-      return a.label.localeCompare(b.label);
-    });
+    return sortChainOptionsByConnection(baseOptions, isChainConnected);
   }, [chainOptions, destinationOptionsBySource, sourceChainId, isChainConnected]);
 
   const destinationOptionsKey = useMemo(
@@ -359,14 +320,7 @@ export function BridgeCard({
   const walletChainId = chain?.id;
 
   const sourceChainOptions = useMemo(() => {
-    // Sort: connected chains first, then rest alphabetically
-    return [...chainOptions].sort((a, b) => {
-      const aConnected = isChainConnected(a);
-      const bConnected = isChainConnected(b);
-      if (aConnected && !bConnected) return -1;
-      if (!aConnected && bConnected) return 1;
-      return a.label.localeCompare(b.label);
-    });
+    return sortChainOptionsByConnection(chainOptions, isChainConnected);
   }, [chainOptions, isChainConnected]);
 
   // Track the previous wallet chain to detect actual wallet chain changes
@@ -581,12 +535,18 @@ export function BridgeCard({
   };
 
   // Form validation - check wallet based on source chain type
-  const hasCompleteForm = useMemo(() => {
-    const hasWalletForSource = sourceChainType === "solana"
-      ? solanaWallet.connected
-      : !!chain;
-    return hasWalletForSource && isSourceChainSynced && (!!targetChain || !!targetChainId) && !!amount;
-  }, [sourceChainType, solanaWallet.connected, chain, isSourceChainSynced, targetChain, targetChainId, amount]);
+  const hasCompleteForm = useMemo(
+    () =>
+      hasCompleteBridgeForm({
+        sourceChainType,
+        solanaConnected: solanaWallet.connected,
+        evmChainConnected: !!chain,
+        isSourceChainSynced,
+        hasTargetChain: !!targetChain || !!targetChainId,
+        hasAmount: !!amount,
+      }),
+    [sourceChainType, solanaWallet.connected, chain, isSourceChainSynced, targetChain, targetChainId, amount]
+  );
 
   // Can we estimate? No wallet required with custom estimate function
   const hasSolanaWallet = solanaWallet.connected && !!solanaWallet.wallet?.adapter;
@@ -675,17 +635,6 @@ export function BridgeCard({
     }
   }, [fastEstimateError, isFastEstimateError, toast]);
 
-  const getTotalProtocolFee = useCallback(
-    (estimate?: BridgeEstimate | null) => {
-      if (!estimate?.fees) return 0;
-      return estimate.fees.reduce(
-        (acc, fee) => acc + (fee.amount ? Number(fee.amount) : 0),
-        0
-      );
-    },
-    []
-  );
-
   const getTransferSpeedLabel = useCallback(
     (speed: TransferSpeedValue) => {
       const sourceChain =
@@ -702,17 +651,6 @@ export function BridgeCard({
       return finality ?? "Estimate unavailable";
     },
     [activeSourceChainId]
-  );
-
-  const getYouWillReceive = useCallback(
-    (feeTotal: number) => {
-      if (!amount) return "0.00 USDC";
-      const numericAmount = Number(amount.str);
-      if (Number.isNaN(numericAmount)) return "0.00 USDC";
-      const received = Math.max(0, numericAmount - (feeTotal ?? 0));
-      return `${received.toFixed(6)} USDC`;
-    },
-    [amount]
   );
 
   const getEtaLabel = useCallback(
@@ -1034,9 +972,12 @@ export function BridgeCard({
   );
 
   const handleBackToNew = () => {
+    intentBackRequestedRef.current = true;
     if (executeIntentKey) {
       executedIntentKeysRef.current.delete(executeIntentKey);
     }
+    setIntentStarted(false);
+    setIntentExecutionState("not-started");
     setIsBridging(false);
     setIsLoading(false);
     setLoadedTransactionData(null);
@@ -1100,7 +1041,35 @@ export function BridgeCard({
   }, [loadedTransaction, chainOptionById]);
 
   useEffect(() => {
-    if (mode !== "executeIntent" || !initialIntent || intentHydrated) {
+    if (mode !== "executeIntent") {
+      intentBackRequestedRef.current = false;
+      previousExecuteIntentKeyRef.current = null;
+      return;
+    }
+
+    const previousKey = previousExecuteIntentKeyRef.current;
+    if (previousKey === executeIntentKey) {
+      return;
+    }
+
+    if (previousKey) {
+      executedIntentKeysRef.current.delete(previousKey);
+    }
+
+    previousExecuteIntentKeyRef.current = executeIntentKey;
+    intentBackRequestedRef.current = false;
+    setIntentHydrated(false);
+    setIntentStarted(false);
+    setIntentExecutionState("idle");
+  }, [mode, executeIntentKey]);
+
+  useEffect(() => {
+    if (
+      mode !== "executeIntent" ||
+      !initialIntent ||
+      intentHydrated ||
+      intentBackRequestedRef.current
+    ) {
       return;
     }
 
@@ -1119,6 +1088,7 @@ export function BridgeCard({
     );
     setIntentHydrated(true);
     setIntentStarted(false);
+    setIntentExecutionState("idle");
   }, [mode, initialIntent, intentHydrated, parseAmountToState]);
 
   useEffect(() => {
@@ -1126,7 +1096,11 @@ export function BridgeCard({
       return;
     }
 
-    if (!intentHydrated || intentStarted) {
+    if (intentBackRequestedRef.current) {
+      return;
+    }
+
+    if (!intentHydrated || intentExecutionState !== "idle") {
       return;
     }
 
@@ -1157,13 +1131,17 @@ export function BridgeCard({
 
     executedIntentKeysRef.current.add(executeIntentKey);
     setIntentStarted(true);
+    setIntentExecutionState("attempting");
 
     void (async () => {
       try {
         const didStart = await handleSend(speed);
         setIntentStarted(didStart);
-      } finally {
-        executedIntentKeysRef.current.delete(executeIntentKey);
+        setIntentExecutionState(didStart ? "started" : "not-started");
+      } catch (error) {
+        console.error("Execute intent failed:", error);
+        setIntentStarted(false);
+        setIntentExecutionState("failed");
       }
     })();
   }, [
@@ -1171,7 +1149,7 @@ export function BridgeCard({
     initialIntent,
     executeIntentKey,
     intentHydrated,
-    intentStarted,
+    intentExecutionState,
     sourceChainId,
     targetChainId,
     amount?.str,
@@ -1183,51 +1161,29 @@ export function BridgeCard({
   const showBalanceLoader = isUsdcLoading && !!address && !!chain;
   const hasAmountInput = !!amount?.str;
 
-  // Helper to get estimate labels for a given speed
-  const getEstimateLabels = useCallback(
+  const resolveEstimateLabels = useCallback(
     (
       speed: TransferSpeedValue,
       estimate: BridgeEstimate | null | undefined,
       isEstimating: boolean
     ) => {
-      const feeTotal = getTotalProtocolFee(estimate);
-      // Estimates no longer require wallet connection
-      const blockedEstimateLabel = !amountForEstimate.isValid
-        ? "Complete the form"
-        : !chainSelectionValid
-        ? "Select chains"
-        : null;
-
-      const feeLabel = !hasAmountInput
-        ? "—"
-        : blockedEstimateLabel
-        ? blockedEstimateLabel
-        : isEstimating
-        ? "Fetching..."
-        : estimate
-        ? `${feeTotal.toFixed(6)} USDC`
-        : "—";
-
-      const receiveLabel = !hasAmountInput
-        ? "—"
-        : blockedEstimateLabel
-        ? blockedEstimateLabel
-        : estimate
-        ? getYouWillReceive(feeTotal)
-        : "—";
-
-      const confirmations = activeSourceChainId ? getCctpConfirmationsUniversal(activeSourceChainId) : null;
-      const blocks = speed === TransferSpeed.FAST ? confirmations?.fast : confirmations?.standard;
-      const confirmationLabel = blocks ? `${blocks} ${blocks === 1 ? "Block" : "Blocks"}` : "—";
-
-      return { feeLabel, receiveLabel, confirmationLabel, speedLabel: getTransferSpeedLabel(speed) };
+      return buildEstimateLabels({
+        speed,
+        estimate,
+        isEstimating,
+        amountIsValid: amountForEstimate.isValid,
+        chainSelectionValid,
+        hasAmountInput,
+        amount,
+        activeSourceChainId,
+        transferSpeedLabel: getTransferSpeedLabel(speed),
+      });
     },
     [
-      getTotalProtocolFee,
       amountForEstimate.isValid,
       chainSelectionValid,
       hasAmountInput,
-      getYouWillReceive,
+      amount,
       getTransferSpeedLabel,
       activeSourceChainId,
     ]
@@ -1235,8 +1191,8 @@ export function BridgeCard({
 
   // Render the bridge comparison table (desktop) and cards (mobile)
   const renderBridgeComparison = () => {
-    const fastLabels = getEstimateLabels(TransferSpeed.FAST, fastEstimate, isFastEstimating);
-    const standardLabels = getEstimateLabels(TransferSpeed.SLOW, standardEstimate, isStandardEstimating);
+    const fastLabels = resolveEstimateLabels(TransferSpeed.FAST, fastEstimate, isFastEstimating);
+    const standardLabels = resolveEstimateLabels(TransferSpeed.SLOW, standardEstimate, isStandardEstimating);
 
     const isFastSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.FAST;
     const isStandardSubmitting = (isLoading || isBridgeLoading) && activeTransferSpeed === TransferSpeed.SLOW;
@@ -1274,97 +1230,13 @@ export function BridgeCard({
       );
     };
 
-    const renderMobileCard = (speed: TransferSpeedValue, labels: typeof fastLabels, isPrimary: boolean) => (
-      <div className={`rounded-lg p-3 ${isPrimary ? "bg-slate-900/30" : "bg-slate-800/20"}`}>
-        <h3 className="text-white text-base font-semibold mb-3">
-          {speed === TransferSpeed.FAST ? "Fast Bridge" : "Standard Bridge"}
-        </h3>
-        <div className="space-y-2 text-sm">
-          <div className="flex justify-between">
-            <span className="text-slate-400">Estimate speed</span>
-            <span className="text-white">{labels.speedLabel}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Confirmation</span>
-            <span className="text-white">{labels.confirmationLabel}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">Fee amount</span>
-            <span className="text-white">{labels.feeLabel}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-slate-400">You will receive</span>
-            <span className="text-white">{labels.receiveLabel}</span>
-          </div>
-        </div>
-        <div className="mt-3">{renderButton(speed, isPrimary)}</div>
-      </div>
-    );
-
     return (
-      <div>
-        {/* Desktop: Table view */}
-        <div className="hidden md:block overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-800">
-                <th className="text-left py-1 pr-3 text-slate-400 font-normal text-sm"></th>
-                {fastTransferSupported && (
-                  <th className="text-center py-1 px-3">
-                    <span className="text-white text-sm font-semibold">Fast Bridge</span>
-                  </th>
-                )}
-                <th className="text-center py-1 px-3">
-                  <span className="text-white text-sm font-semibold">Standard Bridge</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-slate-800">
-                <td className="py-1 pr-3 text-slate-400 text-sm">Estimate speed</td>
-                {fastTransferSupported && (
-                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.speedLabel}</td>
-                )}
-                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.speedLabel}</td>
-              </tr>
-              <tr className="border-b border-slate-800">
-                <td className="py-1 pr-3 text-slate-400 text-sm">Confirmation</td>
-                {fastTransferSupported && (
-                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.confirmationLabel}</td>
-                )}
-                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.confirmationLabel}</td>
-              </tr>
-              <tr className="border-b border-slate-800">
-                <td className="py-1 pr-3 text-slate-400 text-sm">Fee amount</td>
-                {fastTransferSupported && (
-                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.feeLabel}</td>
-                )}
-                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.feeLabel}</td>
-              </tr>
-              <tr className="border-b border-slate-800">
-                <td className="py-1 pr-3 text-slate-400 text-sm">You will receive</td>
-                {fastTransferSupported && (
-                  <td className="py-1 px-3 text-center text-white text-sm">{fastLabels.receiveLabel}</td>
-                )}
-                <td className="py-1 px-3 text-center text-white text-sm">{standardLabels.receiveLabel}</td>
-              </tr>
-              <tr>
-                <td className="pt-2 pr-3"></td>
-                {fastTransferSupported && (
-                  <td className="pt-2 px-3">{renderButton(TransferSpeed.FAST, true)}</td>
-                )}
-                <td className="pt-2 px-3">{renderButton(TransferSpeed.SLOW, !fastTransferSupported)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        {/* Mobile: Stacked cards */}
-        <div className="md:hidden space-y-4">
-          {fastTransferSupported && renderMobileCard(TransferSpeed.FAST, fastLabels, true)}
-          {renderMobileCard(TransferSpeed.SLOW, standardLabels, !fastTransferSupported)}
-        </div>
-      </div>
+      <BridgeComparison
+        fastTransferSupported={fastTransferSupported}
+        fastLabels={fastLabels}
+        standardLabels={standardLabels}
+        renderButton={renderButton}
+      />
     );
   };
 
@@ -1541,63 +1413,28 @@ export function BridgeCard({
         />
       );
     } else if (mode === "executeIntent") {
-      return (
-        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center gap-2">
-              <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-              <h2 className="text-lg font-semibold">Submitting Burn Transaction</h2>
-            </div>
-            <p className="text-sm text-slate-400">
-              Approval and burn are in progress. You will be redirected to a shareable bridge URL once the burn hash is available.
-            </p>
-            <div>
-              <LoadingButton
-                variant="outline"
-                className="border-slate-600 text-slate-300 hover:bg-slate-700 bg-transparent"
-                onClick={handleBackToNew}
-                isLoading={false}
-              >
-                Cancel
-              </LoadingButton>
-            </div>
-          </CardContent>
-        </Card>
-      );
+      return <IntentStatusCard state="submitting-burn" onBack={handleBackToNew} />;
     }
   }
 
   if (mode === "executeIntent" && !bridgeTransactionHash && !loadedTransactionData) {
-    const isSubmitting = isLoading || isBridgeLoading || intentStarted;
+    const intentDidNotStart =
+      intentExecutionState === "not-started" ||
+      intentExecutionState === "failed";
+    const isSubmitting =
+      !intentDidNotStart && (isLoading || isBridgeLoading || intentStarted);
 
     return (
-      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 space-y-4">
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-            <h2 className="text-lg font-semibold">
-              {isSubmitting
-                ? "Preparing Bridge Transaction"
-                : "Waiting for Bridge Request"}
-            </h2>
-          </div>
-          <p className="text-sm text-slate-400">
-            {isSubmitting
-              ? "Waiting for wallet confirmations before submitting burn transaction."
-              : "Bridge request data is being initialized."}
-          </p>
-          <div>
-            <LoadingButton
-              variant="outline"
-              className="border-slate-600 text-slate-300 hover:bg-slate-700 bg-transparent"
-              onClick={handleBackToNew}
-              isLoading={false}
-            >
-              Cancel
-            </LoadingButton>
-          </div>
-        </CardContent>
-      </Card>
+      <IntentStatusCard
+        state={
+          intentDidNotStart
+            ? "not-started"
+            : isSubmitting
+            ? "preparing"
+            : "waiting"
+        }
+        onBack={handleBackToNew}
+      />
     );
   }
 

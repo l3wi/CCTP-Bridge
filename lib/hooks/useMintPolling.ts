@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { ChainId, isSolanaChain } from "@/lib/types";
-import { checkMintReadiness } from "@/lib/simulation";
+import { checkMintReadiness, checkSolanaMintStatus } from "@/lib/simulation";
 import { fetchAttestationUniversal, requestReattestation } from "@/lib/iris";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { useToast } from "@/components/ui/use-toast";
@@ -29,6 +29,8 @@ export interface MintPollingState {
   messageExpired?: boolean;
   /** The nonce for the message (needed for re-attestation) */
   nonce?: string;
+  /** Decoded CCTP v2 expiration block from Iris. "0" means non-expiring. */
+  expirationBlock?: string;
   /** True when re-attestation polling exceeded the max wait window */
   reattestTimedOut?: boolean;
 }
@@ -78,6 +80,7 @@ export function useMintPolling({
     delayReason: undefined,
     messageExpired: false,
     nonce: undefined,
+    expirationBlock: undefined,
     reattestTimedOut: false,
   });
 
@@ -329,6 +332,51 @@ export function useMintPolling({
         if (!isMountedRef.current) return;
 
         if (result?.status === "complete" && result.message && result.attestation) {
+          let attestationIsFresh = result.expirationBlock === "0";
+          let freshnessError: string | undefined;
+
+          if (!attestationIsFresh) {
+            if (!destinationChainId) {
+              freshnessError =
+                "Circle returned an expiring attestation before the destination was known. Waiting for a fresh re-attestation.";
+            } else if (isSolanaChain(destinationChainId)) {
+              const readiness = await checkSolanaMintStatus(destinationChainId, {
+                nonce: result.nonce,
+                message: result.message,
+                attestation: result.attestation,
+                mintRecipient: result.mintRecipient,
+              });
+              attestationIsFresh = readiness.canMint && !readiness.messageExpired;
+              freshnessError = readiness.messageExpired
+                ? "Circle returned an expired attestation. Waiting for a fresh re-attestation."
+                : readiness.error;
+            } else {
+              const readiness = await checkMintReadiness(
+                sourceChainId,
+                destinationChainId,
+                burnTxHash,
+                false
+              );
+              attestationIsFresh = readiness.canMint && !readiness.messageExpired;
+              freshnessError = readiness.messageExpired
+                ? "Circle returned an expired attestation. Waiting for a fresh re-attestation."
+                : readiness.error;
+            }
+          }
+
+          if (!isMountedRef.current) return;
+
+          if (!attestationIsFresh) {
+            setMintSimulation((prev) => ({
+              ...prev,
+              error:
+                freshnessError ||
+                "Circle returned an expiring attestation. Waiting for a fresh re-attestation.",
+              expirationBlock: result.expirationBlock,
+            }));
+            return;
+          }
+
           // Fresh attestation is ready — reset expired state and re-enable claim
           setIsAwaitingReattestation(false);
           reattestTriggeredRef.current = false;
@@ -340,6 +388,7 @@ export function useMintPolling({
             error: undefined,
             canMint: true,
             attestationReady: true,
+            expirationBlock: result.expirationBlock,
             reattestTimedOut: false,
           }));
 
@@ -370,6 +419,7 @@ export function useMintPolling({
           setMintSimulation((prev) => ({
             ...prev,
             error: "Circle returned an incomplete attestation payload. Please retry shortly.",
+            expirationBlock: result?.expirationBlock,
           }));
         }
       } catch (error) {
@@ -391,6 +441,7 @@ export function useMintPolling({
     isAwaitingReattestation,
     burnTxHash,
     sourceChainId,
+    destinationChainId,
     updateTransaction,
     toast,
     isDocumentVisible,
@@ -439,7 +490,8 @@ export function useMintPolling({
           });
         }
 
-        setMintSimulation({
+        setMintSimulation((prev) => ({
+          ...prev,
           canMint: result.canMint,
           alreadyMinted: result.alreadyMinted,
           checking: false,
@@ -450,7 +502,7 @@ export function useMintPolling({
           messageExpired: result.messageExpired,
           nonce: result.nonce,
           reattestTimedOut: false,
-        });
+        }));
 
         if (result.nonce && burnTxHash) {
           updateTransaction(burnTxHash, {
@@ -569,8 +621,83 @@ export function useMintPolling({
         }
 
         if (result?.status === "complete" && result.message && result.attestation) {
+          const readiness = destinationChainId && isSolanaChain(destinationChainId)
+            ? await checkSolanaMintStatus(destinationChainId, {
+                nonce: result.nonce,
+                message: result.message,
+                attestation: result.attestation,
+                mintRecipient: result.mintRecipient,
+              })
+            : null;
+
+          if (!isMountedRef.current) return;
+
           // Read latest steps from ref to avoid stale closure
           const currentSteps = displayStepsRef.current ?? [];
+
+          if (readiness?.alreadyMinted) {
+            const updatedSteps = currentSteps.map((step) => {
+              if (/attestation|attest/i.test(step.name)) {
+                return { ...step, state: "success" as const };
+              }
+              if (/mint|claim|receive/i.test(step.name)) {
+                return {
+                  ...step,
+                  state: "success" as const,
+                  errorMessage: "success - check wallet",
+                };
+              }
+              return step;
+            });
+
+            updateTransaction(burnTxHash, {
+              status: "claimed",
+              bridgeState: "success",
+              completedAt: new Date(),
+              steps: updatedSteps,
+              nonce: result.nonce,
+            });
+            onStepsUpdateRef.current?.(updatedSteps);
+            setMintSimulation((prev) => ({
+              ...prev,
+              canMint: false,
+              alreadyMinted: true,
+              checking: false,
+              attestationReady: true,
+              lastChecked: new Date(),
+              error: readiness.error,
+              messageExpired: false,
+              nonce: result.nonce,
+              expirationBlock: result.expirationBlock,
+            }));
+            if (solanaPollingRef.current) {
+              clearInterval(solanaPollingRef.current);
+              solanaPollingRef.current = null;
+            }
+            return;
+          }
+
+          if (readiness && (!readiness.canMint || readiness.messageExpired)) {
+            updateTransaction(burnTxHash, {
+              nonce: result.nonce,
+            });
+            setMintSimulation((prev) => ({
+              ...prev,
+              canMint: false,
+              alreadyMinted: false,
+              checking: false,
+              attestationReady: false,
+              lastChecked: new Date(),
+              error: readiness.messageExpired
+                ? "Circle returned an expired attestation. Waiting for a fresh re-attestation."
+                : readiness.error,
+              messageExpired: Boolean(readiness.messageExpired),
+              nonce: result.nonce,
+              expirationBlock: result.expirationBlock,
+              reattestTimedOut: false,
+            }));
+            return;
+          }
 
           // Update attestation step to success
           const updatedSteps = currentSteps.map((step) => {
@@ -599,7 +726,16 @@ export function useMintPolling({
           // Update local state
           setMintSimulation((prev) => ({
             ...prev,
+            canMint: true,
+            alreadyMinted: false,
+            checking: false,
             attestationReady: true,
+            lastChecked: new Date(),
+            error: undefined,
+            messageExpired: false,
+            nonce: result.nonce,
+            expirationBlock: result.expirationBlock,
+            reattestTimedOut: false,
           }));
 
           // Stop polling
@@ -611,6 +747,7 @@ export function useMintPolling({
           setMintSimulation((prev) => ({
             ...prev,
             error: "Circle attestation payload is incomplete. Please retry shortly.",
+            expirationBlock: result?.expirationBlock,
           }));
         }
       } catch (error) {
@@ -653,6 +790,7 @@ export function useMintPolling({
       messageExpired: true,
       nonce,
       canMint: false,
+      expirationBlock: undefined,
       reattestTimedOut: false,
     }));
     if (burnTxHash) {

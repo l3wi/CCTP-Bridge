@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import AnimatedBackground from "@/components/animated-bg";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { BridgeErrorFallback } from "@/components/bridge/BridgeErrorFallback";
+import { ChangelogModal } from "@/components/changelog-modal";
 import { HistoryModal } from "@/components/history-modal";
 import { SolanaWalletConnect } from "@/components/solana-wallet-connect";
 import { WalletConnect } from "@/components/wallet-connect";
@@ -16,6 +17,7 @@ export function BridgePageShell({ children }: BridgePageShellProps) {
   return (
     <AnimatedBackground>
       <div className="absolute top-4 right-4 flex items-center gap-2">
+        <ChangelogModal />
         <HistoryModal />
         <SolanaWalletConnect />
         <WalletConnect />

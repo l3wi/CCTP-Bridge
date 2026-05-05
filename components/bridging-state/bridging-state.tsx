@@ -10,6 +10,10 @@ import { useAccount, useSwitchChain } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { ChainId, isSolanaChain, asTxHash, asUniversalTxHash } from "@/lib/types";
+import {
+  updateStepsBurnComplete,
+  updateStepsBurnFailed,
+} from "@/lib/cctp/steps";
 
 import { useBridgeSteps } from "@/lib/hooks/useBridgeSteps";
 import { useMintPolling } from "@/lib/hooks/useMintPolling";
@@ -141,10 +145,7 @@ export function BridgingState({
   const burnTxHash = useMemo(() => {
     if (!displayResult?.steps) return null;
     const burnStep = displayResult.steps.find((s) => /burn/i.test(s.name));
-    const burnHash = asUniversalTxHash(burnStep?.txHash);
-    if (burnHash) return burnHash;
-    const firstWithHash = displayResult.steps.find((s) => s.txHash);
-    return asUniversalTxHash(firstWithHash?.txHash) ?? null;
+    return asUniversalTxHash(burnStep?.txHash) ?? null;
   }, [displayResult?.steps]);
 
   // Use extracted hooks
@@ -161,11 +162,25 @@ export function BridgingState({
   // Handle burn failure detected by polling
   const handleBurnFailed = useCallback(
     (error: string) => {
+      const failedSteps = displayResult
+        ? updateStepsBurnFailed(
+            displayResult.steps,
+            error,
+            burnTxHash ?? undefined
+          )
+        : undefined;
+      const failedResult: BridgeResultWithMeta | undefined =
+        displayResult && failedSteps
+          ? { ...displayResult, steps: failedSteps, state: "error" as const }
+          : undefined;
+
       // Update local steps to mark burn as failed
       setLocalBridgeResult((prev) => {
-        if (!prev) return prev;
-        const updatedSteps = prev.steps.map((step) =>
-          /burn/i.test(step.name) ? { ...step, state: "error" as const, errorMessage: error } : step
+        if (!prev) return failedResult;
+        const updatedSteps = updateStepsBurnFailed(
+          prev.steps,
+          error,
+          burnTxHash ?? undefined
         );
         // BridgeResult uses "error" state, not "failed"
         return { ...prev, steps: updatedSteps, state: "error" as const };
@@ -173,19 +188,43 @@ export function BridgingState({
 
       // Persist to store (LocalTransaction uses "failed" status)
       if (burnTxHash) {
-        const txHash = asTxHash(burnTxHash);
-        if (txHash) {
-          updateTransaction(txHash, { status: "failed", bridgeState: "error" });
-        }
+        updateTransaction(burnTxHash, {
+          status: "failed",
+          bridgeState: "error",
+          steps: failedResult?.steps,
+          bridgeResult: failedResult,
+        });
       }
     },
-    [burnTxHash, updateTransaction]
+    [burnTxHash, displayResult, updateTransaction]
   );
 
-  // Handle burn confirmation (no-op, just for tracking)
+  // Handle burn confirmation from the source chain.
   const handleBurnConfirmed = useCallback(() => {
-    // Burn is confirmed - normal flow continues with mint polling
-  }, []);
+    const confirmedSteps =
+      displayResult && burnTxHash
+        ? updateStepsBurnComplete(displayResult.steps, burnTxHash)
+        : undefined;
+    const confirmedResult: BridgeResultWithMeta | undefined =
+      displayResult && confirmedSteps
+        ? { ...displayResult, steps: confirmedSteps, state: "pending" as const }
+        : undefined;
+
+    setLocalBridgeResult((prev) => {
+      if (!prev || !burnTxHash) return confirmedResult ?? prev;
+      const updatedSteps = updateStepsBurnComplete(prev.steps, burnTxHash);
+      return { ...prev, steps: updatedSteps, state: "pending" as const };
+    });
+
+    if (burnTxHash) {
+      updateTransaction(burnTxHash, {
+        status: "pending",
+        bridgeState: "pending",
+        steps: confirmedResult?.steps,
+        bridgeResult: confirmedResult,
+      });
+    }
+  }, [burnTxHash, displayResult, updateTransaction]);
 
   // Burn transaction polling - detects burn failures
   const { confirmed: burnConfirmed, failed: burnPollingFailed } = useBurnPolling({
@@ -193,8 +232,8 @@ export function BridgingState({
     sourceChainId,
     onBurnFailed: handleBurnFailed,
     onBurnConfirmed: handleBurnConfirmed,
-    // Disable polling if burn already completed or failed
-    disabled: hasBurnCompleted || hasBurnFailed,
+    // Keep polling until this hook observes source-chain confirmation.
+    disabled: hasBurnFailed,
   });
 
   const {

@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ArrowLeft, Loader2 } from "lucide-react";
 import { useAccount } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import type { BridgeResult } from "@circle-fin/bridge-kit";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,12 +23,17 @@ import {
 } from "@/lib/bridgeKit";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import {
+  getCctpDomainIdUniversal,
   getChainIdFromDomainUniversal,
   getChainInfoFromDomainAllChains,
   isNonceUsed,
 } from "@/lib/contracts";
-import { fetchAttestationUniversal, type AttestationData } from "@/lib/iris";
-import { getSolanaUsdcMint } from "@/lib/cctp/shared";
+import {
+  fetchAttestationByNonceUniversal,
+  fetchAttestationUniversal,
+  type AttestationData,
+} from "@/lib/iris";
+import { verifyRecoveredSolanaRecipient } from "@/lib/cctp/solana/recipient";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import {
   type ChainId,
@@ -80,6 +84,52 @@ const getExistingHashKey = (transaction: LocalTransaction): string => {
   return transaction.hash.toLowerCase();
 };
 
+const getChainDisplayName = (
+  chainId: ChainId,
+  supportedChains: UniversalChainDefinition[]
+): string => {
+  const chain = supportedChains.find((candidate) => {
+    if (candidate.type === "evm") {
+      return (candidate as { chainId: number }).chainId === chainId;
+    }
+
+    if (candidate.type === "solana") {
+      return (candidate as { chain: string }).chain === chainId;
+    }
+
+    return false;
+  });
+
+  return chain?.name || String(chainId);
+};
+
+const getAttestationNotFoundMessage = (
+  sourceChainId: ChainId,
+  supportedChains: UniversalChainDefinition[]
+): string => {
+  const chainName = getChainDisplayName(sourceChainId, supportedChains);
+  const sourceDomain = getCctpDomainIdUniversal(sourceChainId, BRIDGEKIT_ENV);
+  const networkName = BRIDGEKIT_ENV === "mainnet" ? "mainnet" : "testnet";
+  const domainLabel = sourceDomain === null ? "" : `, CCTP domain ${sourceDomain}`;
+
+  return (
+    `No Circle CCTP v2 message was found for ${chainName} ${networkName}${domainLabel}. ` +
+    "Choose the source chain where the burn happened and paste the source burn transaction hash, not the destination wallet or claim transaction."
+  );
+};
+
+const getNonceSubmittedAsHashMessage = (
+  sourceChainId: ChainId,
+  supportedChains: UniversalChainDefinition[]
+): string => {
+  const chainName = getChainDisplayName(sourceChainId, supportedChains);
+
+  return (
+    `Circle found this value as a CCTP nonce, not as a ${chainName} source burn transaction hash. ` +
+    "Paste the source burn transaction hash from the source-chain explorer."
+  );
+};
+
 export function AddPendingTransactionCard({
   initialSourceChainId = null,
   initialTxHash = "",
@@ -96,6 +146,8 @@ export function AddPendingTransactionCard({
   const [walletMismatchWarning, setWalletMismatchWarning] = useState<string | null>(
     null
   );
+  const [showSolanaRecipientInput, setShowSolanaRecipientInput] = useState(false);
+  const [solanaRecipientAddress, setSolanaRecipientAddress] = useState("");
   const [cachedAttestation, setCachedAttestation] = useState<{
     sourceChainId: ChainId;
     burnTxHash: string;
@@ -110,12 +162,16 @@ export function AddPendingTransactionCard({
     setSelectedChainId(initialSourceChainId);
     setCachedAttestation(null);
     setWalletMismatchWarning(null);
+    setShowSolanaRecipientInput(false);
+    setSolanaRecipientAddress("");
   }, [initialSourceChainId]);
 
   useEffect(() => {
     setTxHash(initialTxHash);
     setCachedAttestation(null);
     setWalletMismatchWarning(null);
+    setShowSolanaRecipientInput(false);
+    setSolanaRecipientAddress("");
   }, [initialTxHash]);
 
   useEffect(() => {
@@ -131,7 +187,7 @@ export function AddPendingTransactionCard({
   const isSolanaSelected =
     selectedChainId !== null && isSolanaChain(selectedChainId);
 
-  const handleSubmit = async (forceSkipWalletCheck = false) => {
+  const handleSubmit = async () => {
     if (isLoading) {
       return;
     }
@@ -173,14 +229,23 @@ export function AddPendingTransactionCard({
         cachedAttestation?.sourceChainId === selectedChainId &&
         cachedAttestation?.burnTxHash === normalizedHash;
 
-      const attestationData =
-        forceSkipWalletCheck && cachedMatches
-          ? cachedAttestation.attestation
-          : await fetchAttestationUniversal(selectedChainId, normalizedHash);
+      const attestationData = cachedMatches && cachedAttestation
+        ? cachedAttestation.attestation
+        : await fetchAttestationUniversal(selectedChainId, normalizedHash);
 
       if (!attestationData) {
+        const nonceLookup = isSolana
+          ? null
+          : await fetchAttestationByNonceUniversal(selectedChainId, normalizedHash);
+        if (nonceLookup?.attestation) {
+          setCachedAttestation(null);
+          setError(getNonceSubmittedAsHashMessage(selectedChainId, supportedChains));
+          setIsLoading(false);
+          return;
+        }
+
         setCachedAttestation(null);
-        setError("Transaction not found. Make sure the chain and hash are correct.");
+        setError(getAttestationNotFoundMessage(selectedChainId, supportedChains));
         setIsLoading(false);
         return;
       }
@@ -298,39 +363,22 @@ export function AddPendingTransactionCard({
 
       if (isSolanaChain(targetChainId)) {
         const mintRecipientAta = attestationData.mintRecipient;
+        const candidateRecipientAddress =
+          solanaRecipientAddress.trim() || solanaPublicKey?.toBase58() || "";
+        const recipientVerification = verifyRecoveredSolanaRecipient({
+          candidateRecipientAddress,
+          mintRecipientAta,
+          destinationChainId: targetChainId as SolanaChainId,
+        });
 
-        if (!forceSkipWalletCheck && solanaPublicKey && mintRecipientAta) {
-          try {
-            const usdcMint = getSolanaUsdcMint(targetChainId as SolanaChainId);
-            const derivedAta = getAssociatedTokenAddressSync(
-              usdcMint,
-              solanaPublicKey
-            );
-            const derivedAtaStr = derivedAta.toBase58();
-
-            if (derivedAtaStr === mintRecipientAta) {
-              resolvedTargetAddress = solanaPublicKey.toBase58();
-            } else {
-              resolvedTargetAddress = mintRecipientAta;
-              setWalletMismatchWarning(
-                "The connected Solana wallet doesn't match this transaction's recipient. Connect the correct destination wallet to claim these funds."
-              );
-              setIsLoading(false);
-              return;
-            }
-          } catch {
-            resolvedTargetAddress = mintRecipientAta;
-          }
-        } else if (!forceSkipWalletCheck && !solanaPublicKey && mintRecipientAta) {
-          resolvedTargetAddress = mintRecipientAta;
-          setWalletMismatchWarning(
-            "Connect your Solana wallet to verify you are the recipient of this transaction and to claim your funds."
-          );
+        if (!recipientVerification.ok) {
+          setShowSolanaRecipientInput(true);
+          setWalletMismatchWarning(recipientVerification.warning);
           setIsLoading(false);
           return;
-        } else {
-          resolvedTargetAddress = attestationData.mintRecipient;
         }
+
+        resolvedTargetAddress = recipientVerification.recipientAddress;
       } else {
         const rawRecipient = attestationData.mintRecipient;
         if (rawRecipient && rawRecipient.startsWith("0x")) {
@@ -376,11 +424,12 @@ export function AddPendingTransactionCard({
       addTransaction(transaction);
       setCachedAttestation(null);
       setWalletMismatchWarning(null);
+      setShowSolanaRecipientInput(false);
+      setSolanaRecipientAddress("");
 
-      const routeId = transaction.nonce?.trim() || normalizedHash;
       onTransactionAdded?.({
         sourceChainId: selectedChainId,
-        routeId,
+        routeId: normalizedHash,
         hash: transaction.hash,
       });
     } catch (fetchError) {
@@ -436,6 +485,8 @@ export function AddPendingTransactionCard({
               onValueChange={(value) => {
                 setSelectedChainId(parseChainSelectId(value));
                 setWalletMismatchWarning(null);
+                setShowSolanaRecipientInput(false);
+                setSolanaRecipientAddress("");
                 setCachedAttestation(null);
                 setError(null);
               }}
@@ -514,6 +565,8 @@ export function AddPendingTransactionCard({
               onChange={(event) => {
                 setTxHash(event.target.value);
                 setWalletMismatchWarning(null);
+                setShowSolanaRecipientInput(false);
+                setSolanaRecipientAddress("");
                 setCachedAttestation(null);
                 setError(null);
               }}
@@ -526,6 +579,32 @@ export function AddPendingTransactionCard({
             </p>
           </div>
 
+          {showSolanaRecipientInput && (
+            <div className="space-y-2">
+              <label
+                htmlFor="pending-solana-recipient"
+                className="text-sm font-medium text-slate-300"
+              >
+                Recipient Solana Wallet
+              </label>
+              <input
+                id="pending-solana-recipient"
+                type="text"
+                placeholder="Recipient wallet owner, not USDC token account"
+                value={solanaRecipientAddress}
+                onChange={(event) => {
+                  setSolanaRecipientAddress(event.target.value);
+                  setError(null);
+                }}
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+              />
+              <p className="text-xs text-slate-400">
+                Helpers may pay Solana fees and ATA rent, but USDC is minted only to
+                the recipient account encoded by Circle.
+              </p>
+            </div>
+          )}
+
           {error && (
             <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
               <p className="text-sm text-red-400">{error}</p>
@@ -533,24 +612,11 @@ export function AddPendingTransactionCard({
           )}
 
           {walletMismatchWarning && (
-            <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg space-y-2">
+            <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="h-4 w-4 text-yellow-400 mt-0.5 flex-shrink-0" />
                 <p className="text-sm text-yellow-400">{walletMismatchWarning}</p>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="w-full bg-yellow-500/10 border-yellow-500/30 text-yellow-400 hover:bg-yellow-500/20"
-                disabled={isLoading}
-                onClick={() => {
-                  setWalletMismatchWarning(null);
-                  void handleSubmit(true);
-                }}
-              >
-                Add Anyway (without wallet verification)
-              </Button>
             </div>
           )}
 
