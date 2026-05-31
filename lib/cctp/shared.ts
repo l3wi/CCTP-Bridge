@@ -9,7 +9,7 @@ import {
   getAllSupportedChains,
   type BridgeEnvironment,
   BRIDGEKIT_ENV,
-} from "../bridgeKit";
+} from "../bridgeConfig";
 import type {
   ChainId,
   ChainType,

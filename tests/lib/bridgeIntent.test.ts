@@ -7,7 +7,7 @@ import {
   serializeBridgeIntent,
   type BridgeIntent,
 } from "@/lib/bridgeIntent";
-import { getAllSupportedChains, getSupportedEvmChains } from "@/lib/bridgeKit";
+import { getAllSupportedChains, getSupportedEvmChains } from "@/lib/bridgeConfig";
 import type { SolanaChainId } from "@/lib/types";
 
 const getEvmChainPair = (): [number, number] => {

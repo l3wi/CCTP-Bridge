@@ -9,7 +9,7 @@ import { useWallet } from "@solana/wallet-adapter-react";
 import { formatUnits } from "viem";
 import { type BridgeResult } from "@circle-fin/bridge-kit";
 import { useToast } from "@/components/ui/use-toast";
-import { getProviderFromWalletClient, resolveBridgeChainUniversal } from "@/lib/bridgeKit";
+import { getProviderFromWalletClient, resolveBridgeChainUniversal } from "@/lib/bridgeConfig";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import { useBurn, type BurnProgressCallbacks } from "@/lib/cctp/hooks/useBurn";
 import {
@@ -202,6 +202,17 @@ export const useCrossEcosystemBridge = () => {
           steps: initialSteps,
           bridgeResult: initialResult,
           amount: formattedAmount,
+          circleFastFee: burnResult.circleFastFee !== undefined
+            ? formatUnits(burnResult.circleFastFee, 6)
+            : undefined,
+          appFastFee: burnResult.appFastFee !== undefined
+            ? formatUnits(burnResult.appFastFee, 6)
+            : undefined,
+          appFeeBps: burnResult.appFeeBps,
+          appFeeRecipient: burnResult.appFeeRecipient,
+          fee: burnResult.circleFastFee !== undefined
+            ? formatUnits(burnResult.circleFastFee, 6)
+            : undefined,
           originChain: params.sourceChainId,
           targetChain: params.targetChainId,
           targetAddress: recipientAddress,

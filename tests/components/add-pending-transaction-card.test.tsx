@@ -42,7 +42,7 @@ vi.mock("@/lib/store/transactionStore", () => ({
   }),
 }));
 
-vi.mock("@/lib/bridgeKit", () => ({
+vi.mock("@/lib/bridgeConfig", () => ({
   BRIDGEKIT_ENV: "testnet",
   getAllSupportedChains: () => [
     { type: "evm", chainId: 11155111, name: "Ethereum Sepolia", cctp: { domain: 0 } },

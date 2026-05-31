@@ -8,8 +8,13 @@ import {
   getSupportedEvmChains,
   type BridgeEnvironment,
   BRIDGEKIT_ENV,
-} from "../../bridgeKit";
-import type { ChainId, EvmAddress, DepositForBurnParams } from "../types";
+} from "../../bridgeConfig";
+import type {
+  ChainId,
+  EvmAddress,
+  DepositForBurnParams,
+  BridgeWithPreapprovalParams,
+} from "../types";
 import {
   getCctpDomain,
   formatMintRecipientHex,
@@ -17,6 +22,7 @@ import {
   ZERO_BYTES32,
   IRIS_API_ENDPOINTS,
 } from "../shared";
+import { getFastTransferFeeQuote } from "../fastTransferFee";
 
 // =============================================================================
 // ABIs
@@ -65,6 +71,33 @@ export const TOKEN_MESSENGER_ABI = [
   },
 ] as const;
 
+/** Circle BridgeKit bridge ABI - bridgeWithPreapproval for atomic custom fees. */
+export const BRIDGE_WITH_PREAPPROVAL_ABI = [
+  {
+    type: "function",
+    name: "bridgeWithPreapproval",
+    inputs: [
+      {
+        name: "bridgeParams",
+        type: "tuple",
+        components: [
+          { name: "amount", type: "uint256" },
+          { name: "maxFee", type: "uint256" },
+          { name: "fee", type: "uint256" },
+          { name: "mintRecipient", type: "bytes32" },
+          { name: "destinationCaller", type: "bytes32" },
+          { name: "burnToken", type: "address" },
+          { name: "feeRecipient", type: "address" },
+          { name: "destinationDomain", type: "uint32" },
+          { name: "minFinalityThreshold", type: "uint32" },
+        ],
+      },
+    ],
+    outputs: [],
+    stateMutability: "nonpayable",
+  },
+] as const;
+
 // =============================================================================
 // Contract Address Resolution
 // =============================================================================
@@ -108,6 +141,19 @@ export function getUsdcAddress(
   }
 
   return chain.usdcAddress as EvmAddress;
+}
+
+/**
+ * Get Circle BridgeKit bridge contract address for a chain.
+ */
+export function getBridgeContractAddress(
+  chainId: number,
+  env: BridgeEnvironment = BRIDGEKIT_ENV
+): EvmAddress | undefined {
+  const chains = getSupportedEvmChains(env);
+  const chain = chains.find((c) => c.chainId === chainId);
+  const bridge = chain?.kitContracts?.bridge;
+  return bridge as EvmAddress | undefined;
 }
 
 // =============================================================================
@@ -176,6 +222,34 @@ export function buildDepositForBurnData(
   });
 
   return { to: tokenMessengerAddress, data };
+}
+
+/**
+ * Build Circle BridgeKit bridgeWithPreapproval transaction data for atomic EVM app fees.
+ */
+export function buildBridgeWithPreapprovalData(
+  bridgeContractAddress: EvmAddress,
+  params: BridgeWithPreapprovalParams
+): { to: EvmAddress; data: `0x${string}` } {
+  const data = encodeFunctionData({
+    abi: BRIDGE_WITH_PREAPPROVAL_ABI,
+    functionName: "bridgeWithPreapproval",
+    args: [
+      {
+        amount: params.amount,
+        maxFee: params.maxFee ?? 0n,
+        fee: params.fee,
+        mintRecipient: params.mintRecipient,
+        destinationCaller: params.destinationCaller ?? ZERO_BYTES32,
+        burnToken: params.burnToken,
+        feeRecipient: params.feeRecipient,
+        destinationDomain: params.destinationDomain,
+        minFinalityThreshold: params.minFinalityThreshold ?? FINALITY_THRESHOLDS.evm.fast,
+      },
+    ],
+  });
+
+  return { to: bridgeContractAddress, data };
 }
 
 // =============================================================================
@@ -294,6 +368,13 @@ export interface EvmBurnConfig {
 export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   tokenMessenger: EvmAddress;
   usdcAddress: EvmAddress;
+  approvalSpender: EvmAddress;
+  approvalAmount: bigint;
+  bridgeAmount: bigint;
+  bridgeContractAddress?: EvmAddress;
+  appFeeAmount: bigint;
+  appFeeBps?: number;
+  appFeeRecipient?: EvmAddress;
   sourceDomain: number;
   destinationDomain: number;
   mintRecipient: `0x${string}`;
@@ -319,13 +400,26 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   // Determine if testnet
   const isTestnet = env === "testnet";
 
+  const appFeeQuote = getFastTransferFeeQuote({
+    amount: config.amount,
+    transferSpeed: config.transferSpeed,
+    sourceChainId: config.sourceChainId,
+  });
+  const appFeeAmount = appFeeQuote.feeAmount;
+  const appFeeRecipient = appFeeQuote.recipient as EvmAddress | undefined;
+  const bridgeAmount = config.amount - appFeeAmount;
+
+  if (bridgeAmount <= 0n) {
+    throw new Error("Transfer amount too small for fast tx fee");
+  }
+
   // Calculate max fee (may throw on network error)
   let maxFee = 0n;
   try {
     maxFee = await calculateMaxFee(
       sourceDomain,
       destinationDomain,
-      config.amount,
+      bridgeAmount,
       config.transferSpeed,
       isTestnet
     );
@@ -340,9 +434,25 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
       ? FINALITY_THRESHOLDS.evm.fast
       : FINALITY_THRESHOLDS.evm.standard;
 
+  const bridgeContractAddress =
+    appFeeAmount > 0n ? getBridgeContractAddress(config.sourceChainId, env) : undefined;
+
+  if (appFeeAmount > 0n && !bridgeContractAddress) {
+    throw new Error(
+      `Fast tx fee is enabled, but chain ${config.sourceChainId} has no Circle bridge contract for atomic fee collection.`
+    );
+  }
+
   return {
     tokenMessenger,
     usdcAddress,
+    approvalSpender: bridgeContractAddress ?? tokenMessenger,
+    approvalAmount: config.amount,
+    bridgeAmount,
+    bridgeContractAddress,
+    appFeeAmount,
+    appFeeBps: appFeeAmount > 0n ? appFeeQuote.feeBps : undefined,
+    appFeeRecipient,
     sourceDomain,
     destinationDomain,
     mintRecipient,
@@ -350,4 +460,3 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
     minFinalityThreshold,
   };
 }
-

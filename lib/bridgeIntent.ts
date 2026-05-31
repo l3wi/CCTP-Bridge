@@ -1,5 +1,5 @@
 import { type ChainId } from "@/lib/types";
-import { BRIDGEKIT_ENV } from "@/lib/bridgeKit";
+import { BRIDGEKIT_ENV } from "@/lib/bridgeConfig";
 import { getChainIdFromDomainUniversal } from "@/lib/contracts";
 import { getSourceDomainForChain, parseRouteChainId } from "@/lib/bridgeRoute";
 import { validateAddressForChain } from "@/lib/validation";

@@ -89,7 +89,7 @@ isValidTxHash(value)       // Universal tx hash validation
 ## Key Files
 
 ### Bridge Infrastructure
-- `lib/bridgeKit.ts` — Compatibility facade backed by app-owned metadata + RPC config
+- `lib/bridgeConfig.ts` — Compatibility facade backed by app-owned metadata + RPC config
 - `lib/cctp/hooks/useBurn.ts` — Unified burn hook (EVM + Solana)
 - `lib/cctp/hooks/useMint.ts` — Unified mint hook (EVM + Solana)
 - `lib/hooks/useCrossEcosystemBridge.ts` — Orchestrates burn + persistence

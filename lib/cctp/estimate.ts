@@ -4,9 +4,10 @@
  */
 
 import { getCctpDomainSafe, IRIS_API_ENDPOINTS } from "./shared";
-import { getChainName, BRIDGEKIT_ENV } from "../bridgeKit";
+import { getChainName, BRIDGEKIT_ENV } from "../bridgeConfig";
 import { getFinalityEstimate } from "../cctpFinality";
 import { TransferSpeed as BridgeKitSpeed } from "@/lib/cctp/transferSpeed";
+import { getFastTransferFeeQuote } from "./fastTransferFee";
 import type {
   ChainId,
   TransferSpeed,
@@ -166,6 +167,7 @@ export async function estimateBridgeFee(
       fees: [],
       gasFees: [],
       receivedAmount: amount,
+      sourceAmount: amount,
       estimatedTime: timeEstimate?.averageTime ?? "~15 minutes",
       speed: "standard",
       sourceDomain,
@@ -192,6 +194,7 @@ export async function estimateBridgeFee(
         fees: [],
         gasFees: [],
         receivedAmount: amount,
+        sourceAmount: amount,
         estimatedTime: timeEstimate?.averageTime ?? "~15 minutes",
         speed: "standard",
         sourceDomain,
@@ -199,29 +202,52 @@ export async function estimateBridgeFee(
       };
     }
 
-    const scaledFeeInBps = parseMinimumFee(fastTier.minimumFee);
-    const baseFee = calculateFee(amountBigInt, scaledFeeInBps);
+    const appFeeQuote = getFastTransferFeeQuote({
+      amount: amountBigInt,
+      transferSpeed: "fast",
+      sourceChainId,
+    });
+    const bridgeAmount = amountBigInt - appFeeQuote.feeAmount;
 
-    // Validate fee doesn't exceed amount
-    if (baseFee >= amountBigInt) {
+    if (bridgeAmount <= 0n) {
       throw {
         code: "AMOUNT_TOO_SMALL",
         message: `Amount ${amount} USDC is too small for fast transfer fees`,
       } as EstimateError;
     }
 
-    const receivedAmount = amountBigInt - baseFee;
+    const scaledFeeInBps = parseMinimumFee(fastTier.minimumFee);
+    const baseFee = calculateFee(bridgeAmount, scaledFeeInBps);
+
+    // Validate fee doesn't exceed amount
+    if (baseFee >= bridgeAmount) {
+      throw {
+        code: "AMOUNT_TOO_SMALL",
+        message: `Amount ${amount} USDC is too small for fast transfer fees`,
+      } as EstimateError;
+    }
+
+    const receivedAmount = bridgeAmount - baseFee;
     const timeEstimate = getFinalityEstimate(chainName, BridgeKitSpeed.FAST);
 
     return {
       fees: [
         {
           amount: formatAmount(baseFee),
-          type: "protocol",
+          type: "provider",
         },
+        ...(appFeeQuote.feeAmount > 0n
+          ? [
+              {
+                amount: formatAmount(appFeeQuote.feeAmount),
+                type: "kit" as const,
+              },
+            ]
+          : []),
       ],
       gasFees: [],
       receivedAmount: formatAmount(receivedAmount),
+      sourceAmount: amount,
       estimatedTime: timeEstimate?.averageTime ?? "~20 seconds",
       speed: "fast",
       sourceDomain,
@@ -252,6 +278,26 @@ export function getTotalFee(
 ): number {
   if (!estimate?.fees) return 0;
   return estimate.fees.reduce((acc, fee) => acc + parseFloat(fee.amount), 0);
+}
+
+export function getDestinationDeductedFee(
+  estimate: BridgeEstimate | null | undefined
+): number {
+  if (!estimate?.fees) return 0;
+  return estimate.fees.reduce(
+    (acc, fee) => acc + (fee.type === "provider" && fee.amount ? parseFloat(fee.amount) : 0),
+    0
+  );
+}
+
+export function getAppFee(
+  estimate: BridgeEstimate | null | undefined
+): number {
+  if (!estimate?.fees) return 0;
+  return estimate.fees.reduce(
+    (acc, fee) => acc + (fee.type === "kit" && fee.amount ? parseFloat(fee.amount) : 0),
+    0
+  );
 }
 
 /**

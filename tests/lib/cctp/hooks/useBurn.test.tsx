@@ -30,6 +30,16 @@ const solanaWalletState = vi.hoisted(() => ({
   signTransaction: undefined as typeof signSolanaTransactionMock | undefined,
 }));
 
+const createMockSolanaBurnResult = () => {
+  const transaction = new Transaction();
+  transaction.partialSign = vi.fn();
+
+  return {
+    transaction,
+    messageAccount: Keypair.generate(),
+  };
+};
+
 vi.mock("wagmi", () => ({
   useAccount: () => ({
     address: "0x1111111111111111111111111111111111111111",
@@ -47,7 +57,7 @@ vi.mock("@/components/ui/use-toast", () => ({
   useToast: () => ({ toast: vi.fn() }),
 }));
 
-vi.mock("@/lib/bridgeKit", () => ({
+vi.mock("@/lib/bridgeConfig", () => ({
   BRIDGEKIT_ENV: "testnet",
   getExplorerTxUrlUniversal: () => null,
   getAllSupportedChains: () => [
@@ -72,20 +82,28 @@ vi.mock("@/lib/cctp/evm/burn", () => ({
     to: "0x2222222222222222222222222222222222222222",
     data: "0xapproval",
   }),
-  buildDepositForBurnData: () => ({
-    to: "0x3333333333333333333333333333333333333333",
-    data: "0xburn",
-  }),
-  calculateMaxFee: calculateMaxFeeMock,
-  prepareEvmBurn: vi.fn().mockResolvedValue({
-    tokenMessenger: "0x2222222222222222222222222222222222222222",
-    usdcAddress: "0x4444444444444444444444444444444444444444",
-    destinationDomain: 6,
-    mintRecipient: `0x${"0".repeat(24)}5555555555555555555555555555555555555555`,
-    minFinalityThreshold: 2000,
-    maxFee: 0n,
-  }),
-}));
+	  buildDepositForBurnData: () => ({
+	    to: "0x3333333333333333333333333333333333333333",
+	    data: "0xburn",
+	  }),
+	  buildBridgeWithPreapprovalData: () => ({
+	    to: "0x5555555555555555555555555555555555555555",
+	    data: "0xbridge",
+	  }),
+	  calculateMaxFee: calculateMaxFeeMock,
+	  prepareEvmBurn: vi.fn().mockResolvedValue({
+	    tokenMessenger: "0x2222222222222222222222222222222222222222",
+	    usdcAddress: "0x4444444444444444444444444444444444444444",
+	    approvalSpender: "0x2222222222222222222222222222222222222222",
+	    approvalAmount: 1_000_000n,
+	    bridgeAmount: 1_000_000n,
+	    destinationDomain: 6,
+	    mintRecipient: `0x${"0".repeat(24)}5555555555555555555555555555555555555555`,
+	    minFinalityThreshold: 2000,
+	    maxFee: 0n,
+	    appFeeAmount: 0n,
+	  }),
+	}));
 
 vi.mock("@/lib/cctp/solana/burn", () => ({
   buildDepositForBurnTransaction: buildDepositForBurnTransactionMock,
@@ -107,10 +125,7 @@ describe("useBurn EVM chain assertions", () => {
     checkAllowanceMock.mockResolvedValue(1_000_000n);
     calculateMaxFeeMock.mockResolvedValue(100n);
     createSolanaConnectionMock.mockReturnValue({});
-    buildDepositForBurnTransactionMock.mockResolvedValue({
-      transaction: new Transaction(),
-      messageAccount: Keypair.generate(),
-    });
+    buildDepositForBurnTransactionMock.mockResolvedValue(createMockSolanaBurnResult());
     signSolanaTransactionMock.mockImplementation(async (transaction) => transaction);
     sendSolanaTransactionNoConfirmMock.mockResolvedValue("5Za4L7SolanaSignature");
     solanaWalletState.connected = false;
@@ -176,10 +191,7 @@ describe("useBurn Solana finality and fast fee safety", () => {
     walletClientState.current = undefined;
     calculateMaxFeeMock.mockResolvedValue(100n);
     createSolanaConnectionMock.mockReturnValue({});
-    buildDepositForBurnTransactionMock.mockResolvedValue({
-      transaction: new Transaction(),
-      messageAccount: Keypair.generate(),
-    });
+    buildDepositForBurnTransactionMock.mockResolvedValue(createMockSolanaBurnResult());
     signSolanaTransactionMock.mockImplementation(async (transaction) => transaction);
     sendSolanaTransactionNoConfirmMock.mockResolvedValue("5Za4L7SolanaSignature");
     solanaWalletState.connected = true;

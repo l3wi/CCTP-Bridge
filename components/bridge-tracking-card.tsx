@@ -8,7 +8,7 @@ import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   getBridgeChainByIdUniversal,
   getCctpConfirmationsUniversal,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
 import type { ChainId, LocalTransaction } from "@/lib/types";
 

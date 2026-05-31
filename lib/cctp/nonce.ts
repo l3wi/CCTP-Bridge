@@ -8,7 +8,7 @@ import { PublicKey } from "@solana/web3.js";
 import {
   resolveBridgeChain,
   BRIDGEKIT_ENV,
-} from "../bridgeKit";
+} from "../bridgeConfig";
 import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
 import type { ChainId, SolanaChainId, NonceCheckResult } from "./types";
 import { isSolanaChain } from "./types";

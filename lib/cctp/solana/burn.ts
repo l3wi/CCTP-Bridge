@@ -13,6 +13,7 @@ import {
 } from "@solana/web3.js";
 import {
   getAssociatedTokenAddress,
+  createTransferInstruction,
   TOKEN_PROGRAM_ID,
 } from "@solana/spl-token";
 import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
@@ -113,6 +114,8 @@ export interface SolanaBurnParams {
   maxFee: bigint;
   minFinalityThreshold: number;
   sourceChainId: SolanaChainId;
+  appFeeAmount?: bigint;
+  appFeeRecipient?: string;
 }
 
 export interface SolanaBurnResult {
@@ -136,6 +139,8 @@ export async function buildDepositForBurnTransaction(
     maxFee,
     minFinalityThreshold,
     sourceChainId,
+    appFeeAmount = 0n,
+    appFeeRecipient,
   } = params;
 
   const destinationDomain = getCctpDomain(destinationChainId);
@@ -144,6 +149,37 @@ export async function buildDepositForBurnTransaction(
 
   // Get user's USDC ATA
   const userUsdcAta = await getAssociatedTokenAddress(usdcMint, user);
+  const appFeeIxs = [];
+
+  if (appFeeAmount > 0n) {
+    if (!appFeeRecipient) {
+      throw new Error("Fast tx fee is enabled, but no Solana fee recipient is configured.");
+    }
+
+    const appFeeRecipientOwner = new PublicKey(appFeeRecipient);
+    const appFeeRecipientAta = await getAssociatedTokenAddress(
+      usdcMint,
+      appFeeRecipientOwner
+    );
+    const appFeeRecipientAtaInfo = await connection.getAccountInfo(appFeeRecipientAta);
+
+    if (!appFeeRecipientAtaInfo) {
+      throw new Error(
+        `Solana fee recipient USDC account does not exist: ${appFeeRecipientAta.toBase58()}. Create it before enabling fast tx fees.`
+      );
+    }
+
+    appFeeIxs.push(
+      createTransferInstruction(
+        userUsdcAta,
+        appFeeRecipientAta,
+        user,
+        appFeeAmount,
+        [],
+        TOKEN_PROGRAM_ID
+      )
+    );
+  }
 
   // Generate keypair for message event data account
   const messageAccount = Keypair.generate();
@@ -225,7 +261,11 @@ export async function buildDepositForBurnTransaction(
     .instruction();
 
   // Build transaction
-  const transaction = new Transaction().add(fundMessageAccountIx, depositForBurnIx);
+  const transaction = new Transaction().add(
+    fundMessageAccountIx,
+    ...appFeeIxs,
+    depositForBurnIx
+  );
 
   // Get recent blockhash
   const { blockhash, lastValidBlockHeight } =

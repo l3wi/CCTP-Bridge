@@ -18,10 +18,10 @@
 ## Progress
 - 2025-02-18: Phase 1 complete (Bridge Kit bootstrap, viem pin, README env notes). Phase 2 in-flight: `useBridge` now routes burns through Bridge Kit EVM adapter; bridge UI submits via SDK with fast/standard transfer speed, removes manual fee/allowance fetches, and auto-tracks tx hashes in store. `BridgingState` and history UI render Bridge Kit step statuses; legacy attestation/claim polling removed.
 - 2025-11-30: Removed legacy `constants/*` contract/endpoint paths and unused approval/manual-claim flows. Wagmi/RainbowKit chains now derive directly from Bridge Kit-supported EVM chains per env. Bridge form uses Bridge Kit `estimate` for fee/receive math instead of hardcoded block estimates, and transaction store persists the full `BridgeResult` alongside steps.
-- 2025-12-01: Team decision check: (1) Manual resume via History → BridgingState claim button is acceptable; no background auto-resume required for cutover. (2) Testnet validation already run by user. (3) Solana support deferred; EVM-only scope is fine for launch. (4) Custom fee/RPC wiring remains available in `lib/bridgeKit.ts`, but defaults will be used unless envs are set. Marking EVM cutover as ready for prod swap.
+- 2025-12-01: Team decision check: (1) Manual resume via History → BridgingState claim button is acceptable; no background auto-resume required for cutover. (2) Testnet validation already run by user. (3) Solana support deferred; EVM-only scope is fine for launch. (4) Custom fee/RPC wiring remains available in `lib/bridgeConfig.ts`, but defaults will be used unless envs are set. Marking EVM cutover as ready for prod swap.
 
 ## Current Repo State (EVM scope)
-- Bridge Kit singleton + helpers live in `lib/bridgeKit.ts` (env toggle, RPC overrides, custom fee policy, `getWagmiChainsForEnv`, `getDefaultTransferSpeed`), shared by Wagmi config in `components/crypto.tsx`.
+- Bridge config facade + helpers live in `lib/bridgeConfig.ts` (env toggle, RPC overrides, custom fee policy, `getWagmiChainsForEnv`, `getDefaultTransferSpeed`), shared by Wagmi config in `components/crypto.tsx`.
 - Bridge submit path runs through `lib/hooks/useBridge.ts` → `kit.bridge` with viem adapter; it persists `BridgeResult`/steps to the Zustand store.
 - Bridge UI (`components/bridge-card.tsx`) sources chain options from Bridge Kit, calls `kit.estimate`, and renders steps via `BridgingState`; history modal also renders steps/Explorer links from the stored `BridgeResult`.
 - Transaction store (`lib/store/transactionStore.ts`) persists `BridgeResult` + steps and migrates the legacy store, but does not yet resume/refresh pending items or store provider-specific metadata beyond the raw `BridgeResult`.
@@ -59,7 +59,7 @@
 ## Phased Plan
 
 ### Phase 1 — SDK Bootstrap & Configuration
-- Add a singleton Bridge Kit factory (e.g., `lib/bridgeKit.ts`) that:
+- Add a singleton Bridge Kit factory (e.g., `lib/bridgeConfig.ts`) that:
   - Instantiates Bridge Kit with the viem adapter only (EVM scope).
   - Exposes environment selection (mainnet/testnet), custom RPC overrides, and monetization/fee config.
   - Pins viem to a known-good version per docs (viem ≥2.40.3 noted in docs) and ensures Wagmi compatibility in `package.json`.

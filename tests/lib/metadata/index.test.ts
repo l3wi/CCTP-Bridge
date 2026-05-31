@@ -27,4 +27,20 @@ describe("metadata index", () => {
     expect(chains.some((chain) => chain.type === "evm")).toBe(true);
     expect(chains.some((chain) => chain.type === "solana")).toBe(true);
   });
+
+  it("includes latest Circle-supported mainnet and testnet chains", () => {
+    const mainnetChains = getAllSupportedChains("mainnet");
+    const testnetChains = getAllSupportedChains("testnet");
+
+    expect(mainnetChains.some((chain) => chain.type === "evm" && chain.chainId === 1672)).toBe(true);
+    expect(mainnetChains.some((chain) => chain.type === "evm" && chain.chainId === 1776)).toBe(true);
+    expect(testnetChains.some((chain) => chain.type === "evm" && chain.chainId === 688689)).toBe(true);
+    expect(testnetChains.some((chain) => chain.type === "evm" && chain.chainId === 1439)).toBe(true);
+  });
+
+  it("preserves Circle BridgeKit bridge contracts for custom fee routing", () => {
+    const ethereum = resolveBridgeChain(1, "mainnet");
+
+    expect(ethereum.kitContracts?.bridge).toMatch(/^0x[a-fA-F0-9]{40}$/);
+  });
 });

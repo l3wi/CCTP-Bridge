@@ -74,7 +74,7 @@ Update `BridgeParams` interface:
 ## Phase 2: Bridge Kit Extensions
 
 ### 2.1 Extend Bridge Kit Utilities
-**File**: `lib/bridgeKit.ts`
+**File**: `lib/bridgeConfig.ts`
 
 Add Solana chain utilities:
 
@@ -297,7 +297,7 @@ Support displaying transactions with Solana chains and addresses.
 | File | Changes |
 |------|---------|
 | `lib/types.ts` | Universal type definitions |
-| `lib/bridgeKit.ts` | Solana chain utilities |
+| `lib/bridgeConfig.ts` | Solana chain utilities |
 | `lib/validation.ts` | Universal address validation |
 | `lib/store/transactionStore.ts` | Support universal types + migration |
 | `lib/hooks/useChainSelection.ts` | Mixed chain type support |
@@ -316,7 +316,7 @@ Support displaying transactions with Solana chains and addresses.
 |------|-------|-------------|
 | 1 | Dependencies | `bun add` all Solana packages |
 | 2 | Types | Update `lib/types.ts` with universal types |
-| 3 | Bridge Kit | Extend `lib/bridgeKit.ts`, create `lib/solanaAdapter.ts` |
+| 3 | Bridge Config | Extend `lib/bridgeConfig.ts`, create `lib/solanaAdapter.ts` |
 | 4 | Providers | Create `solana-provider.tsx`, update `crypto.tsx` |
 | 5 | Wallet UI | Create Solana wallet components, update `page.tsx` |
 | 6 | Balance | Create `useSolanaBalance.ts`, update `validation.ts` |
@@ -354,7 +354,7 @@ Support displaying transactions with Solana chains and addresses.
 - Added Solana tx hash validation alongside EVM
 
 ### Step 3: Bridge Kit Extensions (Completed)
-- Extended `lib/bridgeKit.ts` with Solana utilities
+- Extended `lib/bridgeConfig.ts` with Solana utilities
 - Added `SolanaChainDefinition` interface
 - Added `getSupportedSolanaChains()`, `getAllSupportedChains()`, `getSolanaChainById()`
 - Added `getSolanaRpcEndpoint()`, `resolveBridgeChainUniversal()`
@@ -409,7 +409,7 @@ Support displaying transactions with Solana chains and addresses.
 - Updated `components/chain-icon.tsx`:
   - Changed `chainId` prop type from `number` to `ChainId`
   - Added Solana chain icon support using `TokenIcon` from `@web3icons/react` with SOL symbol
-- Added new universal functions to `lib/bridgeKit.ts`:
+- Added new universal functions to `lib/bridgeConfig.ts`:
   - `getBridgeChainByIdUniversal()` - works for both EVM and Solana chains
   - `getCctpConfirmationsUniversal()` - works for both EVM and Solana chains
   - Added `eurcAddress` to `SolanaChainDefinition` for SDK compatibility

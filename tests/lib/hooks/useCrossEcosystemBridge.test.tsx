@@ -33,7 +33,7 @@ vi.mock("@/components/ui/use-toast", () => ({
   useToast: () => ({ toast: toastMock }),
 }));
 
-vi.mock("@/lib/bridgeKit", () => ({
+vi.mock("@/lib/bridgeConfig", () => ({
   getProviderFromWalletClient: () => ({ request: vi.fn() }),
   resolveBridgeChainUniversal: (chainId: number | string) =>
     typeof chainId === "number"

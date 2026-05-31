@@ -18,7 +18,7 @@ import { ChainIcon } from "@/components/chain-icon";
 import {
   getExplorerTxUrlUniversal,
   getBridgeChainByIdUniversal,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 
 interface HistoryModalProps {
   open?: boolean;

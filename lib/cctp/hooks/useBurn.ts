@@ -7,7 +7,7 @@ import { useCallback, useState } from "react";
 import { useAccount, useWalletClient } from "wagmi";
 import { useWallet } from "@solana/wallet-adapter-react";
 import { useToast } from "@/components/ui/use-toast";
-import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
+import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeConfig";
 import { createEvmPublicClient, createSolanaConnection } from "@/lib/rpc/clients";
 import type { BurnParams, BurnResult, ChainId, SolanaChainId, EvmTxHash } from "../types";
 import { isSolanaChain } from "../types";
@@ -24,15 +24,14 @@ export interface BurnProgressCallbacks {
 
 // EVM burn utilities
 import {
-  getTokenMessengerAddress,
-  getUsdcAddress,
   checkAllowance,
   buildApprovalData,
   buildDepositForBurnData,
+  buildBridgeWithPreapprovalData,
   calculateMaxFee,
   prepareEvmBurn,
 } from "../evm/burn";
-import { formatMintRecipientHex } from "../shared";
+import { getFastTransferFeeQuote } from "../fastTransferFee";
 
 // Solana burn utilities
 import {
@@ -102,8 +101,8 @@ export function useBurn() {
 
         const approvalData = buildApprovalData(
           burnConfig.usdcAddress,
-          burnConfig.tokenMessenger,
-          params.amount
+          burnConfig.approvalSpender,
+          burnConfig.approvalAmount
         );
 
         try {
@@ -142,19 +141,19 @@ export function useBurn() {
           while (Date.now() - startTime < MAX_ALLOWANCE_WAIT_MS) {
             allowance = await checkAllowance(
               publicClient,
-              burnConfig.usdcAddress,
-              evmAddress,
-              burnConfig.tokenMessenger
-            );
+	              burnConfig.usdcAddress,
+	              evmAddress,
+	              burnConfig.approvalSpender
+	            );
 
-            if (allowance >= params.amount) break;
+	            if (allowance >= burnConfig.approvalAmount) break;
 
             // Exponential backoff with cap: 1s -> 2s -> 4s -> 8s -> 10s (cap)
             await new Promise((r) => setTimeout(r, backoffMs));
             backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
           }
 
-          if (allowance < params.amount) {
+	          if (allowance < burnConfig.approvalAmount) {
             // Final check: verify approval tx actually succeeded before failing
             // This handles RPC lag where allowance isn't visible yet
             try {
@@ -171,11 +170,11 @@ export function useBurn() {
                 while (Date.now() - extendedStart < EXTENDED_WAIT_MS) {
                   allowance = await checkAllowance(
                     publicClient,
-                    burnConfig.usdcAddress,
-                    evmAddress,
-                    burnConfig.tokenMessenger
-                  );
-                  if (allowance >= params.amount) break;
+	                    burnConfig.usdcAddress,
+	                    evmAddress,
+	                    burnConfig.approvalSpender
+	                  );
+	                  if (allowance >= burnConfig.approvalAmount) break;
                   await new Promise((r) => setTimeout(r, 2_000));
                 }
               }
@@ -184,7 +183,7 @@ export function useBurn() {
             }
 
             // If still insufficient after extended retry, fail
-            if (allowance < params.amount) {
+	            if (allowance < burnConfig.approvalAmount) {
               return {
                 success: false,
                 approvalTxHash,
@@ -211,14 +210,28 @@ export function useBurn() {
           description: "Please approve the burn transaction in your wallet...",
         });
 
-        const burnData = buildDepositForBurnData(burnConfig.tokenMessenger, {
-          amount: params.amount,
-          destinationDomain: burnConfig.destinationDomain,
-          mintRecipient: burnConfig.mintRecipient,
-          burnToken: burnConfig.usdcAddress,
-          minFinalityThreshold: burnConfig.minFinalityThreshold,
-          maxFee: burnConfig.maxFee,
-        });
+	        const burnData =
+	          burnConfig.appFeeAmount > 0n &&
+	          burnConfig.bridgeContractAddress &&
+	          burnConfig.appFeeRecipient
+	            ? buildBridgeWithPreapprovalData(burnConfig.bridgeContractAddress, {
+	                amount: burnConfig.bridgeAmount,
+	                destinationDomain: burnConfig.destinationDomain,
+	                mintRecipient: burnConfig.mintRecipient,
+	                burnToken: burnConfig.usdcAddress,
+	                minFinalityThreshold: burnConfig.minFinalityThreshold,
+	                maxFee: burnConfig.maxFee,
+	                fee: burnConfig.appFeeAmount,
+	                feeRecipient: burnConfig.appFeeRecipient,
+		              })
+	            : buildDepositForBurnData(burnConfig.tokenMessenger, {
+	                amount: burnConfig.bridgeAmount,
+	                destinationDomain: burnConfig.destinationDomain,
+	                mintRecipient: burnConfig.mintRecipient,
+	                burnToken: burnConfig.usdcAddress,
+	                minFinalityThreshold: burnConfig.minFinalityThreshold,
+	                maxFee: burnConfig.maxFee,
+	              });
 
         assertWalletOnSourceChain(walletClient.chain?.id, sourceChainId);
         const burnTxHash = await walletClient.sendTransaction({
@@ -237,7 +250,15 @@ export function useBurn() {
             : `Burn tx: ${burnTxHash.slice(0, 20)}...`,
         });
 
-        return { success: true, approvalTxHash, burnTxHash };
+	        return {
+	          success: true,
+	          approvalTxHash,
+	          burnTxHash,
+	          circleFastFee: burnConfig.maxFee,
+	          appFastFee: burnConfig.appFeeAmount,
+	          appFeeBps: burnConfig.appFeeBps,
+	          appFeeRecipient: burnConfig.appFeeRecipient,
+	        };
       } catch (error) {
         return handleBurnError(error, "burn");
       }
@@ -276,21 +297,33 @@ export function useBurn() {
             : FINALITY_THRESHOLDS.solana.standard;
 
         const isTestnet = BRIDGEKIT_ENV === "testnet";
-        let maxFee = 0n;
+	        let maxFee = 0n;
+	        const appFeeQuote = getFastTransferFeeQuote({
+	          amount: params.amount,
+	          transferSpeed: params.transferSpeed,
+	          sourceChainId,
+	        });
+	        const bridgeAmount = params.amount - appFeeQuote.feeAmount;
+	        if (bridgeAmount <= 0n) {
+	          return {
+	            success: false,
+	            error: "Transfer amount too small for fast tx fee. Choose standard transfer or increase the amount.",
+	          };
+	        }
 
-        if (params.transferSpeed === "fast") {
+	        if (params.transferSpeed === "fast") {
           try {
             const sourceDomain = getCctpDomain(sourceChainId);
             maxFee = await calculateMaxFee(
               sourceDomain,
               destinationDomain,
-              params.amount,
-              "fast",
-              isTestnet
-            );
+	              bridgeAmount,
+	              "fast",
+	              isTestnet
+	            );
 
             // Safety check: fee must be less than amount
-            if (maxFee >= params.amount) {
+	            if (maxFee >= bridgeAmount) {
               return {
                 success: false,
                 error: "Transfer amount too small for fast transfer fee. Choose standard transfer or increase the amount.",
@@ -311,16 +344,18 @@ export function useBurn() {
         });
 
         // Build transaction
-        const { transaction, messageAccount } = await buildDepositForBurnTransaction({
-          connection,
-          user: solanaWallet.publicKey,
-          amount: params.amount,
-          destinationChainId: params.destinationChainId,
-          mintRecipient: params.recipientAddress,
-          maxFee,
-          minFinalityThreshold,
-          sourceChainId,
-        });
+	        const { transaction, messageAccount } = await buildDepositForBurnTransaction({
+	          connection,
+	          user: solanaWallet.publicKey,
+	          amount: bridgeAmount,
+	          destinationChainId: params.destinationChainId,
+	          mintRecipient: params.recipientAddress,
+	          maxFee,
+	          minFinalityThreshold,
+	          sourceChainId,
+	          appFeeAmount: appFeeQuote.feeAmount,
+	          appFeeRecipient: appFeeQuote.recipient,
+	        });
 
         toast({
           title: "Sign transaction",
@@ -345,7 +380,14 @@ export function useBurn() {
             : `Burn tx: ${signature.slice(0, 20)}...`,
         });
 
-        return { success: true, burnTxHash: signature };
+	        return {
+	          success: true,
+	          burnTxHash: signature,
+	          circleFastFee: maxFee,
+	          appFastFee: appFeeQuote.feeAmount,
+	          appFeeBps: appFeeQuote.feeAmount > 0n ? appFeeQuote.feeBps : undefined,
+	          appFeeRecipient: appFeeQuote.recipient,
+	        };
       } catch (error) {
         return handleBurnError(error, "burn");
       }

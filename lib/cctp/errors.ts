@@ -15,6 +15,7 @@ export type BridgeErrorCode =
   | "INSUFFICIENT_BALANCE"
   | "INSUFFICIENT_GAS"
   | "CHAIN_NOT_SUPPORTED"
+  | "WALLET_CAPABILITY_UNSUPPORTED"
   | "CONTRACT_ERROR"
   | "ATTESTATION_PENDING"
   | "ATTESTATION_FAILED"
@@ -45,6 +46,28 @@ export class BridgeError extends Error {
 // =============================================================================
 // Error Detection
 // =============================================================================
+
+type CircleBridgeStepErrorCategory =
+  | "user_rejected"
+  | "atomic_unsupported"
+  | "batch_too_large"
+  | "duplicate_batch_id"
+  | "unknown_bundle"
+  | "polling_timeout"
+  | "failed_offchain"
+  | "reverted_onchain"
+  | "partial_reverted"
+  | "chain_revert"
+  | "unknown";
+
+function getCircleErrorCategory(error: unknown): CircleBridgeStepErrorCategory | null {
+  if (!error || typeof error !== "object") return null;
+
+  const category = (error as { errorCategory?: unknown }).errorCategory;
+  return typeof category === "string"
+    ? (category as CircleBridgeStepErrorCategory)
+    : null;
+}
 
 /**
  * Detect if error indicates insufficient balance
@@ -95,6 +118,22 @@ export function isNonceAlreadyUsed(error: unknown): boolean {
  * Get appropriate error code from error
  */
 export function getErrorCode(error: unknown): BridgeErrorCode {
+  const category = getCircleErrorCategory(error);
+  if (category === "user_rejected") return "USER_REJECTED";
+  if (category === "atomic_unsupported" || category === "batch_too_large") {
+    return "WALLET_CAPABILITY_UNSUPPORTED";
+  }
+  if (
+    category === "chain_revert" ||
+    category === "reverted_onchain" ||
+    category === "partial_reverted"
+  ) {
+    return "CONTRACT_ERROR";
+  }
+  if (category === "polling_timeout" || category === "failed_offchain") {
+    return "NETWORK_ERROR";
+  }
+
   if (isUserRejection(error)) return "USER_REJECTED";
   if (isInsufficientBalance(error)) return "INSUFFICIENT_BALANCE";
   if (isInsufficientGas(error)) return "INSUFFICIENT_GAS";
@@ -205,6 +244,30 @@ export async function withErrorHandling<T>(
 export function getErrorMessage(error: unknown): string {
   if (error instanceof BridgeError) {
     return error.message;
+  }
+
+  const category = getCircleErrorCategory(error);
+  if (category) {
+    switch (category) {
+      case "user_rejected":
+        return "Transaction was cancelled by user";
+      case "atomic_unsupported":
+        return "Your wallet does not support atomic batched bridge transactions on this chain. Try the step-by-step flow.";
+      case "batch_too_large":
+        return "Your wallet rejected the batched transaction because it is too large. Try the step-by-step flow.";
+      case "duplicate_batch_id":
+      case "unknown_bundle":
+      case "polling_timeout":
+        return "Wallet batch status could not be confirmed. Check your wallet or try again.";
+      case "failed_offchain":
+        return "Wallet batch failed before it was submitted on-chain. Please try again.";
+      case "chain_revert":
+      case "reverted_onchain":
+      case "partial_reverted":
+        return "Transaction reverted on-chain";
+      case "unknown":
+        break;
+    }
   }
 
   // Handle viem errors - check for shortMessage property

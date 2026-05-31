@@ -6,7 +6,7 @@ import {
   getMessageTransmitterAddress,
   MESSAGE_TRANSMITTER_ABI,
 } from "@/lib/contracts";
-import { getExplorerTxUrl } from "@/lib/bridgeKit";
+import { getExplorerTxUrl } from "@/lib/bridgeConfig";
 import { getCctpDomainSafe } from "../../shared";
 import { updateStepsWithMint } from "../../steps";
 import type { ChainId, MintParams, MintResult, UniversalTxHash } from "../../types";
@@ -20,6 +20,25 @@ import {
 } from "./errors";
 
 type EvmWalletClient = NonNullable<UseWalletClientReturnType["data"]>;
+
+async function isSmartContractAccount(params: {
+  publicClient: ReturnType<typeof createEvmPublicClient>;
+  address: `0x${string}`;
+}): Promise<boolean> {
+  const getCode = (params.publicClient as {
+    getCode?: (args: { address: `0x${string}` }) => Promise<`0x${string}` | undefined>;
+  }).getCode;
+
+  if (!getCode) return false;
+
+  try {
+    const code = await getCode({ address: params.address });
+    return typeof code === "string" && code !== "0x";
+  } catch (error) {
+    console.warn("Unable to determine wallet account type, keeping gas balance preflight:", error);
+    return false;
+  }
+}
 
 export async function executeEvmMint(params: {
   burnTxHash: UniversalTxHash;
@@ -150,21 +169,28 @@ export async function executeEvmMint(params: {
 
     if (publicClient && walletClient?.account?.address && userNativeBalance !== undefined) {
       try {
-        const gasEstimate = await estimateEvmMintGas({
+        const isContractAccount = await isSmartContractAccount({
           publicClient,
-          userAddress: walletClient.account.address,
-          messageTransmitter,
-          message: attestationData.message,
-          attestation: attestationData.attestation,
-          userBalance: userNativeBalance,
+          address: walletClient.account.address,
         });
 
-        if (!gasEstimate.sufficient) {
-          const nativeSymbol = walletClient.chain?.nativeCurrency?.symbol || "ETH";
-          return {
-            success: false,
-            error: `Insufficient ${nativeSymbol} for gas. You need ~${formatNative(gasEstimate.required)} ${nativeSymbol} but have ${formatNative(gasEstimate.current)} ${nativeSymbol}.`,
-          };
+        if (!isContractAccount) {
+          const gasEstimate = await estimateEvmMintGas({
+            publicClient,
+            userAddress: walletClient.account.address,
+            messageTransmitter,
+            message: attestationData.message,
+            attestation: attestationData.attestation,
+            userBalance: userNativeBalance,
+          });
+
+          if (!gasEstimate.sufficient) {
+            const nativeSymbol = walletClient.chain?.nativeCurrency?.symbol || "ETH";
+            return {
+              success: false,
+              error: `Insufficient ${nativeSymbol} for gas. You need ~${formatNative(gasEstimate.required)} ${nativeSymbol} but have ${formatNative(gasEstimate.current)} ${nativeSymbol}.`,
+            };
+          }
         }
       } catch (gasError) {
         console.warn("Gas estimation failed, proceeding anyway:", gasError);

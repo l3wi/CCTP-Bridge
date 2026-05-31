@@ -1,4 +1,4 @@
-import { BRIDGEKIT_ENV, getBridgeChainByIdUniversal } from "@/lib/bridgeKit";
+import { BRIDGEKIT_ENV, getBridgeChainByIdUniversal } from "@/lib/bridgeConfig";
 import {
   getChainIdFromDomainUniversal,
   getCctpDomainIdUniversal,

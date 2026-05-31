@@ -11,7 +11,7 @@ import {
   SolflareWalletAdapter,
 } from "@solana/wallet-adapter-wallets";
 import type { WalletError, Adapter } from "@solana/wallet-adapter-base";
-import { BRIDGEKIT_ENV, getSolanaRpcEndpoint } from "@/lib/bridgeKit";
+import { BRIDGEKIT_ENV, getSolanaRpcEndpoint } from "@/lib/bridgeConfig";
 
 // Import wallet adapter styles
 import "@solana/wallet-adapter-react-ui/styles.css";

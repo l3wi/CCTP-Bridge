@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getAllSupportedChains } from "@/lib/bridgeKit";
+import { getAllSupportedChains } from "@/lib/bridgeConfig";
 import { getBridgeRouteSegment } from "@/lib/bridgeRoute";
 import {
   buildPendingTransactionRedirect,

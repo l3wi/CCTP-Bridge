@@ -62,6 +62,10 @@ export interface LocalTransaction {
   version: "v3"; // Schema version
   transferType?: "standard" | "fast"; // Transfer speed
   fee?: string; // Fast transfer fee
+  circleFastFee?: string; // Circle fast-liquidity fee cap
+  appFastFee?: string; // App-level fast tx fee
+  appFeeBps?: number; // App-level fast tx fee rate
+  appFeeRecipient?: string; // App-level fee recipient
   estimatedTime?: string; // Estimated completion time
   completedAt?: Date; // When mint/claim completed
   bridgeResult?: BridgeResult;
@@ -88,6 +92,10 @@ export interface LegacyV2Transaction {
   version: "v2";
   transferType?: "standard" | "fast";
   fee?: string;
+  circleFastFee?: string;
+  appFastFee?: string;
+  appFeeBps?: number;
+  appFeeRecipient?: string;
   estimatedTime?: string;
   completedAt?: Date;
   bridgeResult?: BridgeResult;

@@ -11,13 +11,14 @@
     "lint": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run",
+    "test:fork:evm": "vitest run tests/integration/evm-fast-fee-fork.test.ts",
     "metadata:generate": "bun run scripts/generate-cctp-metadata.ts",
     "rpc:generate": "bun run scripts/generate-rpc-candidates.ts",
     "metadata:refresh": "bun run metadata:generate && bun run rpc:generate",
     "prepare": "husky"
   },
   "dependencies": {
-    "@circle-fin/bridge-kit": "^1.8.2",
+    "@circle-fin/bridge-kit": "^1.10.2",
     "@coral-xyz/anchor": "^0.32.1",
     "@radix-ui/react-checkbox": "^1.3.3",
     "@radix-ui/react-dialog": "^1.1.14",

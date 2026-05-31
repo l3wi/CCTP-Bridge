@@ -3,7 +3,7 @@ import { useWallet, useConnection } from "@solana/wallet-adapter-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
-import { BRIDGEKIT_ENV } from "@/lib/bridgeKit";
+import { BRIDGEKIT_ENV } from "@/lib/bridgeConfig";
 import type { SolanaChainId } from "@/lib/types";
 
 // USDC token mint addresses on Solana

@@ -1,5 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
-import { getUsdcAddressByDomain, type BridgeEnvironment } from "../../bridgeKit";
+import { getUsdcAddressByDomain, type BridgeEnvironment } from "../../bridgeConfig";
 
 /** CCTP v2 MessageTransmitter Program ID (same for mainnet and devnet) */
 export const MESSAGE_TRANSMITTER_PROGRAM_ID = new PublicKey(

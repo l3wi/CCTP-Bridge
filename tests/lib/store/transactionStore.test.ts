@@ -22,8 +22,32 @@ describe("transactionStore upsertTransaction", () => {
     const { transactions } = useTransactionStore.getState();
     expect(transactions).toHaveLength(1);
     expect(transactions[0].hash).toBe(`0x${"a".repeat(64)}`);
-    expect(transactions[0].status).toBe("pending");
-  });
+	  expect(transactions[0].status).toBe("pending");
+	});
+
+	it("preserves explicit fast fee audit fields", () => {
+	  useTransactionStore.getState().upsertTransaction({
+	    originChain: 1,
+	    hash: `0x${"d".repeat(64)}`,
+	    status: "pending",
+	    version: "v3",
+	    amount: "1.00",
+	    circleFastFee: "0.000100",
+	    appFastFee: "0.000400",
+	    appFeeBps: 4,
+	    appFeeRecipient: "0x1111111111111111111111111111111111111111",
+	  });
+
+	  const { transactions } = useTransactionStore.getState();
+	  expect(transactions[0]).toEqual(
+	    expect.objectContaining({
+	      circleFastFee: "0.000100",
+	      appFastFee: "0.000400",
+	      appFeeBps: 4,
+	      appFeeRecipient: "0x1111111111111111111111111111111111111111",
+	    })
+	  );
+	});
 
   it("updates existing transaction atomically without duplicating hash entries", () => {
     const hash = `0x${"b".repeat(64)}`;

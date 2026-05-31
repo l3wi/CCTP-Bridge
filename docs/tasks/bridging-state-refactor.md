@@ -133,7 +133,7 @@ Combines:
 
 ### 2. Extract Utility Functions
 
-#### Move to `lib/bridgeKit.ts` or new `lib/bridgeUtils.ts`
+#### Move to `lib/bridgeConfig.ts` or new `lib/bridgeUtils.ts`
 
 **`extractHashes()`** (lines 131-150)
 ```typescript

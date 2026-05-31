@@ -1,6 +1,6 @@
 import { TransferSpeed, type TransferSpeedValue } from "@/lib/cctp/transferSpeed";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
-import { getBridgeChainByIdUniversal } from "@/lib/bridgeKit";
+import { getBridgeChainByIdUniversal } from "@/lib/bridgeConfig";
 import type { ChainId } from "@/lib/types";
 
 export type BridgeTransferType = "fast" | "standard";

@@ -1,7 +1,7 @@
 import type { Chain } from "viem";
 import type { BridgeEstimate } from "@/lib/cctp/types";
 import { TransferSpeed, type TransferSpeedValue } from "@/lib/cctp/transferSpeed";
-import { getCctpConfirmationsUniversal, type UniversalChainDefinition } from "@/lib/bridgeKit";
+import { getCctpConfirmationsUniversal, type UniversalChainDefinition } from "@/lib/bridgeConfig";
 import type { AmountState, ChainId } from "@/lib/types";
 
 export type ChainOption = {
@@ -105,13 +105,24 @@ export function hasCompleteBridgeForm(params: {
   );
 }
 
-export function getTotalProtocolFee(estimate?: BridgeEstimate | null): number {
+export function getTotalBridgeFee(estimate?: BridgeEstimate | null): number {
   if (!estimate?.fees) return 0;
   return estimate.fees.reduce(
     (acc, fee) => acc + (fee.amount ? Number(fee.amount) : 0),
     0
   );
 }
+
+export function getAppFastFee(estimate?: BridgeEstimate | null): number {
+  if (!estimate?.fees) return 0;
+  return estimate.fees.reduce(
+    (acc, fee) => acc + (fee.type === "kit" && fee.amount ? Number(fee.amount) : 0),
+    0
+  );
+}
+
+export const getDestinationDeductedFee = getTotalBridgeFee;
+export const getTotalProtocolFee = getTotalBridgeFee;
 
 export function getYouWillReceive(params: {
   amount: AmountState | null;
@@ -142,7 +153,7 @@ export function getEstimateLabels(params: {
   activeSourceChainId: ChainId | null;
   transferSpeedLabel: string;
 }): EstimateLabels {
-  const feeTotal = getTotalProtocolFee(params.estimate);
+  const feeTotal = getTotalBridgeFee(params.estimate);
   const blockedEstimateLabel = !params.amountIsValid
     ? "Complete the form"
     : !params.chainSelectionValid

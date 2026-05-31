@@ -56,7 +56,7 @@ import {
   getCctpConfirmationsUniversal,
   resolveBridgeChainUniversal,
   getAllSupportedChains,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 import {
   resolveRecipientForBridgingState,
   resolveRecipientForSend,

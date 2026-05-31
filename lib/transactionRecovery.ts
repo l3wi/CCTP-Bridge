@@ -2,7 +2,7 @@ import type { BridgeResult } from "@circle-fin/bridge-kit";
 import {
   BRIDGEKIT_ENV,
   getBridgeChainByIdUniversal,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 import {
   getChainIdFromDomainUniversal,
   getChainInfoFromDomainAllChains,

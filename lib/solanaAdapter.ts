@@ -1,6 +1,6 @@
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getAccount, getAssociatedTokenAddress } from "@solana/spl-token";
-import { getSolanaRpcEndpoint, BRIDGEKIT_ENV } from "./bridgeKit";
+import { getSolanaRpcEndpoint, BRIDGEKIT_ENV } from "./bridgeConfig";
 import type { SolanaChainId } from "./types";
 export { createSolanaConnection } from "@/lib/rpc/clients";
 

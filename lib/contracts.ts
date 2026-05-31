@@ -8,7 +8,7 @@ import {
   getSupportedEvmChains,
   getAllSupportedChains,
   type BridgeEnvironment,
-} from "./bridgeKit";
+} from "./bridgeConfig";
 import type { ChainId, SolanaChainId } from "./types";
 import { createEvmPublicClient } from "@/lib/rpc/clients";
 

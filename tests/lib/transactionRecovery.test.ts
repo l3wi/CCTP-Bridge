@@ -47,7 +47,7 @@ vi.mock("@/lib/contracts", () => ({
   getChainInfoFromDomainAllChains: getChainInfoFromDomainAllChainsMock,
 }));
 
-vi.mock("@/lib/bridgeKit", () => ({
+vi.mock("@/lib/bridgeConfig", () => ({
   BRIDGEKIT_ENV: "mainnet",
   getBridgeChainByIdUniversal: getBridgeChainByIdUniversalMock,
 }));

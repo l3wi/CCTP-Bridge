@@ -20,7 +20,7 @@ import {
   getAllSupportedChains,
   getBridgeChainByIdUniversal,
   type UniversalChainDefinition,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 import { toChainDefinition } from "@/lib/chainDefinition";
 import {
   getCctpDomainIdUniversal,

@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useAccount, useBalance as useWagmiBalance } from "wagmi";
-import { getUsdcAddressForChain } from "@/lib/bridgeKit";
+import { getUsdcAddressForChain } from "@/lib/bridgeConfig";
 
 interface UseBalanceOptions {
   refetchInterval?: number;

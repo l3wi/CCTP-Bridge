@@ -126,6 +126,10 @@ const normalizeTransaction = (
     version: "v3",
     transferType,
     fee: (tx as Partial<LocalTransaction>).fee,
+    circleFastFee: (tx as Partial<LocalTransaction>).circleFastFee,
+    appFastFee: (tx as Partial<LocalTransaction>).appFastFee,
+    appFeeBps: (tx as Partial<LocalTransaction>).appFeeBps,
+    appFeeRecipient: (tx as Partial<LocalTransaction>).appFeeRecipient,
     estimatedTime: resolveEstimatedTimeLabel({
       transferType,
       sourceChainId: originChain,

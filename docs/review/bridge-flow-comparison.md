@@ -13,13 +13,13 @@
 - **Design choices**: Event-driven progress with live logs, explicit Solana/EVM dual-wallet support, runtime chain list (testnet-only), minimal validation (amount > 0, balance cap), manual reset to restart.
 
 ## Current app: `components/bridge-card.tsx` + `lib/hooks/useBridge.ts`
-- **Chain discovery**: Uses Bridge Kit chain definitions but filters to EVM only and to the configured env (`BRIDGEKIT_ENV`, default testnet). Wagmi config is built once at module load from `getWagmiChainsForEnv`/`getWagmiTransportsForEnv` (`components/crypto.tsx`, `lib/bridgeKit.ts`).
+- **Chain discovery**: Uses Bridge Kit chain definitions but filters to EVM only and to the configured env (`BRIDGEKIT_ENV`, default testnet). Wagmi config is built once at module load from `getWagmiChainsForEnv`/`getWagmiTransportsForEnv` (`components/crypto.tsx`, `lib/bridgeConfig.ts`).
 - **Wallet/adapters**: EVM-only. Builds a single viem adapter from the connected wallet provider; the same adapter is reused for both source and destination in `kit.bridge` (`lib/hooks/useBridge.ts`). Solana is not exposed in the UI.
 - **Balances**: Uses Wagmi `useBalance` for USDC/native on the currently connected chain (`lib/hooks/useBalance.ts`). Does not fetch balances for arbitrary selectable chains.
 - **Pre-flight UX** (`components/bridge-card.tsx`):
   - Validates amount format/decimals and chain selection; derives supported chain list from Bridge Kit and keeps source/destination dropdowns in sync.
   - Estimates protocol fees and ETA for both Standard and Fast speeds via `kit.estimate` with a readonly adapter and shows “you will receive” math; defaults to Fast if supported.
-  - Supports custom fee policy and RPC overrides via env (`lib/bridgeKit.ts`).
+  - Supports custom fee policy and RPC overrides via env (`lib/bridgeConfig.ts`).
 - **Submit path**:
   - Requires wallet on the selected source chain; does not attempt destination chain switching pre-submit.
   - Calls `useBridge().bridge(...)` with `transferSpeed` config; no Bridge Kit event subscription. The hook returns once `kit.bridge` resolves, then stores the result in a persisted Zustand transaction log with hashes, steps, status, and analytics tracking.

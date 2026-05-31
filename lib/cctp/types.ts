@@ -122,6 +122,14 @@ export interface BurnResult {
   burnTxHash?: UniversalTxHash;
   /** EVM only - approval transaction hash */
   approvalTxHash?: EvmTxHash;
+  /** Circle fast-liquidity fee cap used for the burn (USDC atomic units) */
+  circleFastFee?: bigint;
+  /** App-level fast tx fee charged on the source chain (USDC atomic units) */
+  appFastFee?: bigint;
+  /** App-level fast tx fee rate in basis points */
+  appFeeBps?: number;
+  /** App fee recipient used on the source chain */
+  appFeeRecipient?: string;
   error?: string;
 }
 
@@ -249,6 +257,14 @@ export interface LocalTransaction {
   transferType?: TransferSpeed;
   /** Fast transfer fee (USDC) */
   fee?: string;
+  /** Circle fast-liquidity fee cap recorded for audit/display */
+  circleFastFee?: string;
+  /** App-level fast tx fee charged on the source chain */
+  appFastFee?: string;
+  /** App-level fast tx fee rate in basis points */
+  appFeeBps?: number;
+  /** App fee recipient used on the source chain */
+  appFeeRecipient?: string;
   /** Estimated completion time */
   estimatedTime?: string;
   /** Actual completion timestamp */
@@ -278,6 +294,10 @@ export interface LegacyV2Transaction {
   version: "v2";
   transferType?: "standard" | "fast";
   fee?: string;
+  circleFastFee?: string;
+  appFastFee?: string;
+  appFeeBps?: number;
+  appFeeRecipient?: string;
   estimatedTime?: string;
   completedAt?: Date;
   bridgeResult?: BridgeResult;
@@ -311,6 +331,14 @@ export interface DepositForBurnParams {
   minFinalityThreshold?: number;
 }
 
+/** bridgeWithPreapproval parameters for Circle BridgeKit EVM bridge contract */
+export interface BridgeWithPreapprovalParams extends DepositForBurnParams {
+  /** App-level fee charged by the bridge contract */
+  fee: bigint;
+  /** EVM recipient for the app-level fee */
+  feeRecipient: EvmAddress;
+}
+
 /** receiveMessage parameters */
 export interface ReceiveMessageParams {
   message: `0x${string}`;
@@ -325,8 +353,8 @@ export interface ReceiveMessageParams {
 export interface EstimateFee {
   /** Fee amount in USDC (e.g., "0.000050") */
   amount: string;
-  /** Fee type - CCTP only has protocol fees */
-  type: "protocol";
+  /** provider = Circle destination-deducted fee, kit = source-side app fee */
+  type: "provider" | "kit";
 }
 
 /** Result from bridge fee estimation */
@@ -337,6 +365,8 @@ export interface BridgeEstimate {
   gasFees: [];
   /** Amount recipient will receive after fees */
   receivedAmount: string;
+  /** Total source-side USDC required from the sender */
+  sourceAmount: string;
   /** Human-readable time estimate (e.g., "~20 seconds") */
   estimatedTime: string;
   /** Transfer speed this estimate is for */

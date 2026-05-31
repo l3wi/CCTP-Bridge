@@ -1,7 +1,7 @@
 import type { Connection } from "@solana/web3.js";
 import type { WalletContextState } from "@solana/wallet-adapter-react";
 import { fetchAttestationUniversal, isCompleteAttestationData } from "@/lib/iris";
-import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeKit";
+import { getExplorerTxUrlUniversal, BRIDGEKIT_ENV } from "@/lib/bridgeConfig";
 import {
   extractDestinationDomainFromMessage,
   extractSourceDomainFromMessage,

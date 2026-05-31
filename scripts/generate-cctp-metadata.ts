@@ -9,6 +9,7 @@ import type {
   EvmChainMetadata,
   SolanaChainMetadata,
   CctpContracts,
+  KitContracts,
 } from "../lib/metadata/types";
 
 const OUTPUT_PATH = resolve(process.cwd(), ".generated/metadata/cctp.generated.json");
@@ -73,6 +74,19 @@ function getRpcEndpoints(chain: ChainWithOptionalRpcUrls): string[] {
   return Array.from(new Set(combined));
 }
 
+function normalizeKitContracts(value: unknown): KitContracts | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  const raw = value as { bridge?: unknown };
+  const contracts: KitContracts = {};
+
+  if (typeof raw.bridge === "string" && raw.bridge.trim()) {
+    contracts.bridge = raw.bridge;
+  }
+
+  return Object.keys(contracts).length > 0 ? contracts : undefined;
+}
+
 function normalizeChain(chain: ChainWithOptionalRpcUrls): UniversalChainMetadata | null {
   if (chain.type !== "evm" && chain.type !== "solana") {
     return null;
@@ -105,6 +119,7 @@ function normalizeChain(chain: ChainWithOptionalRpcUrls): UniversalChainMetadata
           }
         : undefined,
     },
+    kitContracts: normalizeKitContracts((chain as { kitContracts?: unknown }).kitContracts),
     rpcEndpoints: getRpcEndpoints(chain),
   };
 

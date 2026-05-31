@@ -31,6 +31,10 @@ export interface CctpMetadata {
   };
 }
 
+export interface KitContracts {
+  bridge?: string;
+}
+
 interface BaseChainMetadata {
   name: string;
   isTestnet: boolean;
@@ -40,6 +44,7 @@ interface BaseChainMetadata {
   usdtAddress?: string;
   nativeCurrency: NativeCurrency;
   cctp?: CctpMetadata;
+  kitContracts?: KitContracts;
 }
 
 export interface EvmChainMetadata extends BaseChainMetadata {

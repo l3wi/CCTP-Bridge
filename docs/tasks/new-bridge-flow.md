@@ -215,7 +215,7 @@ lib/
     useSolanaBalance.ts         (keep as-is)
   store/
     transactionStore.ts         ✅ Updated with v3 migration
-  bridgeKit.ts                  (keep - chain metadata only)
+  bridgeConfig.ts                  (keep - chain metadata only)
   types.ts                      ✅ Updated with v3 LocalTransaction
   validation.ts                 (keep as-is)
 ```
@@ -264,5 +264,5 @@ After each phase, verify:
 |------|------------|
 | Breaking existing user transactions | v2→v3 migration with data preservation |
 | Regression in one bridge direction | Test all 3 scenarios after each phase |
-| Bridge Kit API changes | Isolate Bridge Kit usage to `bridgeKit.ts` |
+| bridge config API changes | Isolate Bridge Kit usage to `bridgeConfig.ts` |
 | Type errors during migration | Gradual migration with type guards |

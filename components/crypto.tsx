@@ -62,7 +62,7 @@ import {
   BRIDGEKIT_ENV,
   getWagmiChainsForEnv,
   getWagmiTransportsForEnv,
-} from "@/lib/bridgeKit";
+} from "@/lib/bridgeConfig";
 
 const queryClient = new QueryClient();
 let serverWagmiConfig: ReturnType<typeof createConfig> | null = null;

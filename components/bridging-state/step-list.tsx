@@ -3,7 +3,7 @@
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { getExplorerTxUrlUniversal } from "@/lib/bridgeKit";
+import { getExplorerTxUrlUniversal } from "@/lib/bridgeConfig";
 import type { StepListProps } from "./types";
 
 const CLAIMED_MESSAGE = "Success - Check wallet";

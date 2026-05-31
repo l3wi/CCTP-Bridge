@@ -65,7 +65,7 @@ vi.mock("@/lib/hooks/useCrossEcosystemBridge", () => ({
   }),
 }));
 
-vi.mock("@/lib/bridgeKit", () => ({
+vi.mock("@/lib/bridgeConfig", () => ({
   getAllSupportedChains: () => [ARB_DEF, SOL_DEF],
   resolveBridgeChainUniversal: (chainId: string | number) =>
     chainId === "Solana" ? SOL_DEF : ARB_DEF,

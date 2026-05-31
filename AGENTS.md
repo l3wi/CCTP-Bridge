@@ -10,7 +10,7 @@
   - `hooks/useBurn.ts`, `hooks/useMint.ts` — Unified React hooks (auto-route to EVM or Solana)
 - **`lib/hooks/`** — UI-level hooks (`useBridgeSteps`, `useMintPolling`, `useClaimHandler`, `useCrossEcosystemBridge`)
 - **`lib/store/`** — Zustand transaction store with localStorage persistence
-- **`lib/bridgeKit.ts`** — Circle Bridge Kit singleton for EVM-only routes and chain metadata
+- **`lib/bridgeConfig.ts`** — Circle Bridge config facade for EVM-only routes and chain metadata
 - Architecture notes and tasks belong in `docs/tasks/`. Keep README aligned when behavior changes.
 
 ## Build, Test, and Development Commands
@@ -36,5 +36,5 @@
 - Avoid introducing legacy compatibility without discussion; prefer minimal, forward-looking changes.
 
 ## Configuration & Security Tips
-- Configure via `.env.local`; key vars: `NEXT_PUBLIC_BRIDGEKIT_ENV` (`testnet`/`mainnet`), optional `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES`, transfer speed/fees (`NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED`, custom fee/recipient).
+- Configure via `.env.local`; key vars: `NEXT_PUBLIC_BRIDGEKIT_ENV` (`testnet`/`mainnet`), optional fast transfer fee config (`NEXT_PUBLIC_FAST_TX_FEE_BPS`, `NEXT_PUBLIC_FEE_ADDRESS_EVM`, `NEXT_PUBLIC_FEE_ADDRESS_SOL`).
 - Do not commit secrets or private RPC URLs; rely on Bridge Kit chain metadata instead of hardcoding addresses.

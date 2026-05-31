@@ -2,10 +2,28 @@
   "schemaVersion": 1,
   "generatedFrom": {
     "from": "2026-01-21",
-    "to": "2026-05-06",
+    "to": "2026-05-31",
     "source": "git-history"
   },
   "entries": [
+    {
+      "id": "2026-05-chain-and-account-support",
+      "date": "2026-05-31",
+      "category": "bridge",
+      "title": "More chains and account support",
+      "summary": "The bridge now tracks the latest Circle and BridgeKit network metadata and supports gas-station enabled contract accounts.",
+      "highlights": [
+        "Updated Circle and BridgeKit metadata so newly supported mainnet and testnet routes can appear in the app.",
+        "Added support for gas-station enabled contract accounts in bridge flows.",
+        "Improved account and route error handling so unsupported paths fail with clearer messages.",
+        "Kept existing bridge review behavior aligned with the expanded network coverage."
+      ],
+      "audience": ["all-users", "evm-users", "solana-users"],
+      "importance": "major",
+      "references": {
+        "commits": []
+      }
+    },
     {
       "id": "2026-05-solana-claim-safety",
       "date": "2026-05-06",
