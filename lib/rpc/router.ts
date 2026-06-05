@@ -45,7 +45,8 @@ function getNextStartIndex(key: string, size: number): number {
 }
 
 function buildRotatingFetch(key: string, urls: string[]): typeof fetch {
-  const isRetryableStatus = (status: number): boolean => status === 429 || status >= 500;
+  const isRetryableStatus = (status: number): boolean =>
+    status === 408 || status === 410 || status === 429 || status >= 500;
 
   return async (input, init) => {
     if (!urls.length) {

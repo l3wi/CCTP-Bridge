@@ -66,6 +66,42 @@ describe("rpc router", () => {
     );
   });
 
+  it("retries gone responses from stale RPC endpoints", async () => {
+    getConfiguredEvmRpcUrlsMock.mockReturnValue([
+      "https://stale-rpc.example",
+      "https://healthy-rpc.example",
+    ]);
+
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("gone", { status: 410 }))
+      .mockResolvedValueOnce(new Response("ok", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const transport = getRotatingEvmTransport(42161) as unknown as {
+      opts: { fetchFn: typeof fetch };
+    };
+
+    const response = await transport.opts.fetchFn("https://ignored", {
+      method: "POST",
+      body: "{}",
+      headers: { "content-type": "application/json" },
+    });
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://stale-rpc.example",
+      expect.objectContaining({ method: "POST" })
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      "https://healthy-rpc.example",
+      expect.objectContaining({ method: "POST" })
+    );
+  });
+
   it("throws a clear error when no EVM RPC URLs are configured", () => {
     getConfiguredEvmRpcUrlsMock.mockReturnValue([]);
 
