@@ -1,10 +1,14 @@
 import { Suspense } from "react";
+import { BridgeCardSkeleton } from "@/components/bridge-card-skeleton";
+import { BridgePageShell } from "@/components/bridge-page-shell";
 import BridgeAddPageClient from "./bridge-add-page-client";
 
 export default function BridgeAddPage() {
   return (
-    <Suspense fallback={null}>
-      <BridgeAddPageClient />
-    </Suspense>
+    <BridgePageShell>
+      <Suspense fallback={<BridgeCardSkeleton />}>
+        <BridgeAddPageClient />
+      </Suspense>
+    </BridgePageShell>
   );
 }

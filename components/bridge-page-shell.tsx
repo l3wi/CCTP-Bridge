@@ -1,13 +1,7 @@
-"use client";
-
 import type { ReactNode } from "react";
 import AnimatedBackground from "@/components/animated-bg";
-import ErrorBoundary from "@/components/ErrorBoundary";
-import { BridgeErrorFallback } from "@/components/bridge/BridgeErrorFallback";
-import { ChangelogModal } from "@/components/changelog-modal";
-import { HistoryModal } from "@/components/history-modal";
-import { SolanaWalletConnect } from "@/components/solana-wallet-connect";
-import { WalletConnect } from "@/components/wallet-connect";
+import { BridgeContentBoundary } from "@/components/bridge-content-boundary";
+import { BridgeShellActions } from "@/components/bridge-shell-actions";
 
 interface BridgePageShellProps {
   children: ReactNode;
@@ -16,12 +10,7 @@ interface BridgePageShellProps {
 export function BridgePageShell({ children }: BridgePageShellProps) {
   return (
     <AnimatedBackground>
-      <div className="absolute top-4 right-4 flex items-center gap-2">
-        <ChangelogModal />
-        <HistoryModal />
-        <SolanaWalletConnect />
-        <WalletConnect />
-      </div>
+      <BridgeShellActions />
 
       <div className="w-full max-w-xl min-h-[640px] pt-16 md:pt-5 pb-12 md:pb-0">
         <div className="mb-4">
@@ -37,13 +26,7 @@ export function BridgePageShell({ children }: BridgePageShellProps) {
           </div>
         </div>
 
-        <ErrorBoundary
-          fallback={({ error, retry }) => (
-            <BridgeErrorFallback error={error} resetErrorBoundary={retry} />
-          )}
-        >
-          {children}
-        </ErrorBoundary>
+        <BridgeContentBoundary>{children}</BridgeContentBoundary>
       </div>
     </AnimatedBackground>
   );

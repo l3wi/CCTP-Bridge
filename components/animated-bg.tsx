@@ -1,7 +1,4 @@
-"use client";
-
 import type React from "react";
-import { useState, useCallback } from "react";
 
 interface TelegramLogoProps {
   className?: string;
@@ -58,7 +55,7 @@ export default function AnimatedBackground({
   children,
 }: AnimatedBackgroundProps) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex items-center justify-center p-4 pb-28 sm:pb-16 relative overflow-hidden">
       {/* Perspective Grid */}
       <div className="absolute inset-0 opacity-25">
         <div
@@ -99,9 +96,12 @@ export default function AnimatedBackground({
       {/* Your content goes here */}
       {children}
 
-      {/* Footer */}
-      <div className="absolute bottom-4 right-4 z-20">
-        <div className="flex items-center gap-3 text-xs text-slate-400/70 font-medium">
+      <footer className="absolute inset-x-4 bottom-4 z-20 flex flex-col items-center gap-2 text-center text-xs font-medium text-slate-400/75">
+        <p className="w-full leading-5">
+          Bridge native USDC across Ethereum, Base, Arbitrum, Optimism, Polygon,
+          Avalanche, and Solana using Circle CCTP v2.
+        </p>
+        <div className="flex items-center justify-center gap-3">
           <span>made by lewi</span>
           <a
             href="https://x.com/lewifree"
@@ -122,86 +122,8 @@ export default function AnimatedBackground({
             <TelegramLogo size={14} />
           </a>
         </div>
-      </div>
+      </footer>
 
-      <style jsx>{`
-        @keyframes grid-shift {
-          0%,
-          100% {
-            transform: perspective(500px) rotateX(60deg) translateY(0px);
-          }
-          50% {
-            transform: perspective(500px) rotateX(60deg) translateY(-20px);
-          }
-        }
-
-        @keyframes gradient-float {
-          0% {
-            transform: translate(0%, 0%);
-          }
-          25% {
-            transform: translate(15%, 10%);
-          }
-          50% {
-            transform: translate(5%, 25%);
-          }
-          75% {
-            transform: translate(-10%, 15%);
-          }
-          100% {
-            transform: translate(0%, 0%);
-          }
-        }
-
-        @keyframes float {
-          0%,
-          100% {
-            transform: translateY(0px) translateX(0px);
-            opacity: 0.1;
-          }
-          25% {
-            opacity: 0.3;
-          }
-          50% {
-            transform: translateY(-20px) translateX(10px);
-            opacity: 0.1;
-          }
-          75% {
-            opacity: 0.2;
-          }
-        }
-
-        .animate-grid-shift {
-          animation: grid-shift 20s ease-in-out infinite;
-        }
-
-        .animate-float {
-          animation: float linear infinite;
-        }
-
-        @keyframes fade-out {
-          0% {
-            opacity: 0.3;
-            transform: translate(-50%, -50%) scale(0.8);
-          }
-          20% {
-            opacity: 0.2;
-            transform: translate(-50%, -50%) scale(1);
-          }
-          100% {
-            opacity: 0;
-            transform: translate(-50%, -50%) scale(1.2);
-          }
-        }
-
-        .animate-fade-out {
-          animation: fade-out 2s ease-out forwards;
-        }
-
-        .animate-gradient-float {
-          animation: gradient-float 25s ease-in-out infinite;
-        }
-      `}</style>
     </div>
   );
 }

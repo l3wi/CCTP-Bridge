@@ -3,7 +3,6 @@
 import { useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { BridgeCard, type BridgeSubmissionIntent } from "@/components/bridge-card";
-import { BridgePageShell } from "@/components/bridge-page-shell";
 import { parseBridgeIntentResult, serializeBridgeIntent } from "@/lib/bridgeIntent";
 import { buildBridgeRoute } from "@/lib/bridgeRoute";
 import { Card, CardContent } from "@/components/ui/card";
@@ -76,34 +75,28 @@ export default function HomeClientPage() {
 
   if (hasInvalidExecuteIntent) {
     return (
-      <BridgePageShell>
-        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 space-y-4">
-            <h2 className="text-lg font-semibold">Invalid pending bridge request</h2>
-            <p className="text-sm text-slate-400">
-              {invalidIntentMessage}
-            </p>
-            <Button
-              onClick={handleBackToNew}
-              className="bg-blue-600 hover:bg-blue-700 text-white"
-            >
-              Back to Bridge Form
-            </Button>
-          </CardContent>
-        </Card>
-      </BridgePageShell>
+      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Invalid pending bridge request</h2>
+          <p className="text-sm text-slate-400">{invalidIntentMessage}</p>
+          <Button
+            onClick={handleBackToNew}
+            className="bg-blue-600 hover:bg-blue-700 text-white"
+          >
+            Back to Bridge Form
+          </Button>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <BridgePageShell>
-      <BridgeCard
-        mode={shouldExecute ? "executeIntent" : "intentOnly"}
-        initialIntent={shouldExecute ? intent : null}
-        onSubmitIntent={handleSubmitIntent}
-        onPendingHashResolved={handlePendingHash}
-        onBackToNew={handleBackToNew}
-      />
-    </BridgePageShell>
+    <BridgeCard
+      mode={shouldExecute ? "executeIntent" : "intentOnly"}
+      initialIntent={shouldExecute ? intent : null}
+      onSubmitIntent={handleSubmitIntent}
+      onPendingHashResolved={handlePendingHash}
+      onBackToNew={handleBackToNew}
+    />
   );
 }

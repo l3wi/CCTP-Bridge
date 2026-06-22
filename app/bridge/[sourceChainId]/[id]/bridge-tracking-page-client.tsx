@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { BridgePageShell } from "@/components/bridge-page-shell";
 import { BridgeTrackingCard } from "@/components/bridge-tracking-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { useTransactionStore } from "@/lib/store/transactionStore";
@@ -313,56 +312,48 @@ export default function BridgeTrackingPageClient({
 
   if (!isStoreHydrated) {
     return (
-      <BridgePageShell>
-        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
-            <div className="flex items-center gap-2 text-sm text-slate-300">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Loading local bridge history...
-            </div>
-          </CardContent>
-        </Card>
-      </BridgePageShell>
+      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading local bridge history...
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   if (isInitialLookupPending) {
     return (
-      <BridgePageShell>
-        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
-            <div className="flex items-center gap-2 text-sm text-slate-300">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Looking up transaction state...
-            </div>
-          </CardContent>
-        </Card>
-      </BridgePageShell>
+      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Looking up transaction state...
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   if (!matchedTransaction) {
     return (
-      <BridgePageShell>
-        <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-          <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
-            <div className="flex items-center gap-2 text-sm text-slate-300">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Redirecting to pending transaction form...
-            </div>
-          </CardContent>
-        </Card>
-      </BridgePageShell>
+      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+          <div className="flex items-center gap-2 text-sm text-slate-300">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Redirecting to pending transaction form...
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <BridgePageShell>
-      <BridgeTrackingCard
-        transaction={matchedTransaction}
-        onBack={() => router.replace("/bridge")}
-        onMessageExpiredNonce={handleMessageExpiredNonce}
-      />
-    </BridgePageShell>
+    <BridgeTrackingCard
+      transaction={matchedTransaction}
+      onBack={() => router.replace("/bridge")}
+      onMessageExpiredNonce={handleMessageExpiredNonce}
+    />
   );
 }

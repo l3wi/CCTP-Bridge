@@ -1,4 +1,5 @@
 import { after } from "next/server";
+import { BridgePageShell } from "@/components/bridge-page-shell";
 import BridgeTrackingPageClient from "./bridge-tracking-page-client";
 import { trackVerifiedBridgeView } from "@/lib/analytics/trackVerifiedBridgeView";
 
@@ -21,5 +22,9 @@ export default async function BridgeTrackingPage({
     });
   });
 
-  return <BridgeTrackingPageClient sourceParam={sourceChainId} idParam={id} />;
+  return (
+    <BridgePageShell>
+      <BridgeTrackingPageClient sourceParam={sourceChainId} idParam={id} />
+    </BridgePageShell>
+  );
 }
