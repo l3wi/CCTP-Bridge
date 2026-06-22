@@ -14,6 +14,7 @@
     "test:fork:evm": "vitest run tests/integration/evm-fast-fee-fork.test.ts",
     "metadata:generate": "bun run scripts/generate-cctp-metadata.ts",
     "rpc:generate": "bun run scripts/generate-rpc-candidates.ts",
+    "events:bridge-report": "bun run scripts/report-bridge-events.ts",
     "metadata:refresh": "bun run metadata:generate && bun run rpc:generate",
     "prepare": "husky"
   },

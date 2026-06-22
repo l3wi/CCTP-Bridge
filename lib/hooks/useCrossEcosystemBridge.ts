@@ -26,6 +26,7 @@ import {
 import { getErrorMessage } from "@/lib/cctp/errors";
 import { useTransactionStore } from "@/lib/store/transactionStore";
 import { resolveEstimatedTimeLabel } from "@/lib/estimatedTime";
+import { sendBridgeBurnEvent } from "@/lib/analytics/sendBridgeBurnEvent";
 
 const CANCELLATION_MESSAGES = new Set([
   "Transaction cancelled by user",
@@ -177,6 +178,27 @@ export const useCrossEcosystemBridge = () => {
         currentHashRef.current = burnHash;
         opts?.onPendingHash?.(burnHash);
 
+        const circleFastFee = burnResult.circleFastFee !== undefined
+          ? formatUnits(burnResult.circleFastFee, 6)
+          : undefined;
+        const appFastFee = burnResult.appFastFee !== undefined
+          ? formatUnits(burnResult.appFastFee, 6)
+          : undefined;
+
+        try {
+          sendBridgeBurnEvent({
+            burnHash,
+            sourceChainId: params.sourceChainId,
+            targetChainId: params.targetChainId,
+            amount: formattedAmount,
+            transferType,
+            appFastFee,
+            circleFastFee,
+          });
+        } catch (analyticsError) {
+          console.warn("[analytics] bridge burn event dispatch failed:", analyticsError);
+        }
+
         // Build initial steps using unified helper
         const initialSteps = createInitialSteps({
           sourceChainType,
@@ -202,17 +224,11 @@ export const useCrossEcosystemBridge = () => {
           steps: initialSteps,
           bridgeResult: initialResult,
           amount: formattedAmount,
-          circleFastFee: burnResult.circleFastFee !== undefined
-            ? formatUnits(burnResult.circleFastFee, 6)
-            : undefined,
-          appFastFee: burnResult.appFastFee !== undefined
-            ? formatUnits(burnResult.appFastFee, 6)
-            : undefined,
+          circleFastFee,
+          appFastFee,
           appFeeBps: burnResult.appFeeBps,
           appFeeRecipient: burnResult.appFeeRecipient,
-          fee: burnResult.circleFastFee !== undefined
-            ? formatUnits(burnResult.circleFastFee, 6)
-            : undefined,
+          fee: circleFastFee,
           originChain: params.sourceChainId,
           targetChain: params.targetChainId,
           targetAddress: recipientAddress,

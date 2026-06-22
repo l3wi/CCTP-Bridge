@@ -66,13 +66,7 @@ describe("trackVerifiedBridgeView", () => {
       "0xabc123"
     );
     expect(recoverTransactionFromNonce).not.toHaveBeenCalled();
-    expect(track).toHaveBeenCalledWith("bridge", {
-      amount: "12.50",
-      meta: "12.50,11155111,8453,1",
-      recipientResolution: "verified_from_iris",
-      sourceChainId: 11155111,
-      targetChainId: 8453,
-    });
+    expect(track).toHaveBeenCalledWith("bridge_verified_view");
   });
 
   it("tracks verified nonce lookups", async () => {
@@ -105,13 +99,7 @@ describe("trackVerifiedBridgeView", () => {
       "12345"
     );
     expect(recoverTransactionFromBurnHash).not.toHaveBeenCalled();
-    expect(track).toHaveBeenCalledWith("bridge", {
-      amount: "1.00",
-      meta: "1.00,Solana_Devnet,11155111,0",
-      recipientResolution: "verified_from_iris",
-      sourceChainId: "Solana_Devnet",
-      targetChainId: 11155111,
-    });
+    expect(track).toHaveBeenCalledWith("bridge_verified_view");
   });
 
   it("does nothing when source segment is invalid", async () => {

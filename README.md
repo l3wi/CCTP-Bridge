@@ -36,7 +36,7 @@ EVM_FORK_ETH_RPC_URL=https://...                 # Optional: Ethereum fork tests
 EVM_FORK_ARB_RPC_URL=https://...                 # Optional: Arbitrum fork tests
 ```
 
-Bridge analytics events are emitted server-side from `/bridge/<source>/<id>` only after Iris-based transaction recovery succeeds.
+Bridge volume analytics are emitted server-side through `/api/events/burn` after a burn transaction is submitted. The Vercel custom event is `bridge_burn_submitted` with two Pro-plan-safe properties: `id` (`sourceChainId:burnHash`) and compact metadata `m`. Export Vercel custom events and run `bun run events:bridge-report -- <export.csv>` to dedupe by `id` and report fast/standard volume. Tracking-page views emit `bridge_verified_view` and must not be used for bridge-volume reporting.
 Fast tx fees are charged only for fast transfers and are included in the entered amount. On EVM, Circle's bridge contract routes 90% to `NEXT_PUBLIC_FEE_ADDRESS_EVM`; on Solana, the app adds an atomic SPL transfer that routes 100% to `NEXT_PUBLIC_FEE_ADDRESS_SOL`. Deprecated variables `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` and `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` are ignored and now emit runtime warnings when present.
 
 ## Architecture

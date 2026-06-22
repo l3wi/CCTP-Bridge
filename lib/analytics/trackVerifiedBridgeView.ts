@@ -69,16 +69,7 @@ export async function trackVerifiedBridgeView({
 
     if (!hasTrackableFields(recovered.transaction)) return;
 
-    const txType = recovered.transaction.transferType === "fast" ? 1 : 0;
-    await track("bridge", {
-      amount: recovered.transaction.amount,
-      meta: `${recovered.transaction.amount},${String(
-        recovered.transaction.originChain
-      )},${String(recovered.transaction.targetChain)},${txType}`,
-      recipientResolution: "verified_from_iris",
-      sourceChainId: recovered.transaction.originChain,
-      targetChainId: recovered.transaction.targetChain,
-    });
+    await track("bridge_verified_view");
   } catch (error) {
     // Never block rendering for analytics telemetry.
     if (process.env.NODE_ENV !== "production") {
