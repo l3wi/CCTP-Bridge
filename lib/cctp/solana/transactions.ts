@@ -249,7 +249,11 @@ export async function buildReceiveMessageTransaction(
   const pdas = deriveMintPdas(sourceDomain, sourceUsdcPubkey, usdcMint);
   const eventNonce = extractEventNonceFromMessage(message);
   const usedNoncePda = deriveUsedNoncePda(eventNonce);
-  const feeRecipient = await fetchFeeRecipient(connection, pdas.tokenMessengerPda);
+  const feeRecipient = await fetchFeeRecipient(
+    connection,
+    pdas.tokenMessengerPda,
+    isTestnet ? "devnet" : "mainnet"
+  );
   const feeRecipientAta = await getAssociatedTokenAddress(
     usdcMint,
     feeRecipient,
