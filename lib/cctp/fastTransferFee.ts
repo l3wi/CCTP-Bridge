@@ -3,7 +3,7 @@ import { isEvmAddress, type ChainId, type EvmAddress, type TransferSpeed } from 
 
 const BPS_DENOMINATOR = 10_000n;
 export const STANDARD_TRANSFER_SUPPORT_FEE_BPS = 2;
-export const STANDARD_TRANSFER_SUPPORT_MINIMUM_AMOUNT = 250_000_000_000n;
+export const STANDARD_TRANSFER_SUPPORT_MINIMUM_AMOUNT = 100_000_000_000n;
 
 export interface FastTransferFeeConfig {
   enabled: boolean;

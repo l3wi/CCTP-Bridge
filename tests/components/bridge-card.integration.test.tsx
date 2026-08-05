@@ -118,8 +118,8 @@ vi.mock("@/lib/cctp/estimate", () => ({
 
 vi.mock("@/lib/cctp/fastTransferFee", () => ({
   getStandardTransferSupportQuote: ({ amount }: { amount: bigint }) => ({
-    eligible: amount >= 250_000_000_000n,
-    feeAmount: 50_000_000n,
+    eligible: amount >= 100_000_000_000n,
+    feeAmount: 20_000_000n,
     feeBps: 2,
     recipient: "0x1111111111111111111111111111111111111111",
     config: { enabled: true, feeBps: 4 },
@@ -233,11 +233,11 @@ describe("BridgeCard recipient lock integration", () => {
     const user = userEvent.setup();
     render(<BridgeCard />);
 
-    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.type(screen.getByPlaceholderText("0.0"), "100000");
     await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
 
     expect(screen.getByRole("heading", { name: "Consider Supporting CCTP.io" })).toBeTruthy();
-    expect(screen.getByText("50.00 USDC")).toBeTruthy();
+    expect(screen.getByText("20.00 USDC")).toBeTruthy();
     expect(bridgeMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Bridge with contribution" }));
@@ -246,7 +246,7 @@ describe("BridgeCard recipient lock integration", () => {
     expect(bridgeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         transferType: "standard",
-        appFeeAmount: 50_000_000n,
+        appFeeAmount: 20_000_000n,
         appFeeBps: 2,
       }),
       expect.anything()
@@ -258,7 +258,7 @@ describe("BridgeCard recipient lock integration", () => {
     const submitIntentMock = vi.fn();
     render(<BridgeCard mode="intentOnly" onSubmitIntent={submitIntentMock} />);
 
-    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.type(screen.getByPlaceholderText("0.0"), "100000");
     await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
 
     await waitFor(() => expect(submitIntentMock).toHaveBeenCalledTimes(1));
@@ -276,7 +276,7 @@ describe("BridgeCard recipient lock integration", () => {
     const user = userEvent.setup();
     render(<BridgeCard />);
 
-    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.type(screen.getByPlaceholderText("0.0"), "100000");
     await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
     await user.click(screen.getByRole("button", { name: "Bridge without contributing" }));
 
@@ -388,7 +388,7 @@ describe("BridgeCard execute intent integration", () => {
         mode="executeIntent"
         initialIntent={{
           ...baseIntent,
-          amount: "250000",
+          amount: "100000",
           transferType: "standard",
           showStandardSupportPrompt: true,
         }}
@@ -406,7 +406,7 @@ describe("BridgeCard execute intent integration", () => {
     expect(bridgeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         transferType: "standard",
-        appFeeAmount: 50_000_000n,
+        appFeeAmount: 20_000_000n,
       }),
       expect.anything()
     );
