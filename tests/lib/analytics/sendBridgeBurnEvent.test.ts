@@ -8,6 +8,8 @@ describe("sendBridgeBurnEvent", () => {
     burnHash: `0x${"a".repeat(64)}` as const,
     sourceChainId: 1,
     targetChainId: 8453,
+    fromAddress: `0x${"1".repeat(40)}`,
+    toAddress: `0x${"2".repeat(40)}`,
     amount: "1.000000",
     transferType: "fast" as const,
   };

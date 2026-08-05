@@ -1,17 +1,13 @@
-import { track } from "@vercel/analytics/server";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import {
-  BRIDGE_BURN_EVENT_NAME,
   BridgeBurnEventValidationError,
   buildBridgeBurnEventPayload,
+  parseBridgeBurnEventMetadata,
   type BridgeBurnEventInput,
 } from "@/lib/analytics/bridgeBurnEvent";
+import { recordBridgeBurnSubmission } from "@/lib/db/bridgeBurnSubmissions";
 
 export async function POST(request: Request) {
-  if (process.env.NEXT_PUBLIC_DISABLE_META_ANALYTICS === "1") {
-    return new NextResponse(null, { status: 204 });
-  }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -20,8 +16,23 @@ export async function POST(request: Request) {
   }
 
   try {
-    const payload = buildBridgeBurnEventPayload(body as BridgeBurnEventInput);
-    await track(BRIDGE_BURN_EVENT_NAME, { id: payload.id, m: payload.m });
+    const input = body as BridgeBurnEventInput;
+    const payload = buildBridgeBurnEventPayload(input);
+    const metadata = parseBridgeBurnEventMetadata(payload.m);
+    after(async () => {
+      try {
+        await recordBridgeBurnSubmission({
+          eventId: payload.id,
+          metadata,
+          fromAddress: input.fromAddress.trim(),
+          toAddress: input.toAddress.trim(),
+          appFeeBps: input.appFeeBps,
+        });
+      } catch (error) {
+        console.warn("[db] bridge burn recording failed:", error);
+      }
+    });
+
     return NextResponse.json({ ok: true }, { status: 202 });
   } catch (error) {
     if (error instanceof BridgeBurnEventValidationError) {

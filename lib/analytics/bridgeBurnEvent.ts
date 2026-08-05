@@ -6,7 +6,6 @@ import {
   type UniversalTxHash,
 } from "@/lib/types";
 
-export const BRIDGE_BURN_EVENT_NAME = "bridge_burn_submitted";
 export const BRIDGE_BURN_EVENT_VERSION = "v1";
 export const VERCEL_CUSTOM_PROPERTY_LIMIT = 255;
 
@@ -17,9 +16,12 @@ export interface BridgeBurnEventInput {
   burnHash: UniversalTxHash;
   sourceChainId: ChainId;
   targetChainId: ChainId;
+  fromAddress: string;
+  toAddress: string;
   amount: string;
   transferType: BridgeBurnTransferType;
   appFastFee?: string;
+  appFeeBps?: number;
   circleFastFee?: string;
 }
 
@@ -102,6 +104,21 @@ const normalizeTransferType = (value: unknown): BridgeBurnTransferType => {
   throw new BridgeBurnEventValidationError("Invalid transfer type");
 };
 
+const normalizeOptionalFeeBps = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw new BridgeBurnEventValidationError("Invalid app fee basis points");
+  }
+  return value;
+};
+
+const normalizeAddress = (value: unknown, name: string): string => {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new BridgeBurnEventValidationError(`Invalid ${name}`);
+  }
+  return value.trim();
+};
+
 const assertVercelPropertyLimit = (name: string, value: string): void => {
   if (value.length > VERCEL_CUSTOM_PROPERTY_LIMIT) {
     throw new BridgeBurnEventValidationError(
@@ -115,10 +132,13 @@ export const buildBridgeBurnEventPayload = (
 ): BridgeBurnEventPayload => {
   const sourceChainId = normalizeChainId(input.sourceChainId);
   const targetChainId = normalizeChainId(input.targetChainId);
+  normalizeAddress(input.fromAddress, "source address");
+  normalizeAddress(input.toAddress, "destination address");
   const burnHash = normalizeBurnHash(input.burnHash, sourceChainId);
   const amount = normalizeDecimal(input.amount);
   const transferType = normalizeTransferType(input.transferType);
   const appFastFee = normalizeDecimal(input.appFastFee, "0");
+  normalizeOptionalFeeBps(input.appFeeBps);
   const circleFastFee = normalizeDecimal(input.circleFastFee, "0");
   const speed: BridgeBurnEventSpeed = transferType === "fast" ? "f" : "s";
 

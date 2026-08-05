@@ -193,9 +193,12 @@ export const useCrossEcosystemBridge = () => {
             burnHash,
             sourceChainId: params.sourceChainId,
             targetChainId: params.targetChainId,
+            fromAddress: senderAddress ?? "",
+            toAddress: recipientAddress,
             amount: formattedAmount,
             transferType,
             appFastFee,
+            appFeeBps: burnResult.appFeeBps,
             circleFastFee,
           });
         } catch (analyticsError) {

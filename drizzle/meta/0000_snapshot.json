@@ -1,0 +1,145 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "bb50296d-83b5-429c-8846-9f03683f29a2",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "bridge_burn_submissions": {
+      "name": "bridge_burn_submissions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "burn_hash": {
+          "name": "burn_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_chain_id": {
+          "name": "source_chain_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_chain_id": {
+          "name": "target_chain_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "transfer_type": {
+          "name": "transfer_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "amount_atomic": {
+          "name": "amount_atomic",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "app_fee_atomic": {
+          "name": "app_fee_atomic",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "app_fee_bps": {
+          "name": "app_fee_bps",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "circle_fee_atomic": {
+          "name": "circle_fee_atomic",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "submitted_at": {
+          "name": "submitted_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "recorded_at": {
+          "name": "recorded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "bridge_burn_submissions_chain_hash_idx": {
+          "name": "bridge_burn_submissions_chain_hash_idx",
+          "columns": [
+            "source_chain_id",
+            "burn_hash"
+          ],
+          "isUnique": true
+        },
+        "bridge_burn_submissions_submitted_at_idx": {
+          "name": "bridge_burn_submissions_submitted_at_idx",
+          "columns": [
+            "submitted_at"
+          ],
+          "isUnique": false
+        },
+        "bridge_burn_submissions_transfer_type_idx": {
+          "name": "bridge_burn_submissions_transfer_type_idx",
+          "columns": [
+            "transfer_type"
+          ],
+          "isUnique": false
+        },
+        "bridge_burn_submissions_route_idx": {
+          "name": "bridge_burn_submissions_route_idx",
+          "columns": [
+            "source_chain_id",
+            "target_chain_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "bridge_burn_submissions_transfer_type_check": {
+          "name": "bridge_burn_submissions_transfer_type_check",
+          "value": "\"bridge_burn_submissions\".\"transfer_type\" in ('fast', 'standard')"
+        },
+        "bridge_burn_submissions_amounts_non_negative_check": {
+          "name": "bridge_burn_submissions_amounts_non_negative_check",
+          "value": "\"bridge_burn_submissions\".\"amount_atomic\" >= 0 and \"bridge_burn_submissions\".\"app_fee_atomic\" >= 0 and \"bridge_burn_submissions\".\"circle_fee_atomic\" >= 0"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

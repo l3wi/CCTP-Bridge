@@ -35,9 +35,15 @@ NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable verified br
 CORS_ORIGIN=https://your-app-domain.example      # Required in CI for RPC validation; local fallback defaults to https://cctp.io
 EVM_FORK_ETH_RPC_URL=https://...                 # Optional: Ethereum fork tests
 EVM_FORK_ARB_RPC_URL=https://...                 # Optional: Arbitrum fork tests
+TURSO_DATABASE_URL=libsql://your-database.turso.io # Server-only first-party statistics database
+TURSO_AUTH_TOKEN=...                               # Server-only Turso token
 ```
 
-Bridge volume analytics are emitted server-side through `/api/events/burn` after a burn transaction is submitted. The Vercel custom event is `bridge_burn_submitted` with two Pro-plan-safe properties: `id` (`sourceChainId:burnHash`) and compact metadata `m`. Export Vercel custom events and run `bun run events:bridge-report -- <export.csv>` to dedupe by `id` and report fast/standard volume. Tracking-page views emit `bridge_verified_view` and must not be used for bridge-volume reporting.
+Bridge volume records are submitted server-side through `/api/events/burn` after a burn transaction is submitted. The route returns immediately and schedules the first-party Turso insert after the response. Turso stores an idempotent append-only `bridge_burn_submissions` ledger with origin/destination chains and addresses, entered amount, transfer type, app fee, Circle fee, and timestamps. Run `bun run db:generate` after schema changes and `bun run db:migrate` with the server-only Turso variables loaded to apply migrations.
+
+Detailed bridge-burn data is stored only in Turso; it is not exported as a Vercel custom event. Vercel receives only the `bridge_verified_view` counter after a submitted bridge is verified. That counter is operational telemetry and must not be used for bridge-volume reporting.
+
+Query first-party statistics for a supported rolling window with `bun run db:bridge-report -- --days 7|30|90|120`. The report prints total/fast/standard volume, app-collected fast fees, optional standard support contributions, and bridge counts. Circle relay fees remain available separately in the ledger and are not included in the app-fee totals.
 Fast tx fees are charged only for fast transfers and are included in the entered amount. Standard transfers of 250,000 USDC or more offer an optional 2 bps contribution after the user presses Bridge Standard; declining proceeds with no app fee. On EVM, Circle's bridge contract routes 90% to `NEXT_PUBLIC_FEE_ADDRESS_EVM`; on Solana, the app adds an atomic SPL transfer that routes 100% to `NEXT_PUBLIC_FEE_ADDRESS_SOL`. Deprecated variables `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` and `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` are ignored and now emit runtime warnings when present.
 
 ## Architecture

@@ -97,9 +97,12 @@ describe("useCrossEcosystemBridge", () => {
       burnHash,
       sourceChainId: 42161,
       targetChainId: 8453,
+      fromAddress: "0x1111111111111111111111111111111111111111",
+      toAddress: "0x2222222222222222222222222222222222222222",
       amount: "1000",
       transferType: "fast",
       appFastFee: "0.5",
+      appFeeBps: 5,
       circleFastFee: "0.012345",
     });
     expect(addTransactionMock).toHaveBeenCalledWith(

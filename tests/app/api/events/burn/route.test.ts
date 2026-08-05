@@ -1,10 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { track } from "@vercel/analytics/server";
 import { POST } from "@/app/api/events/burn/route";
-import { BRIDGE_BURN_EVENT_NAME } from "@/lib/analytics/bridgeBurnEvent";
+import { recordBridgeBurnSubmission } from "@/lib/db/bridgeBurnSubmissions";
 
-vi.mock("@vercel/analytics/server", () => ({
-  track: vi.fn(async () => undefined),
+vi.mock("next/server", async () => {
+  const actual = await vi.importActual<typeof import("next/server")>("next/server");
+  return {
+    ...actual,
+    after: vi.fn((callback: () => void | Promise<void>) => {
+      void callback();
+    }),
+  };
+});
+
+vi.mock("@/lib/db/bridgeBurnSubmissions", () => ({
+  recordBridgeBurnSubmission: vi.fn(async () => undefined),
 }));
 
 describe("POST /api/events/burn", () => {
@@ -19,7 +28,7 @@ describe("POST /api/events/burn", () => {
     }
   });
 
-  it("tracks a valid bridge burn event server-side", async () => {
+  it("records a valid bridge burn submission server-side", async () => {
     const response = await POST(
       new Request("http://localhost/api/events/burn", {
         method: "POST",
@@ -27,18 +36,32 @@ describe("POST /api/events/burn", () => {
           burnHash: `0x${"a".repeat(64)}`,
           sourceChainId: 42161,
           targetChainId: 8453,
+          fromAddress: `0x${"1".repeat(40)}`,
+          toAddress: `0x${"2".repeat(40)}`,
           amount: "100.000000",
           transferType: "fast",
           appFastFee: "0.050000",
+          appFeeBps: 5,
           circleFastFee: "0.010000",
         }),
       })
     );
 
     expect(response.status).toBe(202);
-    expect(track).toHaveBeenCalledWith(BRIDGE_BURN_EVENT_NAME, {
-      id: `42161:0x${"a".repeat(64)}`,
-      m: "v1,100.000000,42161,8453,f,0.050000,0.010000",
+    expect(recordBridgeBurnSubmission).toHaveBeenCalledWith({
+      eventId: `42161:0x${"a".repeat(64)}`,
+      metadata: {
+        version: "v1",
+        amount: "100.000000",
+        sourceChainId: "42161",
+        targetChainId: "8453",
+        speed: "f",
+        appFastFee: "0.050000",
+        circleFastFee: "0.010000",
+      },
+      fromAddress: `0x${"1".repeat(40)}`,
+      toAddress: `0x${"2".repeat(40)}`,
+      appFeeBps: 5,
     });
   });
 
@@ -57,10 +80,9 @@ describe("POST /api/events/burn", () => {
     );
 
     expect(response.status).toBe(400);
-    expect(track).not.toHaveBeenCalled();
   });
 
-  it("respects the analytics disable flag", async () => {
+  it("records the submission independently of the verified counter flag", async () => {
     process.env.NEXT_PUBLIC_DISABLE_META_ANALYTICS = "1";
 
     const response = await POST(
@@ -70,13 +92,36 @@ describe("POST /api/events/burn", () => {
           burnHash: `0x${"a".repeat(64)}`,
           sourceChainId: 1,
           targetChainId: 8453,
+          fromAddress: `0x${"1".repeat(40)}`,
+          toAddress: `0x${"2".repeat(40)}`,
           amount: "1",
           transferType: "standard",
         }),
       })
     );
 
-    expect(response.status).toBe(204);
-    expect(track).not.toHaveBeenCalled();
+    expect(response.status).toBe(202);
+    expect(recordBridgeBurnSubmission).toHaveBeenCalled();
+  });
+
+  it("returns accepted when database recording fails", async () => {
+    vi.mocked(recordBridgeBurnSubmission).mockRejectedValueOnce(new Error("Turso offline"));
+
+    const response = await POST(
+      new Request("http://localhost/api/events/burn", {
+        method: "POST",
+        body: JSON.stringify({
+          burnHash: `0x${"b".repeat(64)}`,
+          sourceChainId: 1,
+          targetChainId: 10,
+          fromAddress: `0x${"1".repeat(40)}`,
+          toAddress: `0x${"2".repeat(40)}`,
+          amount: "1",
+          transferType: "standard",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(202);
   });
 });

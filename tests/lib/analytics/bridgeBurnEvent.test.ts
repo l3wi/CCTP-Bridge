@@ -11,6 +11,8 @@ describe("bridge burn event payloads", () => {
       burnHash: `0x${"A".repeat(64)}`,
       sourceChainId: 42161,
       targetChainId: 8453,
+      fromAddress: `0x${"1".repeat(40)}`,
+      toAddress: `0x${"2".repeat(40)}`,
       amount: "1000.000000",
       transferType: "fast",
       appFastFee: "0.500000",
@@ -41,6 +43,8 @@ describe("bridge burn event payloads", () => {
       burnHash: solanaSignature,
       sourceChainId: "Solana",
       targetChainId: 1,
+      fromAddress: "1".repeat(32),
+      toAddress: "2".repeat(32),
       amount: "25.5",
       transferType: "standard",
     });
@@ -57,6 +61,8 @@ describe("bridge burn event payloads", () => {
         burnHash: "0xabc",
         sourceChainId: 1,
         targetChainId: 8453,
+        fromAddress: `0x${"1".repeat(40)}`,
+        toAddress: `0x${"2".repeat(40)}`,
         amount: "1.00",
         transferType: "fast",
       })
@@ -67,6 +73,8 @@ describe("bridge burn event payloads", () => {
         burnHash: `0x${"a".repeat(64)}`,
         sourceChainId: 1,
         targetChainId: 8453,
+        fromAddress: `0x${"1".repeat(40)}`,
+        toAddress: `0x${"2".repeat(40)}`,
         amount: "1.0000001",
         transferType: "fast",
       })
