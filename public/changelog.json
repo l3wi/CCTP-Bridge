@@ -2,10 +2,27 @@
   "schemaVersion": 1,
   "generatedFrom": {
     "from": "2026-01-21",
-    "to": "2026-05-31",
+    "to": "2026-08-05",
     "source": "git-history"
   },
   "entries": [
+    {
+      "id": "2026-08-bridge-flow-refinements",
+      "date": "2026-08-05",
+      "category": "bridge",
+      "title": "Bridge flow refinements",
+      "summary": "Refined the bridge interface and transaction handling for a clearer, more reliable transfer flow.",
+      "highlights": [
+        "Improved the confirmation flow before wallet approval.",
+        "Refactored transfer construction and execution handoff across supported networks.",
+        "Compacted bridge and status-card layouts to remove unnecessary empty space."
+      ],
+      "audience": ["all-users", "evm-users", "solana-users"],
+      "importance": "minor",
+      "references": {
+        "commits": []
+      }
+    },
     {
       "id": "2026-05-chain-and-account-support",
       "date": "2026-05-31",

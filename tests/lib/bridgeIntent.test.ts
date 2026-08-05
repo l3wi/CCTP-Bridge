@@ -48,6 +48,22 @@ describe("parseBridgeIntent", () => {
     expect(parsed).toEqual(intent);
   });
 
+  it("preserves a requested standard-transfer support prompt", () => {
+    const [sourceChainId, targetChainId] = getEvmChainPair();
+    const intent: BridgeIntent = {
+      sourceChainId,
+      targetChainId,
+      amount: "250000",
+      targetAddress: "0x1111111111111111111111111111111111111111",
+      transferType: "standard",
+      showStandardSupportPrompt: true,
+    };
+
+    const params = serializeBridgeIntent(intent);
+    expect(params.get("standardSupport")).toBe("1");
+    expect(parseBridgeIntent(params)).toEqual(intent);
+  });
+
   it("rejects an invalid EVM target address", () => {
     const [sourceChainId, targetChainId] = getEvmChainPair();
     const intent: BridgeIntent = {

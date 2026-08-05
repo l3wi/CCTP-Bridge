@@ -2,6 +2,8 @@ import { PublicKey } from "@solana/web3.js";
 import { isEvmAddress, type ChainId, type EvmAddress, type TransferSpeed } from "./types";
 
 const BPS_DENOMINATOR = 10_000n;
+export const STANDARD_TRANSFER_SUPPORT_FEE_BPS = 2;
+export const STANDARD_TRANSFER_SUPPORT_MINIMUM_AMOUNT = 250_000_000_000n;
 
 export interface FastTransferFeeConfig {
   enabled: boolean;
@@ -15,6 +17,10 @@ export interface FastTransferFeeQuote {
   feeBps: number;
   recipient?: string;
   config: FastTransferFeeConfig;
+}
+
+export interface StandardTransferSupportQuote extends FastTransferFeeQuote {
+  eligible: boolean;
 }
 
 function parseFeeBps(value: string | undefined): number {
@@ -44,6 +50,29 @@ export function getFastTransferFeeConfig(): FastTransferFeeConfig {
     feeBps,
     evmRecipient,
     solanaRecipient,
+  };
+}
+
+export function getStandardTransferSupportQuote(params: {
+  amount: bigint;
+  sourceChainId: ChainId;
+}): StandardTransferSupportQuote {
+  const config = getFastTransferFeeConfig();
+  const recipient = typeof params.sourceChainId === "string"
+    ? config.solanaRecipient
+    : config.evmRecipient;
+  const eligible =
+    Boolean(recipient) &&
+    params.amount >= STANDARD_TRANSFER_SUPPORT_MINIMUM_AMOUNT;
+
+  return {
+    eligible,
+    feeAmount: eligible
+      ? calculateFastTransferFeeAmount(params.amount, STANDARD_TRANSFER_SUPPORT_FEE_BPS)
+      : 0n,
+    feeBps: STANDARD_TRANSFER_SUPPORT_FEE_BPS,
+    recipient: eligible ? recipient : undefined,
+    config,
   };
 }
 

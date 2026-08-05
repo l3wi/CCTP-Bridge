@@ -10,6 +10,7 @@ export interface BridgeIntent {
   amount: string;
   targetAddress: string;
   transferType: "fast" | "standard";
+  showStandardSupportPrompt?: boolean;
 }
 
 export type BridgeIntentParseReason =
@@ -37,6 +38,7 @@ const QUERY_KEYS = {
   amount: "amount",
   targetAddress: "targetAddress",
   transferType: "transferType",
+  standardSupport: "standardSupport",
 } as const;
 
 export const serializeBridgeIntent = (intent: BridgeIntent): URLSearchParams => {
@@ -59,6 +61,9 @@ export const serializeBridgeIntent = (intent: BridgeIntent): URLSearchParams => 
   params.set(QUERY_KEYS.amount, intent.amount);
   params.set(QUERY_KEYS.targetAddress, intent.targetAddress);
   params.set(QUERY_KEYS.transferType, intent.transferType);
+  if (intent.showStandardSupportPrompt) {
+    params.set(QUERY_KEYS.standardSupport, "1");
+  }
   return params;
 };
 
@@ -145,6 +150,7 @@ export const parseBridgeIntentResult = (
   const amount = (params.get(QUERY_KEYS.amount) ?? "").trim();
   const targetAddress = (params.get(QUERY_KEYS.targetAddress) ?? "").trim();
   const transferType = params.get(QUERY_KEYS.transferType);
+  const showStandardSupportPrompt = params.get(QUERY_KEYS.standardSupport) === "1";
 
   if (!source) {
     if (parsedSourceDomain.unsupportedDomain) {
@@ -194,6 +200,7 @@ export const parseBridgeIntentResult = (
       amount,
       targetAddress,
       transferType,
+      ...(showStandardSupportPrompt ? { showStandardSupportPrompt: true } : {}),
     },
   };
 };

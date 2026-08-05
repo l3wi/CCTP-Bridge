@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function BridgeCardSkeleton() {
   return (
-    <Card className="min-h-[520px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+    <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
       <CardContent className="space-y-4 p-4 md:p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center">
           <div className="w-full space-y-2 md:flex-1">

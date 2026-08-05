@@ -164,6 +164,9 @@ export const useCrossEcosystemBridge = () => {
             amount: params.amount,
             recipientAddress: recipientAddress!,
             transferSpeed: transferType,
+            appFeeAmount: params.appFeeAmount,
+            appFeeBps: params.appFeeBps,
+            appFeeRecipient: params.appFeeRecipient,
           },
           burnCallbacks
         );

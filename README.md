@@ -30,6 +30,7 @@ NEXT_PUBLIC_BRIDGEKIT_ENV=testnet|mainnet        # Chain environment (default: t
 NEXT_PUBLIC_FAST_TX_FEE_BPS=4                    # Optional fast tx app fee paid by user
 NEXT_PUBLIC_FEE_ADDRESS_EVM=0x...                # Required with FAST_TX_FEE_BPS for EVM fees
 NEXT_PUBLIC_FEE_ADDRESS_SOL=...                  # Required with FAST_TX_FEE_BPS for Solana fees
+NEXT_PUBLIC_DISABLE_BALANCE_CHECK=1              # Development only: skip client-side balance validation
 NEXT_PUBLIC_DISABLE_META_ANALYTICS=1             # Optional: disable verified bridge analytics emission
 CORS_ORIGIN=https://your-app-domain.example      # Required in CI for RPC validation; local fallback defaults to https://cctp.io
 EVM_FORK_ETH_RPC_URL=https://...                 # Optional: Ethereum fork tests
@@ -37,7 +38,7 @@ EVM_FORK_ARB_RPC_URL=https://...                 # Optional: Arbitrum fork tests
 ```
 
 Bridge volume analytics are emitted server-side through `/api/events/burn` after a burn transaction is submitted. The Vercel custom event is `bridge_burn_submitted` with two Pro-plan-safe properties: `id` (`sourceChainId:burnHash`) and compact metadata `m`. Export Vercel custom events and run `bun run events:bridge-report -- <export.csv>` to dedupe by `id` and report fast/standard volume. Tracking-page views emit `bridge_verified_view` and must not be used for bridge-volume reporting.
-Fast tx fees are charged only for fast transfers and are included in the entered amount. On EVM, Circle's bridge contract routes 90% to `NEXT_PUBLIC_FEE_ADDRESS_EVM`; on Solana, the app adds an atomic SPL transfer that routes 100% to `NEXT_PUBLIC_FEE_ADDRESS_SOL`. Deprecated variables `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` and `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` are ignored and now emit runtime warnings when present.
+Fast tx fees are charged only for fast transfers and are included in the entered amount. Standard transfers of 250,000 USDC or more offer an optional 2 bps contribution after the user presses Bridge Standard; declining proceeds with no app fee. On EVM, Circle's bridge contract routes 90% to `NEXT_PUBLIC_FEE_ADDRESS_EVM`; on Solana, the app adds an atomic SPL transfer that routes 100% to `NEXT_PUBLIC_FEE_ADDRESS_SOL`. Deprecated variables `NEXT_PUBLIC_BRIDGEKIT_RPC_OVERRIDES` and `NEXT_PUBLIC_BRIDGEKIT_TRANSFER_SPEED` are ignored and now emit runtime warnings when present.
 
 ## Architecture
 

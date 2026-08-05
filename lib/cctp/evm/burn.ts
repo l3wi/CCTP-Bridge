@@ -358,6 +358,9 @@ export interface EvmBurnConfig {
   amount: bigint;
   recipientAddress: string;
   transferSpeed: "fast" | "standard";
+  appFeeAmount?: bigint;
+  appFeeBps?: number;
+  appFeeRecipient?: EvmAddress;
   env?: BridgeEnvironment;
 }
 
@@ -400,17 +403,21 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   // Determine if testnet
   const isTestnet = env === "testnet";
 
-  const appFeeQuote = getFastTransferFeeQuote({
+  const fastTransferFeeQuote = getFastTransferFeeQuote({
     amount: config.amount,
     transferSpeed: config.transferSpeed,
     sourceChainId: config.sourceChainId,
   });
-  const appFeeAmount = appFeeQuote.feeAmount;
-  const appFeeRecipient = appFeeQuote.recipient as EvmAddress | undefined;
+  const appFeeAmount = config.appFeeAmount ?? fastTransferFeeQuote.feeAmount;
+  const appFeeRecipient = config.appFeeRecipient ?? fastTransferFeeQuote.recipient as EvmAddress | undefined;
+  const appFeeBps = config.appFeeBps ?? fastTransferFeeQuote.feeBps;
+  if (appFeeAmount > 0n && !appFeeRecipient) {
+    throw new Error("App fee recipient is required when an app fee is charged");
+  }
   const bridgeAmount = config.amount - appFeeAmount;
 
   if (bridgeAmount <= 0n) {
-    throw new Error("Transfer amount too small for fast tx fee");
+    throw new Error("Transfer amount too small for app fee");
   }
 
   // Calculate max fee (may throw on network error)
@@ -439,7 +446,7 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
 
   if (appFeeAmount > 0n && !bridgeContractAddress) {
     throw new Error(
-      `Fast tx fee is enabled, but chain ${config.sourceChainId} has no Circle bridge contract for atomic fee collection.`
+      `App fee collection is enabled, but chain ${config.sourceChainId} has no Circle bridge contract for atomic fee collection.`
     );
   }
 
@@ -451,7 +458,7 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
     bridgeAmount,
     bridgeContractAddress,
     appFeeAmount,
-    appFeeBps: appFeeAmount > 0n ? appFeeQuote.feeBps : undefined,
+    appFeeBps: appFeeAmount > 0n ? appFeeBps : undefined,
     appFeeRecipient,
     sourceDomain,
     destinationDomain,

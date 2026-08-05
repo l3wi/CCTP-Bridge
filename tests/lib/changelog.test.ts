@@ -13,7 +13,7 @@ describe("publicChangelog", () => {
     expect(publicChangelog.schemaVersion).toBe(1);
     expect(publicChangelog.generatedFrom).toEqual({
       from: "2026-01-21",
-      to: "2026-05-31",
+      to: "2026-08-05",
       source: "git-history",
     });
   });

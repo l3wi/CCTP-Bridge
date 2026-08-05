@@ -441,7 +441,7 @@ export function AddPendingTransactionCard({
   };
 
   return (
-    <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+    <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
       <CardContent className="p-6 space-y-4">
         <div className="space-y-1">
           <div className="flex items-center gap-2">

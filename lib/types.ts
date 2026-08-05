@@ -131,6 +131,10 @@ export interface BridgeParams {
   sourceTokenAddress?: EvmAddress; // EVM only - USDC contract address
   version?: "v1" | "v2";
   transferType?: "standard" | "fast";
+  /** Optional app fee collected atomically with the burn. */
+  appFeeAmount?: bigint;
+  appFeeBps?: number;
+  appFeeRecipient?: string;
 }
 
 // UI State types

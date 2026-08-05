@@ -94,4 +94,26 @@ describe("EVM burn fee support", () => {
     expect(prepared.approvalAmount).toBe(1_000_000n);
     expect(prepared.maxFee).toBe(0n);
   });
+
+  it("uses the atomic app-fee path for an accepted standard support contribution", async () => {
+    const prepared = await prepareEvmBurn({
+      sourceChainId: 1,
+      destinationChainId: 10,
+      amount: 250_000_000_000n,
+      recipientAddress: VALID_EVM_RECIPIENT,
+      transferSpeed: "standard",
+      appFeeAmount: 50_000_000n,
+      appFeeBps: 2,
+      appFeeRecipient: VALID_EVM_RECIPIENT,
+      env: "mainnet",
+    });
+
+    expect(prepared.bridgeContractAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
+    expect(prepared.approvalSpender).toBe(prepared.bridgeContractAddress);
+    expect(prepared.approvalAmount).toBe(250_000_000_000n);
+    expect(prepared.bridgeAmount).toBe(249_950_000_000n);
+    expect(prepared.appFeeAmount).toBe(50_000_000n);
+    expect(prepared.appFeeRecipient).toBe(VALID_EVM_RECIPIENT);
+    expect(prepared.maxFee).toBe(0n);
+  });
 });

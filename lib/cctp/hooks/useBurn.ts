@@ -91,6 +91,9 @@ export function useBurn() {
           amount: params.amount,
           recipientAddress: params.recipientAddress,
           transferSpeed: params.transferSpeed,
+          appFeeAmount: params.appFeeAmount,
+          appFeeBps: params.appFeeBps,
+          appFeeRecipient: params.appFeeRecipient as `0x${string}` | undefined,
         });
 
         // Step 1: Approval
@@ -298,12 +301,18 @@ export function useBurn() {
 
         const isTestnet = BRIDGEKIT_ENV === "testnet";
 	        let maxFee = 0n;
-	        const appFeeQuote = getFastTransferFeeQuote({
+	        const fastTransferFeeQuote = getFastTransferFeeQuote({
 	          amount: params.amount,
 	          transferSpeed: params.transferSpeed,
 	          sourceChainId,
 	        });
-	        const bridgeAmount = params.amount - appFeeQuote.feeAmount;
+	        const appFeeAmount = params.appFeeAmount ?? fastTransferFeeQuote.feeAmount;
+	        const appFeeRecipient = params.appFeeRecipient ?? fastTransferFeeQuote.recipient;
+	        const appFeeBps = params.appFeeBps ?? fastTransferFeeQuote.feeBps;
+	        if (appFeeAmount > 0n && !appFeeRecipient) {
+	          return { success: false, error: "App fee recipient is required when an app fee is charged." };
+	        }
+	        const bridgeAmount = params.amount - appFeeAmount;
 	        if (bridgeAmount <= 0n) {
 	          return {
 	            success: false,
@@ -353,8 +362,8 @@ export function useBurn() {
 	          maxFee,
 	          minFinalityThreshold,
 	          sourceChainId,
-	          appFeeAmount: appFeeQuote.feeAmount,
-	          appFeeRecipient: appFeeQuote.recipient,
+	          appFeeAmount,
+	          appFeeRecipient,
 	        });
 
         toast({
@@ -384,9 +393,9 @@ export function useBurn() {
 	          success: true,
 	          burnTxHash: signature,
 	          circleFastFee: maxFee,
-	          appFastFee: appFeeQuote.feeAmount,
-	          appFeeBps: appFeeQuote.feeAmount > 0n ? appFeeQuote.feeBps : undefined,
-	          appFeeRecipient: appFeeQuote.recipient,
+	          appFastFee: appFeeAmount,
+	          appFeeBps: appFeeAmount > 0n ? appFeeBps : undefined,
+	          appFeeRecipient,
 	        };
       } catch (error) {
         return handleBurnError(error, "burn");

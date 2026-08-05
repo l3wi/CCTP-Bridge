@@ -116,6 +116,16 @@ vi.mock("@/lib/cctp/estimate", () => ({
   estimateBridgeFee: vi.fn(),
 }));
 
+vi.mock("@/lib/cctp/fastTransferFee", () => ({
+  getStandardTransferSupportQuote: ({ amount }: { amount: bigint }) => ({
+    eligible: amount >= 250_000_000_000n,
+    feeAmount: 50_000_000n,
+    feeBps: 2,
+    recipient: "0x1111111111111111111111111111111111111111",
+    config: { enabled: true, feeBps: 4 },
+  }),
+}));
+
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({
     data: null,
@@ -219,6 +229,67 @@ describe("BridgeCard recipient lock integration", () => {
     expect(bridgeParams.targetAddress).not.toBe(mockState.solanaRecipient);
   });
 
+  it("offers an optional contribution before a large standard transfer", async () => {
+    const user = userEvent.setup();
+    render(<BridgeCard />);
+
+    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
+
+    expect(screen.getByRole("heading", { name: "Consider Supporting CCTP.io" })).toBeTruthy();
+    expect(screen.getByText("50.00 USDC")).toBeTruthy();
+    expect(bridgeMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Bridge with contribution" }));
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(1));
+    expect(bridgeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferType: "standard",
+        appFeeAmount: 50_000_000n,
+        appFeeBps: 2,
+      }),
+      expect.anything()
+    );
+  });
+
+  it("carries the support prompt through the intent flow before execution", async () => {
+    const user = userEvent.setup();
+    const submitIntentMock = vi.fn();
+    render(<BridgeCard mode="intentOnly" onSubmitIntent={submitIntentMock} />);
+
+    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
+
+    await waitFor(() => expect(submitIntentMock).toHaveBeenCalledTimes(1));
+    expect(submitIntentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferType: "standard",
+        showStandardSupportPrompt: true,
+      })
+    );
+    expect(bridgeMock).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Consider Supporting CCTP.io" })).toBeNull();
+  });
+
+  it("continues a large standard transfer without a contribution when declined", async () => {
+    const user = userEvent.setup();
+    render(<BridgeCard />);
+
+    await user.type(screen.getByPlaceholderText("0.0"), "250000");
+    await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
+    await user.click(screen.getByRole("button", { name: "Bridge without contributing" }));
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(1));
+    expect(bridgeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferType: "standard",
+        appFeeAmount: undefined,
+      }),
+      expect.anything()
+    );
+  });
+
   it("uses newly connected destination wallet instead of stale manual input for cross-ecosystem", async () => {
     const user = userEvent.setup();
     mockState.solanaRecipient = undefined;
@@ -308,6 +379,37 @@ describe("BridgeCard execute intent integration", () => {
 
   afterEach(() => {
     consoleErrorSpy.mockRestore();
+  });
+
+  it("shows the support prompt before executing a marked large standard intent", async () => {
+    const user = userEvent.setup();
+    render(
+      <BridgeCard
+        mode="executeIntent"
+        initialIntent={{
+          ...baseIntent,
+          amount: "250000",
+          transferType: "standard",
+          showStandardSupportPrompt: true,
+        }}
+      />
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Consider Supporting CCTP.io" })).toBeTruthy();
+    });
+    expect(bridgeMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Bridge with contribution" }));
+
+    await waitFor(() => expect(bridgeMock).toHaveBeenCalledTimes(1));
+    expect(bridgeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        transferType: "standard",
+        appFeeAmount: 50_000_000n,
+      }),
+      expect.anything()
+    );
   });
 
   it("does not retry the same execute intent when bridge submission fails to start", async () => {

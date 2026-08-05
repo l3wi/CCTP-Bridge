@@ -114,6 +114,10 @@ export interface BurnParams {
   amount: bigint;
   recipientAddress: string;
   transferSpeed: TransferSpeed;
+  /** Optional app fee collected atomically with the burn. */
+  appFeeAmount?: bigint;
+  appFeeBps?: number;
+  appFeeRecipient?: string;
 }
 
 /** Result from burn operation */
@@ -124,7 +128,7 @@ export interface BurnResult {
   approvalTxHash?: EvmTxHash;
   /** Circle fast-liquidity fee cap used for the burn (USDC atomic units) */
   circleFastFee?: bigint;
-  /** App-level fast tx fee charged on the source chain (USDC atomic units) */
+  /** App-level fee charged on the source chain (USDC atomic units) */
   appFastFee?: bigint;
   /** App-level fast tx fee rate in basis points */
   appFeeBps?: number;

@@ -66,6 +66,11 @@ import { toChainDefinition } from "@/lib/chainDefinition";
 import { useQuery } from "@tanstack/react-query";
 import { getFinalityEstimate } from "@/lib/cctpFinality";
 import { BridgeComparison } from "@/components/bridge-card/BridgeComparison";
+import { StandardTransferSupportDialog } from "@/components/bridge-card/StandardTransferSupportDialog";
+import {
+  getStandardTransferSupportQuote,
+  type StandardTransferSupportQuote,
+} from "@/lib/cctp/fastTransferFee";
 import { IntentStatusCard } from "@/components/bridge-card/IntentStatusCard";
 import {
   buildChainOptionMap,
@@ -135,6 +140,10 @@ export function BridgeCard({
   const [activeTransferSpeed, setActiveTransferSpeed] = useState<TransferSpeedValue>(
     TransferSpeed.FAST
   );
+  const [standardSupportQuote, setStandardSupportQuote] = useState<StandardTransferSupportQuote | null>(null);
+  const [declinedStandardSupportKey, setDeclinedStandardSupportKey] = useState<string | null>(null);
+  const [standardSupportPromptPresented, setStandardSupportPromptPresented] = useState(false);
+  const [standardSupportPromptResolved, setStandardSupportPromptResolved] = useState(false);
   const [diffWallet, setDiffWallet] = useState(false);
   const [targetAddress, setTargetAddress] = useState<string | undefined>(undefined);
   const [isLoading, setIsLoading] = useState(false);
@@ -273,6 +282,7 @@ export function BridgeCard({
   const usdcBalance = sourceChainType === "solana" ? solanaUsdcBalance : evmUsdcBalance;
   const usdcFormatted = sourceChainType === "solana" ? solanaUsdcFormatted : evmUsdcFormatted;
   const isUsdcLoading = sourceChainType === "solana" ? solanaIsUsdcLoading : evmIsUsdcLoading;
+  const disableBalanceCheck = process.env.NEXT_PUBLIC_DISABLE_BALANCE_CHECK === "1";
 
   // For Solana, check if Solana wallet is connected; for EVM, check if chain matches
   const isSourceChainSynced = useMemo(() => {
@@ -495,7 +505,7 @@ export function BridgeCard({
         amount,
         targetChain: targetChain?.id || targetChainId || null,
         sourceChain: activeSourceChainId ?? undefined,
-        balance: usdcBalance,
+        balance: disableBalanceCheck ? undefined : usdcBalance,
         userAddress: defaultTargetWalletAddress,
         isCustomAddress: diffWallet,
         targetAddress: validationTargetAddress,
@@ -507,6 +517,7 @@ export function BridgeCard({
       targetChainId,
       activeSourceChainId,
       usdcBalance,
+      disableBalanceCheck,
       defaultTargetWalletAddress,
       diffWallet,
       validationTargetAddress,
@@ -700,7 +711,10 @@ export function BridgeCard({
   };
 
   const handleSend = useCallback(
-    async (transferSpeed: TransferSpeedValue): Promise<boolean> => {
+    async (
+      transferSpeed: TransferSpeedValue,
+      supportQuote?: StandardTransferSupportQuote
+    ): Promise<boolean> => {
       const selectedSourceId = sourceChainId ?? chain?.id ?? null;
       const selectedSourceType = selectedSourceId
         ? getChainType(selectedSourceId)
@@ -786,6 +800,7 @@ export function BridgeCard({
           amount: amount.str,
           targetAddress: finalTargetAddress,
           transferType,
+          showStandardSupportPrompt: Boolean(supportQuote?.eligible),
         });
         return true;
       }
@@ -864,6 +879,9 @@ export function BridgeCard({
             targetChainId: targetChainId,
             targetAddress: finalTargetAddress,
             transferType,
+            appFeeAmount: supportQuote?.feeAmount,
+            appFeeBps: supportQuote?.feeBps,
+            appFeeRecipient: supportQuote?.recipient,
           },
           {
             onApprovalStart: () => {
@@ -971,6 +989,51 @@ export function BridgeCard({
     ]
   );
 
+  const getStandardSupportKey = useCallback(
+    () => `${activeSourceChainId ?? ""}:${targetChainId ?? ""}:${amount?.bigInt ?? ""}`,
+    [activeSourceChainId, amount?.bigInt, targetChainId]
+  );
+
+  const handleBridgeClick = useCallback(
+    (transferSpeed: TransferSpeedValue) => {
+      if (
+        transferSpeed !== TransferSpeed.SLOW ||
+        !amount ||
+        !activeSourceChainId ||
+        !targetChainId
+      ) {
+        void handleSend(transferSpeed);
+        return;
+      }
+
+      const quote = getStandardTransferSupportQuote({
+        amount: amount.bigInt,
+        sourceChainId: activeSourceChainId,
+      });
+      const supportKey = getStandardSupportKey();
+      if (!quote.eligible || declinedStandardSupportKey === supportKey) {
+        void handleSend(transferSpeed);
+        return;
+      }
+
+      if (mode === "intentOnly") {
+        void handleSend(transferSpeed, quote);
+        return;
+      }
+
+      setStandardSupportQuote(quote);
+    },
+    [
+      amount,
+      activeSourceChainId,
+      declinedStandardSupportKey,
+      getStandardSupportKey,
+      handleSend,
+      mode,
+      targetChainId,
+    ]
+  );
+
   const handleBackToNew = () => {
     intentBackRequestedRef.current = true;
     if (executeIntentKey) {
@@ -1061,6 +1124,9 @@ export function BridgeCard({
     setIntentHydrated(false);
     setIntentStarted(false);
     setIntentExecutionState("idle");
+    setStandardSupportQuote(null);
+    setStandardSupportPromptPresented(false);
+    setStandardSupportPromptResolved(false);
   }, [mode, executeIntentKey]);
 
   useEffect(() => {
@@ -1121,6 +1187,29 @@ export function BridgeCard({
         ? TransferSpeed.FAST
         : TransferSpeed.SLOW;
 
+    if (
+      initialIntent.showStandardSupportPrompt &&
+      !standardSupportPromptPresented
+    ) {
+      const quote = getStandardTransferSupportQuote({
+        amount: amount.bigInt,
+        sourceChainId: initialIntent.sourceChainId,
+      });
+      setStandardSupportPromptPresented(true);
+      if (quote.eligible) {
+        setStandardSupportQuote(quote);
+        return;
+      }
+      setStandardSupportPromptResolved(true);
+    }
+
+    if (
+      initialIntent.showStandardSupportPrompt &&
+      !standardSupportPromptResolved
+    ) {
+      return;
+    }
+
     if (!executeIntentKey) {
       return;
     }
@@ -1154,7 +1243,52 @@ export function BridgeCard({
     targetChainId,
     amount?.str,
     handleSend,
+    standardSupportPromptPresented,
+    standardSupportPromptResolved,
   ]);
+
+  const submitSupportChoice = (quote?: StandardTransferSupportQuote) => {
+    if (mode !== "executeIntent") {
+      void handleSend(TransferSpeed.SLOW, quote);
+      return;
+    }
+
+    setIntentStarted(true);
+    setIntentExecutionState("attempting");
+    void (async () => {
+      const didStart = await handleSend(TransferSpeed.SLOW, quote);
+      setIntentStarted(didStart);
+      setIntentExecutionState(didStart ? "started" : "not-started");
+    })();
+  };
+
+  const standardSupportDialog = standardSupportQuote && amount ? (
+    <StandardTransferSupportDialog
+      open
+      amount={amount.bigInt}
+      contribution={standardSupportQuote.feeAmount}
+      onOpenChange={(open) => {
+        if (!open) {
+          setStandardSupportQuote(null);
+          setStandardSupportPromptPresented(true);
+        }
+      }}
+      onAccept={() => {
+        const quote = standardSupportQuote;
+        setStandardSupportQuote(null);
+        setStandardSupportPromptPresented(true);
+        setStandardSupportPromptResolved(true);
+        submitSupportChoice(quote);
+      }}
+      onDecline={() => {
+        setDeclinedStandardSupportKey(getStandardSupportKey());
+        setStandardSupportQuote(null);
+        setStandardSupportPromptPresented(true);
+        setStandardSupportPromptResolved(true);
+        submitSupportChoice();
+      }}
+    />
+  ) : null;
 
   // Loading states
   const showChainLoader = !chainOptions.length; // Only show loader when chains haven't loaded
@@ -1215,7 +1349,7 @@ export function BridgeCard({
       const button = (
         <LoadingButton
           className={buttonClass}
-          onClick={() => handleSend(speed)}
+          onClick={() => handleBridgeClick(speed)}
           isLoading={isSubmitting}
           disabled={!validation.isValid || isLoading || isBridgeLoading || isSwitchingChain}
         >
@@ -1231,12 +1365,15 @@ export function BridgeCard({
     };
 
     return (
-      <BridgeComparison
-        fastTransferSupported={fastTransferSupported}
-        fastLabels={fastLabels}
-        standardLabels={standardLabels}
-        renderButton={renderButton}
-      />
+      <>
+        <BridgeComparison
+          fastTransferSupported={fastTransferSupported}
+          fastLabels={fastLabels}
+          standardLabels={standardLabels}
+          renderButton={renderButton}
+        />
+        {standardSupportDialog}
+      </>
     );
   };
 
@@ -1418,6 +1555,9 @@ export function BridgeCard({
   }
 
   if (mode === "executeIntent" && !bridgeTransactionHash && !loadedTransactionData) {
+    if (standardSupportDialog) {
+      return standardSupportDialog;
+    }
     const intentDidNotStart =
       intentExecutionState === "not-started" ||
       intentExecutionState === "failed";
@@ -1440,7 +1580,7 @@ export function BridgeCard({
 
   return (
     <>
-      <Card className="min-h-[520px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+      <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
         <CardContent className="p-4 md:p-6 space-y-4">
           {/* Chain Selectors */}
           <div className="flex items-center gap-3 md:flex-row flex-col">

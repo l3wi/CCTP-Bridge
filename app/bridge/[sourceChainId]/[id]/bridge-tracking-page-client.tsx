@@ -312,8 +312,8 @@ export default function BridgeTrackingPageClient({
 
   if (!isStoreHydrated) {
     return (
-      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+      <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6">
           <div className="flex items-center gap-2 text-sm text-slate-300">
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading local bridge history...
@@ -325,8 +325,8 @@ export default function BridgeTrackingPageClient({
 
   if (isInitialLookupPending) {
     return (
-      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+      <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6">
           <div className="flex items-center gap-2 text-sm text-slate-300">
             <Loader2 className="h-4 w-4 animate-spin" />
             Looking up transaction state...
@@ -338,8 +338,8 @@ export default function BridgeTrackingPageClient({
 
   if (!matchedTransaction) {
     return (
-      <Card className="min-h-[360px] bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
-        <CardContent className="p-6 min-h-[360px] flex items-center justify-center">
+      <Card className="bg-gradient-to-br from-slate-800/95 via-slate-800/98 to-slate-900/100 backdrop-blur-sm border-slate-700/50 text-white">
+        <CardContent className="p-6">
           <div className="flex items-center gap-2 text-sm text-slate-300">
             <Loader2 className="h-4 w-4 animate-spin" />
             Redirecting to pending transaction form...

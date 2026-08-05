@@ -81,4 +81,56 @@ describe("fastTransferFee", () => {
       })
     ).toEqual(expect.objectContaining({ feeAmount: 0n, recipient: undefined }));
   });
+
+  it("quotes an optional 2 bps contribution for standard transfers at 250,000 USDC", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "4");
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
+
+    const { getStandardTransferSupportQuote } = await loadModule();
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 250_000_000_000n,
+        sourceChainId: 1,
+      })
+    ).toEqual(
+      expect.objectContaining({
+        eligible: true,
+        feeAmount: 50_000_000n,
+        feeBps: 2,
+        recipient: VALID_EVM_RECIPIENT,
+      })
+    );
+  });
+
+  it("does not quote support below 250,000 USDC", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "4");
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
+
+    const { getStandardTransferSupportQuote } = await loadModule();
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 249_999_999_999n,
+        sourceChainId: "Solana_Devnet",
+      })
+    ).toEqual(expect.objectContaining({ eligible: false, feeAmount: 0n }));
+  });
+
+  it("allows standard support when fast-transfer fees are disabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "0");
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
+
+    const { getStandardTransferSupportQuote } = await loadModule();
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 250_000_000_000n,
+        sourceChainId: 1,
+      })
+    ).toEqual(expect.objectContaining({ eligible: true, feeAmount: 50_000_000n }));
+  });
 });
