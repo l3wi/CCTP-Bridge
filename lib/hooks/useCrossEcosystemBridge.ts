@@ -198,7 +198,11 @@ export const useCrossEcosystemBridge = () => {
             amount: formattedAmount,
             transferType,
             appFastFee,
-            appFeeBps: burnResult.appFeeBps,
+            // The analytics store currently persists whole basis points. Keep the
+            // exact fee amount and omit fractional support rates rather than round them.
+            appFeeBps: Number.isInteger(burnResult.appFeeBps)
+              ? burnResult.appFeeBps
+              : undefined,
             circleFastFee,
           });
         } catch (analyticsError) {

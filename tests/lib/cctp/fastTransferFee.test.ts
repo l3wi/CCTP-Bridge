@@ -82,7 +82,7 @@ describe("fastTransferFee", () => {
     ).toEqual(expect.objectContaining({ feeAmount: 0n, recipient: undefined }));
   });
 
-  it("quotes an optional 2 bps contribution for standard transfers at 100,000 USDC", async () => {
+  it("quotes a 15 USDC contribution for standard transfers at 100,000 USDC", async () => {
     vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "4");
     vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
     vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
@@ -97,11 +97,58 @@ describe("fastTransferFee", () => {
     ).toEqual(
       expect.objectContaining({
         eligible: true,
-        feeAmount: 20_000_000n,
-        feeBps: 2,
+        feeAmount: 15_000_000n,
+        feeBps: 1.5,
         recipient: VALID_EVM_RECIPIENT,
       })
     );
+  });
+
+  it("scales standard support contributions to 50 USDC at 1,000,000 USDC", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "4");
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
+
+    const { getStandardTransferSupportQuote } = await loadModule();
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 500_000_000_000n,
+        sourceChainId: 1,
+      })
+    ).toEqual(expect.objectContaining({
+      eligible: true,
+      feeAmount: 30_555_555n,
+    }));
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 1_000_000_000_000n,
+        sourceChainId: 1,
+      })
+    ).toEqual(expect.objectContaining({
+      eligible: true,
+      feeAmount: 50_000_000n,
+      feeBps: 0.5,
+    }));
+  });
+
+  it("caps standard support contributions at 50 USDC above 1,000,000 USDC", async () => {
+    vi.stubEnv("NEXT_PUBLIC_FAST_TX_FEE_BPS", "4");
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_EVM", VALID_EVM_RECIPIENT);
+    vi.stubEnv("NEXT_PUBLIC_FEE_ADDRESS_SOL", VALID_SOLANA_RECIPIENT);
+
+    const { getStandardTransferSupportQuote } = await loadModule();
+
+    expect(
+      getStandardTransferSupportQuote({
+        amount: 2_000_000_000_000n,
+        sourceChainId: 1,
+      })
+    ).toEqual(expect.objectContaining({
+      eligible: true,
+      feeAmount: 50_000_000n,
+    }));
   });
 
   it("does not quote support below 100,000 USDC", async () => {
@@ -131,6 +178,6 @@ describe("fastTransferFee", () => {
         amount: 100_000_000_000n,
         sourceChainId: 1,
       })
-    ).toEqual(expect.objectContaining({ eligible: true, feeAmount: 20_000_000n }));
+    ).toEqual(expect.objectContaining({ eligible: true, feeAmount: 15_000_000n }));
   });
 });

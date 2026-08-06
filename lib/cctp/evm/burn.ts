@@ -384,6 +384,10 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   maxFee: bigint;
   minFinalityThreshold: number;
 }> {
+  if (config.amount <= 0n) {
+    throw new Error("Burn amount must be positive");
+  }
+
   const env = config.env ?? BRIDGEKIT_ENV;
 
   // Get contract addresses
@@ -411,6 +415,12 @@ export async function prepareEvmBurn(config: EvmBurnConfig): Promise<{
   const appFeeAmount = config.appFeeAmount ?? fastTransferFeeQuote.feeAmount;
   const appFeeRecipient = config.appFeeRecipient ?? fastTransferFeeQuote.recipient as EvmAddress | undefined;
   const appFeeBps = config.appFeeBps ?? fastTransferFeeQuote.feeBps;
+  if (appFeeAmount < 0n) {
+    throw new Error("App fee amount cannot be negative");
+  }
+  if (!Number.isFinite(appFeeBps) || appFeeBps < 0) {
+    throw new Error("App fee basis points must be a non-negative number");
+  }
   if (appFeeAmount > 0n && !appFeeRecipient) {
     throw new Error("App fee recipient is required when an app fee is charged");
   }

@@ -73,13 +73,13 @@ describe("Solana burn fee support", () => {
     const { transaction } = await buildDepositForBurnTransaction({
       connection: connection as never,
       user: USER,
-      amount: 1_000_000n,
+      amount: 99_985_000_000n,
       destinationChainId: 84532,
       mintRecipient: "0x1111111111111111111111111111111111111111",
       maxFee: 100n,
       minFinalityThreshold: 1000,
       sourceChainId: "Solana_Devnet",
-      appFeeAmount: 400n,
+      appFeeAmount: 15_000_000n,
       appFeeRecipient: FEE_RECIPIENT.toBase58(),
     });
 
@@ -90,6 +90,7 @@ describe("Solana burn fee support", () => {
     expect(transferIx).toBeDefined();
     expect(transferIx?.keys[1]?.pubkey.toBase58()).toBe(feeRecipientAta.toBase58());
     expect(transferIx?.data[0]).toBe(3);
+    expect(transferIx?.data.readBigUInt64LE(1)).toBe(15_000_000n);
     expect(connection.getAccountInfo).toHaveBeenCalledWith(feeRecipientAta);
   });
 
@@ -128,5 +129,23 @@ describe("Solana burn fee support", () => {
         appFeeRecipient: FEE_RECIPIENT.toBase58(),
       })
     ).rejects.toThrow("Solana fee recipient USDC account does not exist");
+  });
+
+  it("rejects a negative app fee before building an SPL transfer", async () => {
+    const connection = createConnection(new Set());
+
+    await expect(
+      buildDepositForBurnTransaction({
+        connection: connection as never,
+        user: USER,
+        amount: 1_000_000n,
+        destinationChainId: 84532,
+        mintRecipient: "0x1111111111111111111111111111111111111111",
+        maxFee: 0n,
+        minFinalityThreshold: 2000,
+        sourceChainId: "Solana_Devnet",
+        appFeeAmount: -1n,
+      })
+    ).rejects.toThrow("App fee amount cannot be negative");
   });
 });

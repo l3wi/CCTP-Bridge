@@ -119,8 +119,8 @@ vi.mock("@/lib/cctp/estimate", () => ({
 vi.mock("@/lib/cctp/fastTransferFee", () => ({
   getStandardTransferSupportQuote: ({ amount }: { amount: bigint }) => ({
     eligible: amount >= 100_000_000_000n,
-    feeAmount: 20_000_000n,
-    feeBps: 2,
+    feeAmount: 15_000_000n,
+    feeBps: 1.5,
     recipient: "0x1111111111111111111111111111111111111111",
     config: { enabled: true, feeBps: 4 },
   }),
@@ -237,7 +237,7 @@ describe("BridgeCard recipient lock integration", () => {
     await user.click(screen.getAllByRole("button", { name: "Bridge Standard" })[0]);
 
     expect(screen.getByRole("heading", { name: "Consider Supporting CCTP.io" })).toBeTruthy();
-    expect(screen.getByText("20.00 USDC")).toBeTruthy();
+    expect(screen.getByText("15.00 USDC")).toBeTruthy();
     expect(bridgeMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Bridge with contribution" }));
@@ -246,8 +246,8 @@ describe("BridgeCard recipient lock integration", () => {
     expect(bridgeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         transferType: "standard",
-        appFeeAmount: 20_000_000n,
-        appFeeBps: 2,
+        appFeeAmount: 15_000_000n,
+        appFeeBps: 1.5,
       }),
       expect.anything()
     );
@@ -406,7 +406,7 @@ describe("BridgeCard execute intent integration", () => {
     expect(bridgeMock).toHaveBeenCalledWith(
       expect.objectContaining({
         transferType: "standard",
-        appFeeAmount: 20_000_000n,
+        appFeeAmount: 15_000_000n,
       }),
       expect.anything()
     );

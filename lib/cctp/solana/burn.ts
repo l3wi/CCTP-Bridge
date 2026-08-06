@@ -143,6 +143,19 @@ export async function buildDepositForBurnTransaction(
     appFeeRecipient,
   } = params;
 
+  if (amount <= 0n) {
+    throw new Error("Burn amount must be positive");
+  }
+  if (maxFee < 0n) {
+    throw new Error("Max fee cannot be negative");
+  }
+  if (maxFee >= amount) {
+    throw new Error("Max fee must be less than burn amount");
+  }
+  if (appFeeAmount < 0n) {
+    throw new Error("App fee amount cannot be negative");
+  }
+
   const destinationDomain = getCctpDomain(destinationChainId);
   const usdcMint = getSolanaUsdcMint(sourceChainId);
   const pdas = deriveBurnPdas(destinationDomain, usdcMint);
@@ -159,7 +172,8 @@ export async function buildDepositForBurnTransaction(
     const appFeeRecipientOwner = new PublicKey(appFeeRecipient);
     const appFeeRecipientAta = await getAssociatedTokenAddress(
       usdcMint,
-      appFeeRecipientOwner
+      appFeeRecipientOwner,
+      true
     );
     const appFeeRecipientAtaInfo = await connection.getAccountInfo(appFeeRecipientAta);
 

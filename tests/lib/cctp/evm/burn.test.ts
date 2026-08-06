@@ -102,8 +102,8 @@ describe("EVM burn fee support", () => {
       amount: 100_000_000_000n,
       recipientAddress: VALID_EVM_RECIPIENT,
       transferSpeed: "standard",
-      appFeeAmount: 20_000_000n,
-      appFeeBps: 2,
+      appFeeAmount: 15_000_000n,
+      appFeeBps: 1.5,
       appFeeRecipient: VALID_EVM_RECIPIENT,
       env: "mainnet",
     });
@@ -111,9 +111,24 @@ describe("EVM burn fee support", () => {
     expect(prepared.bridgeContractAddress).toMatch(/^0x[a-fA-F0-9]{40}$/);
     expect(prepared.approvalSpender).toBe(prepared.bridgeContractAddress);
     expect(prepared.approvalAmount).toBe(100_000_000_000n);
-    expect(prepared.bridgeAmount).toBe(99_980_000_000n);
-    expect(prepared.appFeeAmount).toBe(20_000_000n);
+    expect(prepared.bridgeAmount).toBe(99_985_000_000n);
+    expect(prepared.appFeeAmount).toBe(15_000_000n);
     expect(prepared.appFeeRecipient).toBe(VALID_EVM_RECIPIENT);
     expect(prepared.maxFee).toBe(0n);
+  });
+
+  it("rejects a negative app fee before building uint256 call data", async () => {
+    await expect(
+      prepareEvmBurn({
+        sourceChainId: 1,
+        destinationChainId: 10,
+        amount: 1_000_000n,
+        recipientAddress: VALID_EVM_RECIPIENT,
+        transferSpeed: "standard",
+        appFeeAmount: -1n,
+        appFeeRecipient: VALID_EVM_RECIPIENT,
+        env: "mainnet",
+      })
+    ).rejects.toThrow("App fee amount cannot be negative");
   });
 });
