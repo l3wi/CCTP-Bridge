@@ -209,27 +209,37 @@ export const createEvmPublicClient = (
   });
 };
 
-export const createSolanaConnection = (
+export const getSolanaConnectionOptions = (
   chainId: SolanaChainId,
-  commitment: "processed" | "confirmed" | "finalized" = "confirmed",
-  env: BridgeEnvironment = DEFAULT_ENV
+  commitment: "processed" | "confirmed" | "finalized" = "confirmed"
 ) => {
   const urls = getConfiguredSolanaRpcUrls(chainId);
   if (!urls.length) {
     throw new Error(`No Solana RPC endpoint configured for ${chainId}`);
   }
 
-  const endpoint = urls[0];
+  return {
+    endpoint: urls[0],
+    config: {
+      commitment,
+      fetch: buildSolanaFetch(urls),
+    },
+  };
+};
+
+export const createSolanaConnection = (
+  chainId: SolanaChainId,
+  commitment: "processed" | "confirmed" | "finalized" = "confirmed",
+  env: BridgeEnvironment = DEFAULT_ENV
+) => {
   const cacheKey = `solana:${env}:${chainId}:${commitment}`;
   const cached = solanaConnectionCache.get(cacheKey);
   if (cached) {
     return cached;
   }
 
-  const connection = new Connection(endpoint, {
-    commitment,
-    fetch: buildSolanaFetch(urls),
-  });
+  const { endpoint, config } = getSolanaConnectionOptions(chainId, commitment);
+  const connection = new Connection(endpoint, config);
   solanaConnectionCache.set(cacheKey, connection);
   return connection;
 };

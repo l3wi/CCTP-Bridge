@@ -63,6 +63,27 @@ function isAccessForbiddenError(error: unknown): boolean {
   return /\b403\b/.test(message) || /access forbidden|forbidden/i.test(message);
 }
 
+function isTransientRpcError(error: unknown): boolean {
+  if (isAccessForbiddenError(error)) {
+    return true;
+  }
+
+  const message = getErrorMessage(error);
+  if (
+    /failed to fetch/i.test(message) ||
+    /networkerror/i.test(message) ||
+    /network request failed/i.test(message) ||
+    /load failed/i.test(message) ||
+    /fetch failed/i.test(message) ||
+    /\b429\b/.test(message) ||
+    /too many requests|rate.?limit/i.test(message)
+  ) {
+    return true;
+  }
+
+  return error instanceof TypeError && /fetch/i.test(error.message);
+}
+
 async function fetchTokenMessengerAccountData(
   connection: Connection,
   tokenMessengerPda: PublicKey,
@@ -135,6 +156,11 @@ export async function fetchFeeRecipient(
         throw error;
       }
 
+      const fallback = getVerifiedFeeRecipientFallback(
+        tokenMessengerPda,
+        cluster
+      );
+
       if (isAccessForbiddenError(error)) {
         try {
           const accountData = await fetchTokenMessengerAccountData(
@@ -147,11 +173,7 @@ export async function fetchFeeRecipient(
             TOKEN_MESSENGER_ACCOUNT_SLICE_LENGTH
           );
         } catch (sliceError) {
-          const fallback = getVerifiedFeeRecipientFallback(
-            tokenMessengerPda,
-            cluster
-          );
-          if (fallback && isAccessForbiddenError(sliceError)) {
+          if (fallback && isTransientRpcError(sliceError)) {
             // Public Solana RPCs can intermittently reject account reads for this
             // stable Circle PDA. Use the verified per-cluster state value rather
             // than blocking claim construction before the wallet can sign.
@@ -160,6 +182,13 @@ export async function fetchFeeRecipient(
 
           throw sliceError;
         }
+      }
+
+      // Browser CORS / network failures surface as TypeError: Failed to fetch,
+      // not as a 403. Retrying the same public RPC cannot recover that, so use
+      // the verified Circle feeRecipient when this is the official PDA.
+      if (fallback && isTransientRpcError(error)) {
+        return fallback;
       }
 
       const message = getErrorMessage(error);

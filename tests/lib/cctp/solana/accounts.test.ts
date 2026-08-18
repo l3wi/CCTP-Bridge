@@ -106,4 +106,37 @@ describe("fetchFeeRecipient", () => {
       )
     ).rejects.toThrow("Access forbidden");
   });
+
+  it("falls back when the browser RPC read fails with TypeError: Failed to fetch", async () => {
+    const fetchError = new TypeError("Failed to fetch");
+    const wrapped = new Error(
+      `failed to get info about account ${TOKEN_MESSENGER_PDA.toBase58()}\nTypeError: Failed to fetch`
+    );
+    wrapped.cause = fetchError;
+    const getAccountInfo = vi.fn().mockRejectedValue(wrapped);
+
+    const result = await fetchFeeRecipient(
+      makeConnection(getAccountInfo, "mock://mainnet-failed-to-fetch"),
+      TOKEN_MESSENGER_PDA,
+      "mainnet"
+    );
+
+    expect(result.toBase58()).toBe("4BPnUzFDibVcWQ5zzixGodRUHwqDxHYpUPdPYus3Bn56");
+    expect(getAccountInfo).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not wrap TokenMessenger decode errors as transient RPC failures", async () => {
+    const getAccountInfo = vi.fn().mockResolvedValue({
+      data: Buffer.alloc(177, 0),
+      owner: TOKEN_MESSENGER_PROGRAM_ID,
+    });
+
+    await expect(
+      fetchFeeRecipient(
+        makeConnection(getAccountInfo, "mock://decode-mismatch"),
+        TOKEN_MESSENGER_PDA,
+        "mainnet"
+      )
+    ).rejects.toThrow("TokenMessenger account discriminator mismatch");
+  });
 });
